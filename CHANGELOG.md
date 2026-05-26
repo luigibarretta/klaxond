@@ -1,5 +1,22 @@
 # Klaxon — CHANGELOG
 
+## 0.3.0 — 2026-05-26
+
+### Added
+- **Delivery policies + rules**: TOML [delivery] section with named
+  policies (cascade or broadcast modes) and per-label match rules
+  (exact or regex via re: prefix). First-match wins, default_policy
+  as fallback. Backward-compatible — legacy [cascade] is wrapped as
+  the implicit "legacy-cascade" policy.
+- **/api/delivery-config**: GET + POST for the new section.
+- **Delivery rules UI tab**: default policy selector, policies table,
+  rules table with multi-line label=value editor (and re:regex).
+
+### Changed
+- deliver() refactored to walk a chosen policy (cascade or broadcast)
+  instead of a single global tier list. broadcast mode fires all
+  tiers in parallel — at least one success counts as delivered.
+
 ## 0.2.0 — 2026-05-26
 
 ### Changed

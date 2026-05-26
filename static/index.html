@@ -3,12 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Klaxon — notification daemon</title>
+<title>klaxond — notification daemon</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1><span class="dot dot-running"></span> Klaxon</h1>
+  <h1><span class="dot dot-running"></span> klaxond</h1>
   <small id="footer-tag">klaxond — cascade • inhibition • render</small>
 </header>
 
@@ -20,6 +21,7 @@
   <button class="tab" data-tab="preview">Render preview</button>
   <button class="tab" data-tab="routing">Routing</button>
   <button class="tab" data-tab="cascade">Cascade</button>
+  <button class="tab" data-tab="delivery">Delivery rules</button>
   <button class="tab" data-tab="test">Send test</button>
 </nav>
 
@@ -34,7 +36,7 @@
   </div>
   <h2>Cascade</h2>
   <div class="card">
-    <p>When enabled, on ntfy failure Klaxon falls back to Telegram → SMTP.<br>
+    <p>When enabled, on ntfy failure klaxond falls back to Telegram → SMTP.<br>
        Always on for <code>/beszel/*</code>; gated for <code>/webhook/*</code> (Grafana usually has its own retries).</p>
     <p>Default (env): <code id="cas-default">?</code> · Runtime: <code id="cas-runtime">?</code></p>
     <button id="btn-cascade-toggle">Toggle runtime cascade</button>
@@ -160,22 +162,67 @@
   </div>
 </section>
 
+<section id="tab-delivery" class="tabpane">
+  <h2>Delivery — policies + rules</h2>
+  <p class="muted">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>legacy-cascade</code> is the global <code>[cascade]</code> tier list — picked here by name.</p>
+
+  <h3 style="margin-top:18px">Default policy (no-match fallback)</h3>
+  <div class="card">
+    <label>Default policy
+      <select id="d-default-policy"></select>
+    </label>
+  </div>
+
+  <h3>Policies</h3>
+  <table id="t-pol">
+    <thead><tr><th>Name</th><th>Mode</th><th>Tiers (in order)</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row">
+    <button id="btn-pol-add">+ Add policy</button>
+  </div>
+
+  <h3>Rules (first-match wins)</h3>
+  <table id="t-rules">
+    <thead><tr><th>#</th><th>Match (label = value, prefix <code>re:</code> for regex)</th><th>Policy</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="row">
+    <button id="btn-rule-add">+ Add rule</button>
+    <button id="btn-delivery-save" class="primary">Save delivery config</button>
+    <span id="delivery-status" class="muted"></span>
+  </div>
+</section>
+
 <section id="tab-test" class="tabpane">
   <h2>Send synthetic alert</h2>
-  <p class="muted">Runs the full cascade path (ntfy → Telegram → SMTP) with the configured runtime cascade flag. Counts toward "Recent deliveries".</p>
-  <label>Severity
-    <select id="t-sev"><option>info</option><option selected>warning</option><option>critical</option></select>
-  </label>
-  <label>Title <input id="t-title" value="Klaxon synthetic test"></label>
+  <p class="muted">Fires a real alert through the cascade (ntfy → Telegram → SMTP) with the runtime cascade flag. Counts toward "Recent deliveries".</p>
+  <div class="grid2">
+    <label>Severity
+      <select id="t-sev"><option>info</option><option selected>warning</option><option>critical</option></select>
+    </label>
+    <label>Component (action button preview)
+      <select id="t-component"><option value="">(none — freeform, no button)</option></select>
+    </label>
+  </div>
+  <div class="grid2">
+    <label>Host label
+      <input id="t-host" value="" placeholder="(optional — appended to title)">
+    </label>
+    <label>Title
+      <input id="t-title" value="klaxond synthetic test">
+    </label>
+  </div>
   <label>Body <textarea id="t-body" rows="3">Manual smoke test from the admin UI.</textarea></label>
   <button id="btn-test-fire" class="primary">Fire test alert</button>
+  <p class="muted">When a component is selected, the alert is built as a Grafana-shape payload with <code>commonLabels.component=&lt;chosen&gt;</code>. The render pipeline picks up the matching dashboard URL and adds the action button — exactly like a real alert would. Use this to verify your render config end-to-end without waiting for a real trigger.</p>
   <pre id="t-result">—</pre>
 </section>
 
 </main>
 
 <footer>
-  <small>Klaxon · <a href="https://github.com/your-org/klaxon" target="_blank">GitHub</a></small>
+  <small>klaxond · <a href="https://github.com/your-org/klaxon" target="_blank">GitHub</a></small>
 </footer>
 
 <script src="app.js"></script>

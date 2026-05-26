@@ -55,6 +55,52 @@ timeout_seconds = 10
 
 
 # ============================================================================
+# Delivery — fine-grained routing (per-component / per-severity / regex).
+# Replaces the simple cascade-only model with named policies + rules.
+# default_policy applies when no rule matches. The default policy can either
+# point to one of the [[delivery.policies]] below, or use the legacy
+# [cascade] block (set default_policy = "legacy-cascade").
+# ============================================================================
+[delivery]
+default_policy = "legacy-cascade"   # see [cascade] above for tier list
+
+# Named policies. mode = "cascade" (stop at first OK) | "broadcast" (fire to
+# all configured tiers in parallel — receive N notifications, one per tier).
+[[delivery.policies]]
+name = "critical-broadcast"
+mode = "broadcast"
+tiers = [
+  { name = "ntfy",     timeout_seconds = 5 },
+  { name = "telegram", timeout_seconds = 8 },
+  { name = "smtp",     timeout_seconds = 10 },
+]
+
+[[delivery.policies]]
+name = "ntfy-only"
+mode = "cascade"
+tiers = [{ name = "ntfy", timeout_seconds = 5 }]
+
+# Rules: evaluated in order, first match wins. Each `match.<label>` is either
+# an exact string match, OR a regex if the value starts with "re:" prefix.
+# Example: match.host = "re:^prod-.*" matches any host starting with prod-.
+# A rule with no matchers matches everything (catch-all — put last if used).
+
+[[delivery.rules]]
+# Critical alerts → broadcast everywhere.
+policy = "critical-broadcast"
+match.severity = "critical"
+
+# (uncomment to add more rules)
+# [[delivery.rules]]
+# policy = "ntfy-only"
+# match.severity = "info"
+#
+# [[delivery.rules]]
+# policy = "critical-broadcast"
+# match.host = "re:^prod-.*"
+
+
+# ============================================================================
 # Render — how alerts are formatted for the ntfy push
 # ============================================================================
 [render]

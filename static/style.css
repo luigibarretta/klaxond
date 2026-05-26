@@ -217,3 +217,31 @@ a:hover { text-decoration: underline; }
   font-weight: 500;
 }
 .ntfy-mock-actions a:hover { background: #2563eb; text-decoration: none; }
+
+
+/* About banner (dismissible) */
+.about {
+  background: linear-gradient(135deg, #1a2436 0%, #1e2a40 100%);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  position: relative;
+}
+.about-close {
+  position: absolute;
+  top: 6px; right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+.about-close:hover { color: var(--text); background: transparent; }
+.about-title { font-weight: 500; margin-bottom: 6px; color: var(--text); }
+.about-body { color: #cbd5e1; font-size: 13px; }
+.about-body p { margin: 6px 0; }
+.about-body code { background: rgba(255,255,255,0.05); }
+.about.hidden { display: none; }

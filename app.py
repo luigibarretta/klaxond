@@ -205,6 +205,27 @@ def _save_toml_config(cfg: dict) -> None:
             label, url = v[0], v[1]
             lines.append(f'{k} = ["{label}", "{url}"]')
         lines.append("")
+    delivery = cfg.get("delivery", {})
+    if delivery:
+        lines.append("[delivery]")
+        if delivery.get("default_policy"):
+            lines.append(f'default_policy = "{delivery["default_policy"]}"')
+        lines.append("")
+        for p in delivery.get("policies", []) or []:
+            lines.append("[[delivery.policies]]")
+            lines.append(f'name = "{p["name"]}"')
+            lines.append(f'mode = "{p.get("mode","cascade")}"')
+            tier_strs = []
+            for t in p.get("tiers", []) or []:
+                tier_strs.append('{{ name = "{0}", timeout_seconds = {1} }}'.format(t["name"], int(t.get("timeout_seconds", 5))))
+            lines.append("tiers = [" + ", ".join(tier_strs) + "]")
+            lines.append("")
+        for r in delivery.get("rules", []) or []:
+            lines.append("[[delivery.rules]]")
+            lines.append(f'policy = "{r["policy"]}"')
+            for k, v in (r.get("match", {}) or {}).items():
+                lines.append(f'match.{k} = "{v}"')
+            lines.append("")
     for inh in cfg.get("inhibitions", []):
         lines.append("[[inhibitions]]")
         lines.append(f'source = "{inh["source"]}"')
@@ -713,15 +734,90 @@ _TIER_FUNCS = {
 }
 
 
-def deliver(severity: str, parts: dict, with_cascade: bool) -> tuple[bool, str]:
-    """Walk the configured cascade tier list. The first tier is always tried;
-    the rest are only tried when with_cascade is True (always True for
-    /beszel/*). Returns (ok, channel_used)."""
-    tiers = TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS
+def _legacy_cascade_policy() -> dict:
+    """Build a synthetic policy from the legacy [cascade] block so that
+    default_policy = 'legacy-cascade' Just Works without duplicating the
+    tier list."""
+    return {
+        "name": "legacy-cascade",
+        "mode": "cascade",
+        "tiers": TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS,
+    }
+
+
+def _resolve_policy(name: str) -> dict | None:
+    if name == "legacy-cascade":
+        return _legacy_cascade_policy()
+    for p in TOML_CONFIG.get("delivery", {}).get("policies", []):
+        if p.get("name") == name:
+            return p
+    return None
+
+
+def _matcher_matches(matcher: dict, labels: dict) -> bool:
+    """Each k/v in matcher must hold for labels (exact, or regex if value starts with 're:')."""
+    for k, v in matcher.items():
+        actual = labels.get(k, "")
+        if isinstance(v, str) and v.startswith("re:"):
+            try:
+                if not re.search(v[3:], actual):
+                    return False
+            except re.error:
+                return False
+        else:
+            if actual != v:
+                return False
+    return True
+
+
+def _pick_policy(labels: dict) -> tuple[dict, str]:
+    """First rule whose `match` is a subset-AND match wins. Falls back to
+    default_policy. Returns (policy_dict, reason_str)."""
+    delivery = TOML_CONFIG.get("delivery", {}) or {}
+    for i, rule in enumerate(delivery.get("rules", []) or []):
+        m = rule.get("match", {}) or {}
+        if _matcher_matches(m, labels):
+            pol = _resolve_policy(rule.get("policy", ""))
+            if pol:
+                return pol, f"rule#{i+1}→{pol['name']}"
+    default = delivery.get("default_policy", "legacy-cascade")
+    pol = _resolve_policy(default)
+    if pol:
+        return pol, f"default→{default}"
+    # Hard fallback: synthetic legacy cascade so we never silently drop alerts.
+    return _legacy_cascade_policy(), "fallback→legacy"
+
+
+def deliver(severity: str, parts: dict, with_cascade: bool, labels: dict = None) -> tuple[bool, str]:
+    """Pick a policy from delivery.rules based on alert labels, then walk
+    its tiers in cascade or broadcast mode. `with_cascade` is honoured only
+    for cascade-mode policies on /webhook/* (legacy behaviour).
+
+    Returns (ok, channel_used). For broadcast mode, channel_used is a
+    "+"-joined list of tiers that succeeded.
+    """
+    labels = labels or {}
+    labels = {**labels, "severity": severity}
+    policy, reason = _pick_policy(labels)
+    tiers = policy.get("tiers") or _DEFAULT_TIERS
+    mode = policy.get("mode", "cascade")
+    log.info("policy picked: %s (mode=%s, %d tiers)", reason, mode, len(tiers))
+
+    if mode == "broadcast":
+        succeeded = []
+        for t in tiers:
+            fn = _TIER_FUNCS.get(t["name"])
+            if not fn:
+                continue
+            if fn(severity, parts, timeout=int(t.get("timeout_seconds", 10))):
+                succeeded.append(t["name"])
+        if succeeded:
+            return True, "+".join(succeeded)
+        return False, "broadcast-all-failed"
+
+    # cascade
     if not tiers:
-        log.error("no cascade tiers configured")
         return False, "no-tiers"
-    # First tier always
     first = tiers[0]
     fn = _TIER_FUNCS.get(first["name"])
     if fn and fn(severity, parts, timeout=int(first.get("timeout_seconds", 5))):
@@ -731,7 +827,6 @@ def deliver(severity: str, parts: dict, with_cascade: bool) -> tuple[bool, str]:
     for tier in tiers[1:]:
         fn = _TIER_FUNCS.get(tier["name"])
         if not fn:
-            log.warning("unknown cascade tier %s — skipping", tier["name"])
             continue
         if fn(severity, parts, timeout=int(tier.get("timeout_seconds", 10))):
             log.info("cascade delivered via %s: %s", tier["name"], parts["title"])
@@ -771,6 +866,15 @@ class Handler(BaseHTTPRequestHandler):
             tiers = TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS
             default_enabled = TOML_CONFIG.get("cascade", {}).get("default_enabled_for_webhook", CASCADE_ENABLED)
             self._send_json({"tiers": tiers, "default_enabled_for_webhook": default_enabled, "runtime_enabled": _cascade_runtime_enabled})
+        elif self.path == "/api/delivery-config":
+            delivery = TOML_CONFIG.get("delivery", {}) or {}
+            self._send_json({
+                "default_policy": delivery.get("default_policy", "legacy-cascade"),
+                "policies": delivery.get("policies", []) or [],
+                "rules":    delivery.get("rules", []) or [],
+                "available_tiers": list(_TIER_FUNCS.keys()),
+                "legacy_cascade_tiers": TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS,
+            })
         elif self.path == "/api/channel-config":
             self._send_json({
                 "ntfy": {
@@ -838,6 +942,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_cascade_config_update()
         if self.path == "/api/channel-config":
             return self._handle_channel_config_update()
+        if self.path == "/api/delivery-config":
+            return self._handle_delivery_config_update()
         if self.path == "/api/render-preview":
             return self._handle_render_preview()
 
@@ -882,7 +988,8 @@ class Handler(BaseHTTPRequestHandler):
             with_cascade = True
 
         log.info("[%s/%s] %s", source, severity, parts["title"])
-        ok, channel = deliver(severity, parts, with_cascade)
+        commonLabels = payload.get("commonLabels", {}) if source == "grafana" else {}
+        ok, channel = deliver(severity, parts, with_cascade, labels=commonLabels)
         if ok:
             self.send_response(200)
             self.end_headers()
@@ -903,14 +1010,40 @@ class Handler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length)) if length else {}
         except Exception:
             payload = {}
-        title = payload.get("title", f"Klaxon test [{severity}]")
+        title = payload.get("title", f"klaxond test [{severity}]")
         body  = payload.get("body",  "Synthetic alert from /api/test endpoint")
-        parts = {"title": title, "body": body, "tags": [severity, "test"],
-                 "actions": [], "priority": PRIORITIES.get(severity, "default")}
+        component = payload.get("component", "").strip()
+        host      = payload.get("host", "").strip()
+
+        if component or host:
+            # Build a Grafana-shape payload to exercise the real render
+            # pipeline (action button lookup, host suffix in title, tags
+            # from labels).
+            fake = {
+                "status": "firing",
+                "commonLabels": {
+                    "alertname": title,
+                    "severity": severity,
+                    "component": component,
+                    "host": host,
+                },
+                "commonAnnotations": {"summary": body},
+                "alerts": [{
+                    "labels": {"alertname": title, "host": host, "component": component},
+                    "annotations": {"summary": body},
+                    "generatorURL": "",
+                }],
+            }
+            parts = parse_grafana_payload(fake, severity)
+        else:
+            parts = {"title": title, "body": body, "tags": [severity, "test"],
+                     "actions": [], "priority": PRIORITIES.get(severity, "default")}
+
         global _cascade_runtime_enabled
-        ok, channel = deliver(severity, parts, _cascade_runtime_enabled)
-        _log_delivery("api-test", severity, title, channel if ok else "all-failed")
-        self._send_json({"ok": ok, "channel": channel, "title": title})
+        test_labels = {"component": component, "host": host} if (component or host) else {}
+        ok, channel = deliver(severity, parts, _cascade_runtime_enabled, labels=test_labels)
+        _log_delivery("api-test", severity, parts["title"], channel if ok else "all-failed")
+        self._send_json({"ok": ok, "channel": channel, "title": parts["title"]})
 
     def _handle_cascade_toggle(self):
         global _cascade_runtime_enabled
@@ -1021,6 +1154,57 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json(ntfy_preview)
 
 
+
+
+    def _handle_delivery_config_update(self):
+        global TOML_CONFIG
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        # Sanitize
+        delivery = TOML_CONFIG.setdefault("delivery", {})
+        if "default_policy" in payload:
+            delivery["default_policy"] = str(payload["default_policy"])
+        if "policies" in payload and isinstance(payload["policies"], list):
+            clean_policies = []
+            for p in payload["policies"]:
+                name = str(p.get("name", "")).strip()
+                mode = p.get("mode", "cascade")
+                if mode not in ("cascade", "broadcast"):
+                    mode = "cascade"
+                tiers = []
+                for t in p.get("tiers", []) or []:
+                    if t.get("name") in _TIER_FUNCS:
+                        try:
+                            to = int(t.get("timeout_seconds", 5))
+                        except Exception:
+                            to = 5
+                        tiers.append({"name": t["name"], "timeout_seconds": max(1, min(60, to))})
+                if name and tiers:
+                    clean_policies.append({"name": name, "mode": mode, "tiers": tiers})
+            delivery["policies"] = clean_policies
+        if "rules" in payload and isinstance(payload["rules"], list):
+            clean_rules = []
+            for r in payload["rules"]:
+                m = r.get("match", {}) or {}
+                # Only string values, drop empty
+                m = {str(k): str(v) for k, v in m.items() if isinstance(v, (str, int)) and str(v)}
+                pol = str(r.get("policy", "")).strip()
+                if pol:
+                    clean_rules.append({"match": m, "policy": pol})
+            delivery["rules"] = clean_rules
+        try:
+            _save_toml_config(TOML_CONFIG)
+            log.info("delivery-config updated via UI: %d policies, %d rules",
+                     len(delivery.get("policies", [])), len(delivery.get("rules", [])))
+            self._send_json({"ok": True})
+        except Exception as e:
+            log.error("delivery-config save failed: %s", e)
+            self.send_response(500); self.end_headers()
+            self.wfile.write(str(e).encode())
 
     def _handle_channel_config_update(self):
         """Update non-secret channel fields in klaxon.toml. Tokens/passwords
