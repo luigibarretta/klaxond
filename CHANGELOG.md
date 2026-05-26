@@ -63,3 +63,4 @@ First versioned release.
 - Image: `python:3.13-alpine` base, ~50 MB total.
 - Persistent state: `/data` (klaxon.toml + render-config.json).
 # trigger CI rebuild after runner config fix
+# retrigger CI
