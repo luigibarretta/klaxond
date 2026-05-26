@@ -65,3 +65,4 @@ First versioned release.
 # trigger CI rebuild after runner config fix
 # retrigger CI
 # trigger v0.3.4 with REGISTRY_TOKEN secret
+# retest with docker daemon DNS fix
