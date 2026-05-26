@@ -7,11 +7,11 @@
 # /app/klaxon.default.toml inside the image.
 
 services:
-  klaxon:
-    image: klaxon:latest
+  klaxond:
+    image: ghcr.io/your-org/klaxond:latest  # or: git.luigibarretta.com/luigibarretta/klaxond:latest
     # Comment image: above and uncomment build: to build locally:
     # build: .
-    container_name: klaxon
+    container_name: klaxond
     restart: always
     ports:
       - "8181:8181"
@@ -34,7 +34,7 @@ services:
       SMTP_TO: ${SMTP_TO:-}
       GRAFANA_BASE: ${GRAFANA_BASE:-}
     volumes:
-      - klaxon-data:/data
+      - klaxond-data:/data
 
 volumes:
   klaxon-data:

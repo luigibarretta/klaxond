@@ -1,5 +1,18 @@
 # Klaxon — CHANGELOG
 
+## 0.2.0 — 2026-05-26
+
+### Changed
+- **Renamed binary/image/repo from `klaxon` to `klaxond`** (Unix daemon
+  convention). Product display name remains "Klaxon". docker-compose.yml,
+  container name, image labels and source file headers updated.
+
+### Added
+- Gitea Actions workflow `.gitea/workflows/build.yml` for multi-arch
+  Docker image build (`linux/amd64` + `linux/arm64`) on `v*` tag push.
+  Image pushed to `git.luigibarretta.com/luigibarretta/klaxond:<tag>`
+  and `:latest`.
+
 ## 0.1.0 — 2026-05-26
 
 First versioned release.

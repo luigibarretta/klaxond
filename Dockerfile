@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.13-alpine
 
-LABEL org.opencontainers.image.title="klaxon"
+LABEL org.opencontainers.image.title="klaxond"
 LABEL org.opencontainers.image.description="Homelab notification bridge — Grafana/Beszel webhook → ntfy with cascade (Telegram, SMTP) and admin UI"
-LABEL org.opencontainers.image.source="https://example.com/yourname/klaxon"
+LABEL org.opencontainers.image.source="https://example.com/yourname/klaxond"
 LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app

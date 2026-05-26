@@ -1,5 +1,5 @@
 """
-webhook bridge — converts Grafana webhook JSON or Beszel webhook JSON into
+klaxond — converts Grafana webhook JSON or Beszel webhook JSON into
 ntfy pushes with proper headers/actions, with optional cascade fallback
 (ntfy → Telegram → mail via Gmail SMTP) when the primary channel fails.
 
@@ -45,7 +45,7 @@ from email.mime.text import MIMEText
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-log = logging.getLogger("bridge")
+log = logging.getLogger("klaxond")
 
 # These get populated by _apply_channel_config() after TOML is loaded.
 # Order of precedence: env var > TOML > hardcoded fallback (defined below).
@@ -1071,5 +1071,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8181"))
-    log.info("bridge listening on :%d  (cascade_enabled=%s)", port, CASCADE_ENABLED)
+    log.info("klaxond listening on :%d  (cascade_enabled=%s)", port, CASCADE_ENABLED)
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()

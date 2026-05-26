@@ -31,8 +31,8 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 ## Quick start
 
 ```bash
-git clone https://github.com/your-org/klaxon.git
-cd klaxon
+git clone https://github.com/your-org/klaxond.git
+cd klaxond
 cp .env.example .env
 # edit .env to fill the secrets: NTFY_TOKEN_*, TELEGRAM_BOT_TOKEN, SMTP_USER/PASSWORD
 docker compose up -d
@@ -192,7 +192,7 @@ Klaxon's inhibition is a safety net for direct posts. If you're using Alertmanag
 ## Project layout
 
 ```
-klaxon/
+klaxond/
 ├── app.py                  backend (Python stdlib only, ~800 lines)
 ├── static/
 │   ├── index.html          admin UI (single page)
