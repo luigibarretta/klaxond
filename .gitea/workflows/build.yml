@@ -32,8 +32,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: git.luigibarretta.com
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: luigibarretta
+          password: ${{ secrets.REGISTRY_TOKEN }}
 
       - name: Compute image metadata (tags + labels)
         id: meta
