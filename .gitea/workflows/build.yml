@@ -33,7 +33,7 @@ jobs:
         with:
           registry: git.luigibarretta.com
           username: ${{ github.actor }}
-          password: ${{ secrets.GITEA_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Compute image metadata (tags + labels)
         id: meta
