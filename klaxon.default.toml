@@ -1,0 +1,123 @@
+# klaxon.toml — bootstrap config for Klaxon notification bridge.
+# Loaded at container start from /data/klaxon.toml (or KLAXON_CONFIG path).
+# If the file is missing, the defaults below are written on first run.
+# Env vars (NTFY_TOKEN_*, TELEGRAM_BOT_TOKEN, SMTP_*) override the runtime
+# secrets — they are NOT stored in this file.
+
+# ============================================================================
+# Cascade — what fallback chain to use when ntfy fails
+# ============================================================================
+
+# ============================================================================
+# Channel routing — NON-SECRET endpoint info (URLs, topic ids, host:port).
+# Secrets (tokens, passwords) stay env-only via the Ansible vault, never in
+# this file. If an env var is set it overrides the TOML value (useful during
+# migration); after first deploy you can clear those env vars and rely on
+# TOML alone.
+# ============================================================================
+[ntfy]
+url = "https://ntfy.example.com"
+
+[ntfy.topics]
+info     = "<your-info-topic-id>"
+warning  = "<your-warning-topic-id>"
+critical = "<your-critical-topic-id>"
+
+[telegram]
+# Bot token is env-only (TELEGRAM_BOT_TOKEN).
+chat_id = ""
+
+[smtp]
+# Username + password are env-only (SMTP_USER, SMTP_PASSWORD).
+host = "smtp.gmail.com"
+port = 587
+from_addr = ""
+to_addr = ""
+
+[cascade]
+# Apply cascade to /webhook/* (Grafana via Alertmanager) by default.
+# /beszel/* always uses cascade regardless of this setting.
+default_enabled_for_webhook = false
+
+# Tiers tried IN ORDER. Stops at first success. Channels not in this list
+# are skipped entirely. Re-order or drop tiers as you like.
+[[cascade.tiers]]
+name = "ntfy"
+timeout_seconds = 5
+
+[[cascade.tiers]]
+name = "telegram"
+timeout_seconds = 8
+
+[[cascade.tiers]]
+name = "smtp"
+timeout_seconds = 10
+
+
+# ============================================================================
+# Render — how alerts are formatted for the ntfy push
+# ============================================================================
+[render]
+grafana_base = "https://grafana.example.com"
+
+# Emoji used in the title per severity.
+[render.severity_emoji]
+info     = "ℹ️"
+warning  = "⚠️"
+critical = "🚨"
+resolved = "✅"
+
+# ntfy priority per severity.
+[render.severity_priority]
+info     = "default"
+warning  = "high"
+critical = "urgent"
+resolved = "low"
+
+# Tag (ntfy emoji-name) prefix added before per-alert tags.
+[render.severity_tag_prefix]
+info     = "information_source"
+warning  = "warning"
+critical = "rotating_light"
+resolved = "white_check_mark"
+
+# component label → [button_label, url_or_path].
+# Paths starting with / are appended to grafana_base.
+[render.component_dashboards]
+# Examples — replace with mappings that match the `component` labels you set
+# on your Grafana alert rules. Paths starting with / are appended to
+# `grafana_base`; full URLs (http/https) are kept as-is.
+host       = ["Logs",                 "/d/your-logs-dashboard"]
+postgres   = ["Postgres",             "/d/your-postgres-dashboard"]
+traefik    = ["Traefik",              "/d/your-traefik-dashboard"]
+
+
+# ============================================================================
+# Inhibitions — in-memory safety net (Alertmanager owns the canonical layer).
+# Evaluated in order; first matching source wins.
+# ============================================================================
+[[inhibitions]]
+# source: identified by the `inhibition_source` label on the firing alert.
+source = "node-down"
+# Suppress every alert whose `host` label equals the source's `host` value.
+match_by = "host"
+ttl_seconds = 900
+
+[[inhibitions]]
+source = "traefik-down"
+# Suppress alerts whose label `job` matches the regex.
+match_label = "job"
+match_regex = "^blackbox-(https|http).*"
+ttl_seconds = 900
+
+[[inhibitions]]
+source = "authentik-down"
+match_label = "job"
+match_regex = "^blackbox-https.*"
+ttl_seconds = 900
+
+[[inhibitions]]
+source = "cluster-wide-restart"
+# Suppress EVERYTHING (except the source itself).
+match_all = true
+ttl_seconds = 1800

@@ -1,0 +1,40 @@
+# Standalone klaxon — no Ansible required.
+# Pull the image (or build from this dir) and bring up:
+#   docker compose up -d
+#
+# Env vars: set in .env next to this file (see .env.example).
+# On first run the container bootstraps /data/klaxon.toml from
+# /app/klaxon.default.toml inside the image.
+
+services:
+  klaxon:
+    image: klaxon:latest
+    # Comment image: above and uncomment build: to build locally:
+    # build: .
+    container_name: klaxon
+    restart: always
+    ports:
+      - "8181:8181"
+    environment:
+      NTFY_URL: ${NTFY_URL:-}
+      NTFY_TOKEN_INFO: ${NTFY_TOKEN_INFO:-}
+      NTFY_TOKEN_WARN: ${NTFY_TOKEN_WARN:-}
+      NTFY_TOKEN_CRIT: ${NTFY_TOKEN_CRIT:-}
+      TOPIC_INFO: ${TOPIC_INFO:-}
+      TOPIC_WARN: ${TOPIC_WARN:-}
+      TOPIC_CRIT: ${TOPIC_CRIT:-}
+      CASCADE_ENABLED: ${CASCADE_ENABLED:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TO: ${SMTP_TO:-}
+      GRAFANA_BASE: ${GRAFANA_BASE:-}
+    volumes:
+      - klaxon-data:/data
+
+volumes:
+  klaxon-data:
