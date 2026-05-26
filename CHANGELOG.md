@@ -64,3 +64,4 @@ First versioned release.
 - Persistent state: `/data` (klaxon.toml + render-config.json).
 # trigger CI rebuild after runner config fix
 # retrigger CI
+# trigger v0.3.4 with REGISTRY_TOKEN secret
