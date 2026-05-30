@@ -715,38 +715,91 @@ def parse_healthchecks_payload(payload: dict, severity: str) -> dict:
 
 
 
-def parse_wud_payload(payload: dict, severity: str) -> dict:
-    """WUD (What's Up Docker) HTTP trigger payload — mode 'simple'.
+def parse_wud_payload(payload, severity: str) -> dict:
+    """WUD (What's Up Docker) HTTP trigger payload.
 
-    WUD POSTs the following body (Content-Type: application/json):
-       { "title": "Container update available", "body": "Container X..." }
+    WUD HTTP trigger has TWO possible body shapes:
 
-    Optional extra keys we honor:
+    1) Raw container JSON (WUD's actual HTTP trigger behavior — `simpletitle`/
+       `simplebody` settings are IGNORED for the http channel; see
+       Http.js:sendHttpRequest which does options.data = container):
+       {
+         "name": "grafana", "watcher": "local",
+         "image": {"name": "grafana/grafana", "tag": {"value": "12.4.2"}},
+         "updateKind": {"kind": "tag", "localValue": "12.4.2",
+                         "remoteValue": "13.1.0", "semverDiff": "major"},
+         "result": {"link": "..."}, ...
+       }
+       (or an ARRAY of these for batch fires)
+
+    2) {title, body} — legacy manual format from curl tests / synthetic POSTs.
+
+    Optional extra keys honored on both shapes:
       - runbook_url    : per-payload runbook (falls back to FALLBACK_RUNBOOKS['wud'])
       - wud_url        : deep-link to WUD UI
 
-    WUD has no native multi-channel/retry, so cascade is always on (like Beszel/HC).
+    WUD has no native multi-channel/retry, so cascade is always on.
     """
-    title_raw = payload.get("title") or "Container update available"
-    body_raw = payload.get("body") or ""
-
     state_emoji = ICONS.get(severity, ICONS["info"])
-    title = f"{state_emoji} WUD: {title_raw}"
 
-    body = body_raw if body_raw else "Container update detected — see WUD UI for details."
+    # Batch shape: array of container objects → summarize
+    if isinstance(payload, list):
+        containers = payload
+        count = len(containers)
+        title_raw = f"{count} container update{'s' if count != 1 else ''} available"
+        lines = []
+        for c in containers[:10]:
+            n = c.get("name", "?")
+            uk = c.get("updateKind") or {}
+            local = uk.get("localValue") or "?"
+            remote = uk.get("remoteValue") or "?"
+            kind = uk.get("kind") or "tag"
+            semv = uk.get("semverDiff")
+            sv = f" ({semv})" if semv else ""
+            lines.append(f"• {n}: {kind} {local} ⇒ {remote}{sv}")
+        if count > 10:
+            lines.append(f"… +{count - 10} more")
+        body_raw = "\n".join(lines)
+        # Extra keys not available on lists; skip runbook/wud_url overrides
+        payload_extras = {}
+    elif isinstance(payload, dict) and "name" in payload and "updateKind" in payload:
+        # Single container JSON (WUD native HTTP trigger body)
+        name = payload.get("name", "?")
+        watcher = payload.get("watcher") or "local"
+        uk = payload.get("updateKind") or {}
+        local = uk.get("localValue") or "?"
+        remote = uk.get("remoteValue") or "?"
+        kind = uk.get("kind") or "tag"
+        semv = uk.get("semverDiff")
+        sv = f" ({semv})" if semv else ""
+        link = (payload.get("result") or {}).get("link") or ""
+        title_raw = f"Update available for {name} on {watcher}"
+        body_raw = f"{name}: {kind} {local} ⇒ {remote}{sv}"
+        if link:
+            body_raw += f"\n{link}"
+        payload_extras = payload
+    else:
+        # Legacy {title, body} shape (manual tests, synthetic POSTs)
+        title_raw = (payload.get("title") if isinstance(payload, dict) else None) or "Container update available"
+        body_raw = (payload.get("body") if isinstance(payload, dict) else None) or "Container update detected — see WUD UI for details."
+        payload_extras = payload if isinstance(payload, dict) else {}
+
+    title = f"{state_emoji} WUD: {title_raw}"
+    body = body_raw
 
     tags = [TAG_PREFIXES.get(severity, "package"), "wud", "container-update"]
 
     actions = []
-    rb = payload.get("runbook_url") or FALLBACK_RUNBOOKS.get("wud") or ""
+    rb = payload_extras.get("runbook_url") or FALLBACK_RUNBOOKS.get("wud") or ""
     if rb:
         actions.append(("view", "📖 Runbook", rb))
-    wud_url = payload.get("wud_url") or "http://192.168.50.110:3033/"
+    wud_url = payload_extras.get("wud_url") or "http://192.168.50.110:3033/"
     actions.append(("view", "📦 Open WUD", wud_url))
 
     priority = PRIORITIES.get(severity, "default")
 
     return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+
 
 
 def _strip_non_ascii(text: str) -> str:
