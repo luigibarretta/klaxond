@@ -1,3 +1,8 @@
+# Changelog
+
+## [unreleased]
+- Build retry: clear act cache (.gitignore stale file issue)
+
 # Klaxon — CHANGELOG
 
 ## 0.3.0 — 2026-05-26
