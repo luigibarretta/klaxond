@@ -52,9 +52,12 @@ log = logging.getLogger("klaxond")
 NTFY_URL = ""
 TOPICS   = {"info": "", "warning": "", "critical": ""}
 TOKENS   = {"info": "", "warning": "", "critical": ""}
-PRIORITIES = {"info": "default", "warning": "high", "critical": "urgent"}
+PRIORITIES = {"info": "default", "warning": "high", "critical": "urgent", "resolved": "low"}
 
-ICONS = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}
+ICONS = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨", "resolved": "✅"}
+TAG_PREFIXES = {"info": "information_source", "warning": "warning",
+                "critical": "rotating_light", "resolved": "white_check_mark"}
+FALLBACK_RUNBOOKS = {"beszel": "", "healthchecks": ""}
 
 GRAFANA_BASE = os.environ.get("GRAFANA_BASE", "https://grafana.example.com")
 
@@ -251,12 +254,16 @@ TOML_CONFIG = _load_toml_config()
 # Apply TOML config overrides (if klaxon.toml provided non-empty sections)
 # ============================================================================
 def _apply_toml_overrides():
-    global PRIORITIES, ICONS, COMPONENT_DASHBOARDS, INHIBITION_RULES, GRAFANA_BASE
+    global PRIORITIES, ICONS, TAG_PREFIXES, COMPONENT_DASHBOARDS, INHIBITION_RULES, GRAFANA_BASE, FALLBACK_RUNBOOKS
     render = TOML_CONFIG.get("render", {})
     if render.get("severity_priority"):
         PRIORITIES = dict(render["severity_priority"])
     if render.get("severity_emoji"):
         ICONS = dict(render["severity_emoji"])
+    if render.get("severity_tag_prefix"):
+        TAG_PREFIXES = dict(render["severity_tag_prefix"])
+    if render.get("fallback_runbooks"):
+        FALLBACK_RUNBOOKS = {**FALLBACK_RUNBOOKS, **render["fallback_runbooks"]}
     if render.get("component_dashboards"):
         COMPONENT_DASHBOARDS = {k: tuple(v) for k, v in render["component_dashboards"].items()}
     if render.get("grafana_base"):
@@ -554,7 +561,7 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
     component = common_labels.get("component", "")
     host      = common_labels.get("host") or common_labels.get("instance") or ""
 
-    state_emoji = "✅" if status == "resolved" else ICONS.get(severity, "ℹ️")
+    state_emoji = ICONS["resolved"] if status == "resolved" else ICONS.get(severity, ICONS["info"])
     title = f"{state_emoji} {alertname}"
     if host:
         title += f" — {host}"
@@ -578,16 +585,24 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
         body_parts.append(f"Affected: {', '.join(affected)}")
     body = "\n".join(body_parts) or "(no body)"
 
-    tags = [severity, component or "homelab"]
+    # When resolved, drop the severity literal from tag list — ntfy auto-renders
+    # 'warning'/'critical'/'info' as Unicode emoji, which would conflict with
+    # the ✅ resolved emoji in the title and confuse the user.
     if status == "resolved":
-        tags = ["white_check_mark"] + tags
+        tags = [TAG_PREFIXES.get("resolved", "white_check_mark"), component or "homelab"]
     else:
-        tags = [{"critical": "rotating_light", "warning": "warning", "info": "information_source"}.get(severity, "bell")] + tags
+        tags = [TAG_PREFIXES.get(severity, "bell"), severity, component or "homelab"]
 
     actions = []
+    # 1st button: runbook (if the alert rule sets annotations.runbook_url)
+    # — fronted because clicking the push usually means "show me what to do".
+    runbook_url = common_annot.get("runbook_url", "")
+    if runbook_url:
+        actions.append(("view", "📖 Runbook", runbook_url))
+    # 2nd button: component dashboard (where to see the state in Grafana)
     if component in COMPONENT_DASHBOARDS:
         label, slug = COMPONENT_DASHBOARDS[component]
-        actions.append(("view", f"Open {label}", f"{GRAFANA_BASE}{slug}"))
+        actions.append(("view", f"📊 {label}", f"{GRAFANA_BASE}{slug}"))
     rule_url = ""
     if alerts:
         rule_url = alerts[0].get("generatorURL", "")
@@ -617,7 +632,7 @@ def parse_beszel_payload(payload: dict, severity: str) -> dict:
     url      = payload.get("url", "")
 
     is_resolved = status in ("resolved", "ok", "back to normal")
-    state_emoji = "✅" if is_resolved else ICONS.get(severity, "ℹ️")
+    state_emoji = ICONS["resolved"] if is_resolved else ICONS.get(severity, ICONS["info"])
     title = f"{state_emoji} Beszel: {alert}"
     if system:
         title += f" — {system}"
@@ -631,13 +646,15 @@ def parse_beszel_payload(payload: dict, severity: str) -> dict:
         body_parts.append(f"value={value}")
     body = "\n".join(body_parts) or alert
 
-    tags = [severity, "beszel"]
     if is_resolved:
-        tags = ["white_check_mark"] + tags
+        tags = [TAG_PREFIXES.get("resolved", "white_check_mark"), "beszel"]
     else:
-        tags = [{"critical": "rotating_light", "warning": "warning", "info": "information_source"}.get(severity, "bell")] + tags
+        tags = [TAG_PREFIXES.get(severity, "bell"), severity, "beszel"]
 
-    actions = [("view", "Beszel UI", url)]
+    actions = []
+    if FALLBACK_RUNBOOKS.get("beszel"):
+        actions.append(("view", "📖 Runbook", FALLBACK_RUNBOOKS["beszel"]))
+    actions.append(("view", "📊 Beszel UI", url))
 
     priority = PRIORITIES.get(severity, "default")
     if is_resolved:
@@ -645,6 +662,65 @@ def parse_beszel_payload(payload: dict, severity: str) -> dict:
 
     return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
 
+
+def parse_healthchecks_payload(payload: dict, severity: str) -> dict:
+    """Healthchecks self-hosted webhook. HC supports placeholder substitution
+    in the body before POST, so we configure the channel to send JSON:
+       { "check": "...", "status": "up|down|fail|...", "code": "...",
+         "last_ping": "...", "tags": "...", "url": "<HC details page>" }
+    The `status` field drives resolved-vs-firing styling; everything else
+    is decorative."""
+    check     = payload.get("check") or payload.get("name") or "healthcheck"
+    status    = (payload.get("status") or "down").lower()
+    code      = payload.get("code", "")
+    last_ping = payload.get("last_ping", "")
+    raw_tags  = payload.get("tags", "")
+    url       = payload.get("url", "")
+
+    is_resolved = status in ("up", "ok", "resolved")
+    state_emoji = ICONS["resolved"] if is_resolved else ICONS.get(severity, ICONS["info"])
+    state_word = "UP" if is_resolved else "DOWN"
+    title = f"{state_emoji} HC {state_word}: {check}"
+
+    body_parts = [f"Status: {state_word}"]
+    if last_ping:
+        body_parts.append(f"Last ping: {last_ping}")
+    if code:
+        body_parts.append(f"Code: {code}")
+    if raw_tags:
+        body_parts.append(f"Tags: {raw_tags}")
+    body = "\n".join(body_parts)
+
+    if is_resolved:
+        tags = [TAG_PREFIXES.get("resolved", "white_check_mark"), "healthchecks"]
+    else:
+        tags = [TAG_PREFIXES.get(severity, "bell"), severity, "healthchecks"]
+
+    # 1st: runbook (per-payload override > per-source fallback)
+    rb = payload.get("runbook_url") or FALLBACK_RUNBOOKS.get("healthchecks") or ""
+    actions = []
+    if rb:
+        actions.append(("view", "📖 Runbook", rb))
+    # 2nd: HC check details page (deep-link)
+    if url:
+        actions.append(("view", "📊 Open in HC", url))
+    else:
+        actions.append(("view", "📊 Open Healthchecks", "https://hc.luigibarretta.com/projects/"))
+
+    priority = PRIORITIES.get(severity, "default")
+    if is_resolved:
+        priority = "low"
+
+    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+
+
+
+def _strip_non_ascii(text: str) -> str:
+    """Strip Unicode chars > 0x7F. ntfy headers are Latin-1 only — emoji
+    in action labels (📖 Runbook) cause urllib to raise. We keep emoji in
+    title (RFC 2047 base64-encoded) and in Telegram inline_keyboard (JSON
+    body, supports UTF-8), but Action labels must be ASCII-safe."""
+    return "".join(c if ord(c) < 128 else "" for c in text).strip()
 
 def post_to_ntfy(severity: str, parts: dict, timeout: int = 5) -> bool:
     topic = TOPICS[severity]
@@ -662,7 +738,7 @@ def post_to_ntfy(severity: str, parts: dict, timeout: int = 5) -> bool:
     }
     if parts.get("actions"):
         headers["Actions"] = "; ".join(
-            f"{kind}, {label}, {target}" for kind, label, target in parts["actions"][:3]
+            f"{kind}, {_strip_non_ascii(label)}, {target}" for kind, label, target in parts["actions"][:3]
         )
     req = urllib.request.Request(url, data=parts["body"].encode("utf-8"),
                                  headers=headers, method="POST")
@@ -677,18 +753,30 @@ def post_to_ntfy(severity: str, parts: dict, timeout: int = 5) -> bool:
 def post_to_telegram(severity: str, parts: dict, timeout: int = 8) -> bool:
     if not TG_TOKEN or not TG_CHAT:
         return False
-    emoji = ICONS.get(severity, "")
-    msg = f"{emoji} *{parts['title']}*\nseverity: `{severity}`\n\n{parts['body']}"
-    if parts.get("actions"):
-        # include first action URL as a tail link
-        kind, label, target = parts["actions"][0]
-        msg += f"\n\n[{label}]({target})"
-    data = urllib.parse.urlencode({
+    # HTML parse_mode is more robust than Markdown — only <, >, & need
+    # escaping in text. Markdown italic on stray underscores (e.g. body
+    # contains "remote_cache") causes 400 Bad Request from Telegram.
+    def _esc(t: str) -> str:
+        return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    msg = f"<b>{_esc(parts['title'])}</b>\nseverity: <code>{_esc(severity)}</code>\n\n{_esc(parts['body'])}"
+
+    # Build an inline_keyboard with one button per action URL.
+    payload = {
         "chat_id": TG_CHAT,
-        "parse_mode": "Markdown",
+        "parse_mode": "HTML",
         "text": msg,
         "disable_web_page_preview": "true",
-    }).encode("utf-8")
+    }
+    if parts.get("actions"):
+        payload["reply_markup"] = json.dumps({
+            "inline_keyboard": [
+                [{"text": label, "url": target}]
+                for _, label, target in parts["actions"][:5]  # cap safety
+                if target  # skip empty URLs
+            ]
+        })
+
+    data = urllib.parse.urlencode(payload).encode("utf-8")
     url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
     try:
         with urllib.request.urlopen(url, data=data, timeout=timeout) as resp:
@@ -736,17 +824,17 @@ _TIER_FUNCS = {
 
 def _legacy_cascade_policy() -> dict:
     """Build a synthetic policy from the legacy [cascade] block so that
-    default_policy = 'legacy-cascade' Just Works without duplicating the
+    default_policy = 'cascade' Just Works without duplicating the
     tier list."""
     return {
-        "name": "legacy-cascade",
+        "name": "cascade",
         "mode": "cascade",
         "tiers": TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS,
     }
 
 
 def _resolve_policy(name: str) -> dict | None:
-    if name == "legacy-cascade":
+    if name == "cascade":
         return _legacy_cascade_policy()
     for p in TOML_CONFIG.get("delivery", {}).get("policies", []):
         if p.get("name") == name:
@@ -780,7 +868,7 @@ def _pick_policy(labels: dict) -> tuple[dict, str]:
             pol = _resolve_policy(rule.get("policy", ""))
             if pol:
                 return pol, f"rule#{i+1}→{pol['name']}"
-    default = delivery.get("default_policy", "legacy-cascade")
+    default = delivery.get("default_policy", "cascade")
     pol = _resolve_policy(default)
     if pol:
         return pol, f"default→{default}"
@@ -788,7 +876,38 @@ def _pick_policy(labels: dict) -> tuple[dict, str]:
     return _legacy_cascade_policy(), "fallback→legacy"
 
 
-def deliver(severity: str, parts: dict, with_cascade: bool, labels: dict = None) -> tuple[bool, str]:
+
+def audit_log_delivery(severity: str, parts: dict, labels: dict, source: str,
+                       tiers_attempted: list, ok: bool, channel: str,
+                       started_at: float, ended_at: float) -> None:
+    """Emit one structured JSON line per delivery attempt.
+    Promtail scrapes klaxond's stdout into Loki; the JSON is parsed there
+    with a json|line_format pipeline to power the Alert health dashboard
+    and ad-hoc 'who got what, when' queries.
+
+    Schema kept stable on purpose. Add keys only — never remove or rename.
+    """
+    try:
+        record = {
+            "audit": "delivery",
+            "source": source,                    # grafana | beszel | healthchecks
+            "severity": severity,
+            "alertname": labels.get("alertname", parts.get("title","")[:120]),
+            "component": labels.get("component", ""),
+            "host": labels.get("host", labels.get("instance_name", "")),
+            "title": parts.get("title","")[:200],
+            "tiers_attempted": tiers_attempted,  # ["ntfy","telegram"] etc.
+            "ok": ok,
+            "channel": channel,                  # final delivery channel, or "all-failed"
+            "duration_ms": int((ended_at - started_at) * 1000),
+            "timestamp": int(ended_at * 1000),
+        }
+        log.info("AUDIT %s", json.dumps(record, separators=(",", ":"), default=str))
+    except Exception as e:  # never let audit break delivery
+        log.warning("audit_log_delivery failed: %s", e)
+
+
+def deliver(severity: str, parts: dict, with_cascade: bool, labels: dict = None, source: str = "unknown") -> tuple[bool, str]:
     """Pick a policy from delivery.rules based on alert labels, then walk
     its tiers in cascade or broadcast mode. `with_cascade` is honoured only
     for cascade-mode policies on /webhook/* (legacy behaviour).
@@ -803,35 +922,52 @@ def deliver(severity: str, parts: dict, with_cascade: bool, labels: dict = None)
     mode = policy.get("mode", "cascade")
     log.info("policy picked: %s (mode=%s, %d tiers)", reason, mode, len(tiers))
 
+    import time as _time
+    started_at = _time.time()
+    tiers_attempted = []
+
+    def _audit(ok: bool, channel: str):
+        audit_log_delivery(severity, parts, labels, source, tiers_attempted, ok, channel, started_at, _time.time())
+
     if mode == "broadcast":
         succeeded = []
         for t in tiers:
             fn = _TIER_FUNCS.get(t["name"])
             if not fn:
                 continue
+            tiers_attempted.append(t["name"])
             if fn(severity, parts, timeout=int(t.get("timeout_seconds", 10))):
                 succeeded.append(t["name"])
         if succeeded:
+            _audit(True, "+".join(succeeded))
             return True, "+".join(succeeded)
+        _audit(False, "broadcast-all-failed")
         return False, "broadcast-all-failed"
 
     # cascade
     if not tiers:
+        _audit(False, "no-tiers")
         return False, "no-tiers"
     first = tiers[0]
     fn = _TIER_FUNCS.get(first["name"])
+    tiers_attempted.append(first["name"])
     if fn and fn(severity, parts, timeout=int(first.get("timeout_seconds", 5))):
+        _audit(True, first["name"])
         return True, first["name"]
     if not with_cascade:
+        _audit(False, f"{first['name']}-failed")
         return False, f"{first['name']}-failed"
     for tier in tiers[1:]:
         fn = _TIER_FUNCS.get(tier["name"])
         if not fn:
             continue
+        tiers_attempted.append(tier["name"])
         if fn(severity, parts, timeout=int(tier.get("timeout_seconds", 10))):
             log.info("cascade delivered via %s: %s", tier["name"], parts["title"])
+            _audit(True, tier["name"])
             return True, tier["name"]
     log.error("ALL channels failed: %s", parts["title"])
+    _audit(False, "all-failed")
     return False, "all-failed"
 
 
@@ -869,7 +1005,7 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/delivery-config":
             delivery = TOML_CONFIG.get("delivery", {}) or {}
             self._send_json({
-                "default_policy": delivery.get("default_policy", "legacy-cascade"),
+                "default_policy": delivery.get("default_policy", "cascade"),
                 "policies": delivery.get("policies", []) or [],
                 "rules":    delivery.get("rules", []) or [],
                 "available_tiers": list(_TIER_FUNCS.keys()),
@@ -952,6 +1088,8 @@ class Handler(BaseHTTPRequestHandler):
             source = "grafana"
         elif self.path.startswith("/beszel/"):
             source = "beszel"
+        elif self.path.startswith("/healthchecks/"):
+            source = "healthchecks"
         else:
             self.send_response(404); self.end_headers(); return
 
@@ -981,15 +1119,22 @@ class Handler(BaseHTTPRequestHandler):
                 return
             parts = parse_grafana_payload(payload, severity)
             with_cascade = CASCADE_ENABLED
-        else:
+        elif source == "beszel":
             parts = parse_beszel_payload(payload, severity)
             # Beszel has no native retries/multi-channel, so the cascade is
             # always on for /beszel/* regardless of CASCADE_ENABLED.
             with_cascade = True
+        else:  # source == "healthchecks"
+            parts = parse_healthchecks_payload(payload, severity)
+            # HC sends 3 channels separately if we didn't centralize here.
+            # Through klaxond it gets the same cascade as Beszel — always on
+            # so the missing-ping signal reaches us via tier-2/3 if ntfy
+            # fails. (HC itself has retry but not multi-channel-with-fallback.)
+            with_cascade = True
 
         log.info("[%s/%s] %s", source, severity, parts["title"])
         commonLabels = payload.get("commonLabels", {}) if source == "grafana" else {}
-        ok, channel = deliver(severity, parts, with_cascade, labels=commonLabels)
+        ok, channel = deliver(severity, parts, with_cascade, labels=commonLabels, source=source)
         if ok:
             self.send_response(200)
             self.end_headers()

@@ -3,14 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>klaxond — notification daemon</title>
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<title>Klaxon — homelab notification bridge</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <h1><span class="dot dot-running"></span> klaxond</h1>
-  <small id="footer-tag">klaxond — cascade • inhibition • render</small>
+  <h1><span class="dot dot-running"></span> Klaxon</h1>
+  <small id="footer-tag">bridge • cascade • inhibition • render</small>
 </header>
 
 <nav class="tabs">
@@ -19,9 +18,6 @@
   <button class="tab" data-tab="deliveries">Recent deliveries</button>
   <button class="tab" data-tab="render">Render config</button>
   <button class="tab" data-tab="preview">Render preview</button>
-  <button class="tab" data-tab="routing">Routing</button>
-  <button class="tab" data-tab="cascade">Cascade</button>
-  <button class="tab" data-tab="delivery">Delivery rules</button>
   <button class="tab" data-tab="test">Send test</button>
 </nav>
 
@@ -36,7 +32,7 @@
   </div>
   <h2>Cascade</h2>
   <div class="card">
-    <p>When enabled, on ntfy failure klaxond falls back to Telegram → SMTP.<br>
+    <p>When enabled, on ntfy failure Klaxon falls back to Telegram → SMTP.<br>
        Always on for <code>/beszel/*</code>; gated for <code>/webhook/*</code> (Grafana usually has its own retries).</p>
     <p>Default (env): <code id="cas-default">?</code> · Runtime: <code id="cas-runtime">?</code></p>
     <button id="btn-cascade-toggle">Toggle runtime cascade</button>
@@ -45,7 +41,7 @@
 
 <section id="tab-inhibitions" class="tabpane">
   <h2>Active inhibitions (bridge in-memory safety net)</h2>
-  <p class="muted">Inhibition rules are also declared in Alertmanager (<a href="https://alertmanager.example.com/#/silences" target="_blank">silences UI</a>) — this list reflects the bridge's own safety-net layer for direct posts.</p>
+  <p class="muted">Inhibition rules are also declared in Alertmanager (<a href="https://alertmanager.luigibarretta.com/#/silences" target="_blank">silences UI</a>) — this list reflects the bridge's own safety-net layer for direct posts.</p>
   <table id="t-inhib">
     <thead><tr><th>Source</th><th>Anchor</th><th>Expires in</th></tr></thead>
     <tbody></tbody>
@@ -62,9 +58,9 @@
 
 <section id="tab-render" class="tabpane">
   <h2>Component → dashboard mapping</h2>
-  <p class="muted">When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button "Open &lt;label&gt;" pointing to URL. URLs starting with <code>/</code> are appended to <code id="gbase">https://grafana.example.com</code>.</p>
+  <p class="muted">When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button "Open &lt;label&gt;" pointing to URL. URLs starting with <code>/</code> are appended to <code id="gbase">https://grafana.luigibarretta.com</code>.</p>
   <table id="t-rc">
-    <thead><tr><th>Component</th><th>Button label</th><th>URL</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Component</th><th>Button label</th><th>URL</th><th></th></tr></thead>
     <tbody></tbody>
   </table>
   <div class="row">
@@ -90,139 +86,28 @@
       <button id="btn-load-beszel-sample">Load Beszel sample</button>
     </div>
     <div>
-      <label>Visual preview</label>
-      <div id="pv-visual" class="ntfy-mock">
-        <div class="ntfy-mock-app">ntfy · push.example.com</div>
-        <div class="ntfy-mock-title" id="pv-vis-title">—</div>
-        <div class="ntfy-mock-body" id="pv-vis-body">paste a payload + Render</div>
-        <div class="ntfy-mock-meta">
-          <span class="ntfy-mock-tags" id="pv-vis-tags"></span>
-          <span class="ntfy-mock-prio" id="pv-vis-prio"></span>
-        </div>
-        <div class="ntfy-mock-actions" id="pv-vis-actions"></div>
-      </div>
-      <label>Raw ntfy headers + body</label>
+      <label>ntfy headers + body</label>
       <pre id="pv-output">—</pre>
     </div>
   </div>
 </section>
 
-<section id="tab-routing" class="tabpane">
-  <h2>Channel routing</h2>
-  <p class="muted">Non-secret routing config (URLs, topic ids, host:port). Saved to <code>/data/klaxon.toml</code>. Secrets (Bearer tokens, bot tokens, SMTP password) stay in env vars from the Ansible vault and are NOT editable here.</p>
-
-  <h3 style="margin-top:18px">ntfy</h3>
-  <div class="card">
-    <label>Base URL <input type="text" id="r-ntfy-url"></label>
-    <div class="grid3">
-      <label>Topic info <input type="text" id="r-ntfy-info"></label>
-      <label>Topic warning <input type="text" id="r-ntfy-warn"></label>
-      <label>Topic critical <input type="text" id="r-ntfy-crit"></label>
-    </div>
-    <div class="muted" id="r-ntfy-status"></div>
-  </div>
-
-  <h3>Telegram</h3>
-  <div class="card">
-    <label>Chat ID <input type="text" id="r-tg-chat"></label>
-    <div class="muted" id="r-tg-status"></div>
-  </div>
-
-  <h3>SMTP</h3>
-  <div class="card">
-    <div class="grid2">
-      <label>Host <input type="text" id="r-smtp-host"></label>
-      <label>Port <input type="number" id="r-smtp-port" min="1" max="65535"></label>
-    </div>
-    <div class="grid2">
-      <label>From address <input type="text" id="r-smtp-from"></label>
-      <label>To address <input type="text" id="r-smtp-to"></label>
-    </div>
-    <div class="muted" id="r-smtp-status"></div>
-  </div>
-
-  <div class="row" style="margin-top:18px">
-    <button id="btn-routing-save" class="primary">Save routing</button>
-    <span id="routing-msg" class="muted"></span>
-  </div>
-</section>
-
-<section id="tab-cascade" class="tabpane">
-  <h2>Cascade tier chain</h2>
-  <p class="muted">Order matters: first tier is always tried; subsequent tiers are tried only if cascade is enabled (always on for <code>/beszel/*</code>, gated for <code>/webhook/*</code>). Drag rows to reorder, edit timeouts. Persisted to <code>/data/klaxon.toml</code>.</p>
-  <table id="t-cas">
-    <thead><tr><th>#</th><th>Channel</th><th>Timeout (s)</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="row">
-    <button id="btn-cas-add">+ Add tier</button>
-    <button id="btn-cas-save" class="primary">Save</button>
-    <label style="margin-left:auto"><input type="checkbox" id="cas-default"> default-enabled for /webhook/* (Grafana)</label>
-    <span id="cas-status" class="muted"></span>
-  </div>
-</section>
-
-<section id="tab-delivery" class="tabpane">
-  <h2>Delivery — policies + rules</h2>
-  <p class="muted">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>legacy-cascade</code> is the global <code>[cascade]</code> tier list — picked here by name.</p>
-
-  <h3 style="margin-top:18px">Default policy (no-match fallback)</h3>
-  <div class="card">
-    <label>Default policy
-      <select id="d-default-policy"></select>
-    </label>
-  </div>
-
-  <h3>Policies</h3>
-  <table id="t-pol">
-    <thead><tr><th>Name</th><th>Mode</th><th>Tiers (in order)</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="row">
-    <button id="btn-pol-add">+ Add policy</button>
-  </div>
-
-  <h3>Rules (first-match wins)</h3>
-  <table id="t-rules">
-    <thead><tr><th>#</th><th>Match (label = value, prefix <code>re:</code> for regex)</th><th>Policy</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="row">
-    <button id="btn-rule-add">+ Add rule</button>
-    <button id="btn-delivery-save" class="primary">Save delivery config</button>
-    <span id="delivery-status" class="muted"></span>
-  </div>
-</section>
-
 <section id="tab-test" class="tabpane">
   <h2>Send synthetic alert</h2>
-  <p class="muted">Fires a real alert through the cascade (ntfy → Telegram → SMTP) with the runtime cascade flag. Counts toward "Recent deliveries".</p>
-  <div class="grid2">
-    <label>Severity
-      <select id="t-sev"><option>info</option><option selected>warning</option><option>critical</option></select>
-    </label>
-    <label>Component (action button preview)
-      <select id="t-component"><option value="">(none — freeform, no button)</option></select>
-    </label>
-  </div>
-  <div class="grid2">
-    <label>Host label
-      <input id="t-host" value="" placeholder="(optional — appended to title)">
-    </label>
-    <label>Title
-      <input id="t-title" value="klaxond synthetic test">
-    </label>
-  </div>
+  <p class="muted">Runs the full cascade path (ntfy → Telegram → SMTP) with the configured runtime cascade flag. Counts toward "Recent deliveries".</p>
+  <label>Severity
+    <select id="t-sev"><option>info</option><option selected>warning</option><option>critical</option></select>
+  </label>
+  <label>Title <input id="t-title" value="Klaxon synthetic test"></label>
   <label>Body <textarea id="t-body" rows="3">Manual smoke test from the admin UI.</textarea></label>
   <button id="btn-test-fire" class="primary">Fire test alert</button>
-  <p class="muted">When a component is selected, the alert is built as a Grafana-shape payload with <code>commonLabels.component=&lt;chosen&gt;</code>. The render pipeline picks up the matching dashboard URL and adds the action button — exactly like a real alert would. Use this to verify your render config end-to-end without waiting for a real trigger.</p>
   <pre id="t-result">—</pre>
 </section>
 
 </main>
 
 <footer>
-  <small>klaxond · <a href="https://github.com/your-org/klaxon" target="_blank">GitHub</a></small>
+  <small>Klaxon · <a href="https://grafana.luigibarretta.com" target="_blank">Grafana</a> · <a href="https://alertmanager.luigibarretta.com" target="_blank">Alertmanager</a> · <a href="https://ntfy.luigibarretta.com" target="_blank">ntfy</a></small>
 </footer>
 
 <script src="app.js"></script>

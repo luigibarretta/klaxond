@@ -7,33 +7,6 @@
 # ============================================================================
 # Cascade — what fallback chain to use when ntfy fails
 # ============================================================================
-
-# ============================================================================
-# Channel routing — NON-SECRET endpoint info (URLs, topic ids, host:port).
-# Secrets (tokens, passwords) stay env-only via the Ansible vault, never in
-# this file. If an env var is set it overrides the TOML value (useful during
-# migration); after first deploy you can clear those env vars and rely on
-# TOML alone.
-# ============================================================================
-[ntfy]
-url = "https://ntfy.example.com"
-
-[ntfy.topics]
-info     = "<your-info-topic-id>"
-warning  = "<your-warning-topic-id>"
-critical = "<your-critical-topic-id>"
-
-[telegram]
-# Bot token is env-only (TELEGRAM_BOT_TOKEN).
-chat_id = ""
-
-[smtp]
-# Username + password are env-only (SMTP_USER, SMTP_PASSWORD).
-host = "smtp.gmail.com"
-port = 587
-from_addr = ""
-to_addr = ""
-
 [cascade]
 # Apply cascade to /webhook/* (Grafana via Alertmanager) by default.
 # /beszel/* always uses cascade regardless of this setting.
@@ -55,56 +28,10 @@ timeout_seconds = 10
 
 
 # ============================================================================
-# Delivery — fine-grained routing (per-component / per-severity / regex).
-# Replaces the simple cascade-only model with named policies + rules.
-# default_policy applies when no rule matches. The default policy can either
-# point to one of the [[delivery.policies]] below, or use the legacy
-# [cascade] block (set default_policy = "legacy-cascade").
-# ============================================================================
-[delivery]
-default_policy = "legacy-cascade"   # see [cascade] above for tier list
-
-# Named policies. mode = "cascade" (stop at first OK) | "broadcast" (fire to
-# all configured tiers in parallel — receive N notifications, one per tier).
-[[delivery.policies]]
-name = "critical-broadcast"
-mode = "broadcast"
-tiers = [
-  { name = "ntfy",     timeout_seconds = 5 },
-  { name = "telegram", timeout_seconds = 8 },
-  { name = "smtp",     timeout_seconds = 10 },
-]
-
-[[delivery.policies]]
-name = "ntfy-only"
-mode = "cascade"
-tiers = [{ name = "ntfy", timeout_seconds = 5 }]
-
-# Rules: evaluated in order, first match wins. Each `match.<label>` is either
-# an exact string match, OR a regex if the value starts with "re:" prefix.
-# Example: match.host = "re:^prod-.*" matches any host starting with prod-.
-# A rule with no matchers matches everything (catch-all — put last if used).
-
-[[delivery.rules]]
-# Critical alerts → broadcast everywhere.
-policy = "critical-broadcast"
-match.severity = "critical"
-
-# (uncomment to add more rules)
-# [[delivery.rules]]
-# policy = "ntfy-only"
-# match.severity = "info"
-#
-# [[delivery.rules]]
-# policy = "critical-broadcast"
-# match.host = "re:^prod-.*"
-
-
-# ============================================================================
 # Render — how alerts are formatted for the ntfy push
 # ============================================================================
 [render]
-grafana_base = "https://grafana.example.com"
+grafana_base = "https://grafana.luigibarretta.com"
 
 # Emoji used in the title per severity.
 [render.severity_emoji]
@@ -130,12 +57,21 @@ resolved = "white_check_mark"
 # component label → [button_label, url_or_path].
 # Paths starting with / are appended to grafana_base.
 [render.component_dashboards]
-# Examples — replace with mappings that match the `component` labels you set
-# on your Grafana alert rules. Paths starting with / are appended to
-# `grafana_base`; full URLs (http/https) are kept as-is.
-host       = ["Logs",                 "/d/your-logs-dashboard"]
-postgres   = ["Postgres",             "/d/your-postgres-dashboard"]
-traefik    = ["Traefik",              "/d/your-traefik-dashboard"]
+ups        = ["UPS dashboard",        "/d/ups-ecoflow-overview"]
+postgres   = ["Postgres cluster",     "/d/infra-postgres-cluster"]
+loki       = ["Logs (Loki)",          "/d/loki-cluster-logs"]
+traefik    = ["Traefik",              "/d/qPdAviJmz4"]
+authentik  = ["Authentik",            "/d/authentik"]
+prometheus = ["Prometheus targets",   "/explore"]
+docker     = ["Logs (Loki)",          "/d/loki-cluster-logs"]
+host       = ["Logs (Loki)",          "/d/loki-cluster-logs"]
+backup     = ["Backup health",        "/d/infra-backup-health"]
+semaphore  = ["Semaphore tasks",      "/d/infra-semaphore-tasks"]
+fail2ban   = ["Fail2ban",             "/d/fail2ban-cluster"]
+dns        = ["DNS resolvers",        "/d/infra-dns-resolvers"]
+clamav     = ["ClamAV logs",          "/d/loki-cluster-logs?var-container=clamd"]
+zfs        = ["ZFS / nas-01 logs",    "/d/loki-cluster-logs?var-host=it1-prd-nas-01"]
+beszel     = ["Beszel UI",            "https://beszel.luigibarretta.com/"]
 
 
 # ============================================================================
