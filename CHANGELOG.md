@@ -1,3 +1,19 @@
+## [0.5.9] - 2026-05-30
+### Added
+- POST /wud/<severity> endpoint for WUD (What's Up Docker) HTTP trigger
+  notifications. parse_wud_payload handles WUD's simple {title, body}
+  format. Cascade always-on (WUD has no retry native).
+- Frontend sample loaders: "Load Healthchecks sample" + "Load WUD sample"
+  buttons in Render Preview tab.
+- Backend _handle_render_preview now dispatches healthchecks (check+status)
+  and wud (title+body) payload shapes (was falling back to beszel parser).
+- klaxon.default.toml: fallback_runbooks.wud entry.
+
+### Fixed
+- Static UI restored from cc2b23f after drift recovery sync regression
+  (305 lines app.js, 113 HTML, 99 CSS lost). All tabs (Routing, Cascade,
+  Delivery rules, Inhibitions, Render preview ntfy-mock, Test) restored.
+
 # Changelog
 
 ## [unreleased]
