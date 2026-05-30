@@ -139,9 +139,24 @@ const beszelSample = {
   "status": "triggered",
   "url": "https://beszel.luigibarretta.com/system/mgmt-01"
 };
+const healthchecksSample = {
+  "check": "semaphore-app-db-backup",
+  "status": "down",
+  "code": "01d415d8-e39f-4e87-bd44-5c60c2a0fd0a",
+  "last_ping": "2026-05-30T03:00:00Z",
+  "tags": "semaphore backup",
+  "url": "https://hc.luigibarretta.com/checks/01d415d8/details/"
+};
+const wudSample = {
+  "title": "Container update available",
+  "body": "Container nginx (docker.io/library/nginx:1.27.0) can be updated to 1.27.1",
+  "wud_url": "http://192.168.50.110:3033/"
+};
 
 $("#btn-load-grafana-sample").addEventListener("click", () => $("#pv-input").value = JSON.stringify(grafanaSample, null, 2));
 $("#btn-load-beszel-sample").addEventListener("click", () => $("#pv-input").value = JSON.stringify(beszelSample, null, 2));
+const _hcBtn = $("#btn-load-healthchecks-sample"); if (_hcBtn) _hcBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(healthchecksSample, null, 2));
+const _wudBtn = $("#btn-load-wud-sample"); if (_wudBtn) _wudBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(wudSample, null, 2));
 
 $("#btn-preview").addEventListener("click", async () => {
   try {

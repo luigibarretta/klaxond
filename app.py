@@ -1321,6 +1321,10 @@ class Handler(BaseHTTPRequestHandler):
         sample = payload.get("payload", {})
         if "alerts" in sample or "commonLabels" in sample:
             parts = parse_grafana_payload(sample, severity)
+        elif "check" in sample and "status" in sample:
+            parts = parse_healthchecks_payload(sample, severity)
+        elif "title" in sample and "body" in sample and "alert" not in sample:
+            parts = parse_wud_payload(sample, severity)
         else:
             parts = parse_beszel_payload(sample, severity)
         # Build the ntfy headers that WOULD be sent (without actually sending)
