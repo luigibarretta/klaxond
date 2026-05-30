@@ -3,13 +3,19 @@
 > Notification bridge for homelab alerting — turns Grafana Alertmanager and Beszel webhooks into clean ntfy pushes, with built-in cascade fallback (ntfy → Telegram → SMTP), declarative inhibition rules, and a single-page admin UI.
 
 ```
-┌──────────────┐   ┌────────┐                            ┌──────────────────────────┐
-│ Alertmanager │ ──┤        ├──→  POST /webhook/<sev> ──→│                          │
-└──────────────┘   │ klaxon │                            │   render → cascade tiers │
-┌──────────────┐   │        │                            │   1. ntfy       (5s)     │
-│   Beszel     │ ──┤        ├──→  POST /beszel/<sev>  ──→│   2. Telegram   (8s)     │
-└──────────────┘   └────────┘                            │   3. Gmail SMTP (10s)    │
-                                                         └──────────────────────────┘
+┌──────────────┐   ┌────────┐                                 ┌──────────────────────────┐
+│ Alertmanager │ ──┤        ├──→  POST /webhook/<sev>      ──→│                          │
+└──────────────┘   │        │                                 │                          │
+┌──────────────┐   │        │                                 │                          │
+│   Beszel     │ ──┤ klaxon ├──→  POST /beszel/<sev>       ──→│   render → cascade tiers │
+└──────────────┘   │        │                                 │   1. ntfy       (5s)     │
+┌──────────────┐   │        │                                 │   2. Telegram   (8s)     │
+│ Healthchecks │ ──┤        ├──→  POST /healthchecks/<sev> ──→│   3. Gmail SMTP (10s)    │
+└──────────────┘   │        │                                 │                          │
+┌──────────────┐   │        │                                 │                          │
+│ WUD (What's  │ ──┤        ├──→  POST /wud/<sev>          ──→│                          │
+│ Up Docker)   │   └────────┘                                 │                          │
+└──────────────┘                                              └──────────────────────────┘
 ```
 
 ## Why
@@ -20,7 +26,7 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 
 ## Features
 
-- **Two webhook formats**: `/webhook/<sev>` (Grafana Alertmanager-shape) and `/beszel/<sev>` (Beszel-shape).
+- **Four webhook formats**: `/webhook/<sev>` (Grafana Alertmanager-shape), `/beszel/<sev>` (Beszel-shape), `/healthchecks/<sev>` (HC self-hosted JSON), `/wud/<sev>` (WUD HTTP trigger `{title, body}`).
 - **3-tier cascade fallback** — ntfy → Telegram → SMTP. Always on for Beszel, gated for Grafana.
 - **Rich ntfy push rendering**: severity emoji in title (RFC 2047 base64-encoded for non-ASCII), priority + tag mapping, up to 2 action buttons via `component` label → dashboard URL.
 - **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
@@ -46,8 +52,10 @@ Open `http://localhost:8181/ui/` to access the admin UI. Edit channel URLs/topic
 
 | Method | Path | Source |
 |---|---|---|
-| `POST` | `/webhook/<severity>` | Alertmanager / Grafana |
-| `POST` | `/beszel/<severity>` | Beszel UI webhook channel |
+| `POST` | `/webhook/<severity>` | Alertmanager / Grafana (commonLabels + alerts[] shape) |
+| `POST` | `/beszel/<severity>` | Beszel UI webhook channel (`{alert, system, value, threshold, status, url}`) |
+| `POST` | `/healthchecks/<severity>` | Healthchecks self-hosted webhook (`{check, status, code, last_ping, tags, url}`) |
+| `POST` | `/wud/<severity>` | WUD (What's Up Docker) HTTP trigger (`{title, body}` simple mode, cascade always on) |
 
 `<severity>` is one of `info`, `warning`, `critical`.
 
@@ -110,7 +118,7 @@ from_addr = "klaxon@example.com"
 to_addr   = "oncall@example.com"
 
 [cascade]
-default_enabled_for_webhook = false   # /beszel/* always uses cascade
+default_enabled_for_webhook = false   # /beszel/*, /healthchecks/*, /wud/* always use cascade
 
 [[cascade.tiers]]
 name = "ntfy"
