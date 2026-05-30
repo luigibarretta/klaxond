@@ -1,4 +1,4 @@
-// Klaxon admin UI — vanilla JS, no framework.
+// klaxond admin UI — vanilla JS, no framework.
 
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
@@ -10,15 +10,34 @@ const J = async (url, opts) => {
   return ct.includes("json") ? r.json() : r.text();
 };
 
-// ---- Tab switching ----
+// ---- Tab switching (with URL hash routing) ----
+function activateTab(tabId) {
+  $$(".tab").forEach(x => x.classList.remove("active"));
+  $$(".tabpane").forEach(x => x.classList.remove("active"));
+  const btn = document.querySelector(`.tab[data-tab="${tabId}"]`);
+  const pane = $("#tab-" + tabId);
+  if (btn && pane) {
+    btn.classList.add("active");
+    pane.classList.add("active");
+    return true;
+  }
+  return false;
+}
+
+function syncTabFromHash() {
+  const h = (location.hash || "").replace(/^#/, "");
+  if (h && activateTab(h)) return;
+  activateTab("status");  // default
+}
+
 $$(".tab").forEach(t => {
   t.addEventListener("click", () => {
-    $$(".tab").forEach(x => x.classList.remove("active"));
-    $$(".tabpane").forEach(x => x.classList.remove("active"));
-    t.classList.add("active");
-    $("#tab-" + t.dataset.tab).classList.add("active");
+    location.hash = "#" + t.dataset.tab;  // triggers hashchange
   });
 });
+
+window.addEventListener("hashchange", syncTabFromHash);
+syncTabFromHash();
 
 // ---- Status ----
 async function loadStatus() {
@@ -87,7 +106,17 @@ async function loadRC() {
     $("#gbase").textContent = j.grafana_base;
     rcData = j.component_dashboards;
     renderRCTable();
+    populateTestComponentSelect();
   } catch (e) { console.warn("rc fetch:", e); }
+}
+
+function populateTestComponentSelect() {
+  const sel = $("#t-component");
+  if (!sel) return;
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">(none — freeform, no button)</option>` +
+    Object.keys(rcData).sort().map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)} → ${escapeHtml(rcData[k][0])}</option>`).join("");
+  if (cur && rcData[cur]) sel.value = cur;
 }
 
 function renderRCTable() {
@@ -102,8 +131,17 @@ function addRCRow(component="", label="", url="") {
     <td><input type="text" value="${escapeHtml(component)}" data-f="key"></td>
     <td><input type="text" value="${escapeHtml(label)}" data-f="label"></td>
     <td><input type="text" value="${escapeHtml(url)}" data-f="url"></td>
-    <td><button class="danger" data-del>×</button></td>`;
+    <td>
+      <button data-test title="Open URL in new tab">↗</button>
+      <button class="danger" data-del>×</button>
+    </td>`;
   tr.querySelector("[data-del]").addEventListener("click", () => tr.remove());
+  tr.querySelector("[data-test]").addEventListener("click", () => {
+    const u = tr.querySelector('[data-f="url"]').value.trim();
+    if (!u) return;
+    const full = u.startsWith("http") ? u : ($("#gbase").textContent.replace(/\/$/, "") + u);
+    window.open(full, "_blank", "noopener");
+  });
   tb.appendChild(tr);
 }
 
@@ -121,23 +159,24 @@ $("#btn-rc-save").addEventListener("click", async () => {
     $("#rc-status").textContent = `Saved (${r.count} mappings) ✓`;
     setTimeout(() => $("#rc-status").textContent = "", 3000);
     rcData = out;
+    populateTestComponentSelect();
   } catch (e) { $("#rc-status").textContent = "Error: " + e.message; }
 });
 
 // ---- Render preview ----
 const grafanaSample = {
   "status": "firing",
-  "commonLabels": {"alertname":"HostDiskFull","host":"it1-prd-mgmt-01","severity":"warning","component":"host"},
-  "commonAnnotations": {"summary":"Disk usage > 85% on mgmt-01","description":"Approaching critical threshold. Investigate and free space."},
-  "alerts":[{"labels":{"alertname":"HostDiskFull","host":"it1-prd-mgmt-01"},"generatorURL":"https://grafana.luigibarretta.com/alerting/grafana/uid/abc/view"}]
+  "commonLabels": {"alertname":"HostDiskFull","host":"web-01","severity":"warning","component":"host"},
+  "commonAnnotations": {"summary":"Disk usage > 85% on web-01","description":"Approaching critical threshold. Investigate and free space."},
+  "alerts":[{"labels":{"alertname":"HostDiskFull","host":"web-01"},"generatorURL":"https://grafana.example.com/alerting/grafana/uid/abc/view"}]
 };
 const beszelSample = {
   "alert": "CPU usage > 80",
-  "system": "it1-prd-mgmt-01",
+  "system": "web-01",
   "value": "86.4",
   "threshold": "80",
   "status": "triggered",
-  "url": "https://beszel.luigibarretta.com/system/mgmt-01"
+  "url": "https://beszel.example.com/system/web-01"
 };
 const healthchecksSample = {
   "check": "semaphore-app-db-backup",
@@ -167,18 +206,44 @@ $("#btn-preview").addEventListener("click", async () => {
       headers: {"Content-Type": "application/json"}
     });
     $("#pv-output").textContent = JSON.stringify(r, null, 2);
+    renderNtfyMock(r);
   } catch (e) {
     $("#pv-output").textContent = "Error: " + e.message;
+    $("#pv-vis-body").textContent = "Error rendering preview";
   }
 });
+
+function renderNtfyMock(r) {
+  const h = r.headers || {};
+  $("#pv-vis-title").textContent = h["Title (raw)"] || "—";
+  $("#pv-vis-body").textContent = r.body || "(empty body)";
+  const tags = (h["Tags"] || "").split(",").filter(Boolean);
+  $("#pv-vis-tags").innerHTML = tags.map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
+  const prio = (h["Priority"] || "default").toLowerCase();
+  const prioEl = $("#pv-vis-prio");
+  prioEl.textContent = prio.toUpperCase();
+  prioEl.className = "ntfy-mock-prio " + prio;
+  const actions = (h["Actions"] || "").split(";").map(s => s.trim()).filter(Boolean);
+  $("#pv-vis-actions").innerHTML = actions.map(a => {
+    const [kind, label, url] = a.split(",").map(x => x.trim());
+    return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+  }).join("");
+}
+
 
 // ---- Send test ----
 $("#btn-test-fire").addEventListener("click", async () => {
   const sev = $("#t-sev").value;
+  const payload = {
+    title:     $("#t-title").value,
+    body:      $("#t-body").value,
+    component: $("#t-component").value,
+    host:      $("#t-host").value,
+  };
   try {
     const r = await J(`/api/test/${sev}`, {
       method: "POST",
-      body: JSON.stringify({title: $("#t-title").value, body: $("#t-body").value}),
+      body: JSON.stringify(payload),
       headers: {"Content-Type": "application/json"}
     });
     $("#t-result").textContent = JSON.stringify(r, null, 2);
@@ -188,9 +253,268 @@ $("#btn-test-fire").addEventListener("click", async () => {
   }
 });
 
+
+
+// ---- Routing (channel config) ----
+async function loadRouting() {
+  try {
+    const c = await J("/api/channel-config");
+    $("#r-ntfy-url").value = c.ntfy.url || "";
+    $("#r-ntfy-info").value = c.ntfy.topics.info || "";
+    $("#r-ntfy-warn").value = c.ntfy.topics.warning || "";
+    $("#r-ntfy-crit").value = c.ntfy.topics.critical || "";
+    const tok = c.ntfy.tokens_configured;
+    $("#r-ntfy-status").innerHTML = `tokens: info=${badge(tok.info)} warning=${badge(tok.warning)} critical=${badge(tok.critical)}` +
+      (c.ntfy.url_from_env ? " · <em>url overridden by env</em>" : "");
+    $("#r-tg-chat").value = c.telegram.chat_id || "";
+    $("#r-tg-status").innerHTML = `bot token: ${badge(c.telegram.bot_token_configured)}` +
+      (c.telegram.chat_id_from_env ? " · <em>chat_id overridden by env</em>" : "");
+    $("#r-smtp-host").value = c.smtp.host || "";
+    $("#r-smtp-port").value = c.smtp.port || 587;
+    $("#r-smtp-from").value = c.smtp.from_addr || "";
+    $("#r-smtp-to").value = c.smtp.to_addr || "";
+    $("#r-smtp-status").innerHTML = `user: ${badge(c.smtp.user_configured)} password: ${badge(c.smtp.password_configured)}` +
+      (c.smtp.host_from_env ? " · <em>host overridden by env</em>" : "");
+  } catch (e) { console.warn("routing fetch:", e); }
+}
+
+const badge = ok => ok ? "<span style='color:var(--green)'>✓ configured</span>" : "<span style='color:var(--red)'>✗ missing</span>";
+
+$("#btn-routing-save").addEventListener("click", async () => {
+  const payload = {
+    ntfy: {
+      url: $("#r-ntfy-url").value.trim(),
+      topics: {
+        info:     $("#r-ntfy-info").value.trim(),
+        warning:  $("#r-ntfy-warn").value.trim(),
+        critical: $("#r-ntfy-crit").value.trim(),
+      }
+    },
+    telegram: { chat_id: $("#r-tg-chat").value.trim() },
+    smtp: {
+      host: $("#r-smtp-host").value.trim(),
+      port: parseInt($("#r-smtp-port").value, 10) || 587,
+      from_addr: $("#r-smtp-from").value.trim(),
+      to_addr: $("#r-smtp-to").value.trim(),
+    }
+  };
+  try {
+    await J("/api/channel-config", { method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" } });
+    $("#routing-msg").textContent = "Saved ✓ (env vars still take precedence if set)";
+    setTimeout(() => $("#routing-msg").textContent = "", 4000);
+    loadStatus();
+  } catch (e) { $("#routing-msg").textContent = "Error: " + e.message; }
+});
+
+
+// ---- Cascade tiers ----
+const TIER_OPTS = ["ntfy", "telegram", "smtp"];
+let casData = { tiers: [], default_enabled_for_webhook: false };
+
+async function loadCascade() {
+  try {
+    casData = await J("/api/cascade-config");
+    renderCascadeTable();
+    $("#cas-default").checked = !!casData.default_enabled_for_webhook;
+  } catch (e) { console.warn("cas fetch:", e); }
+}
+
+function renderCascadeTable() {
+  const tb = $("#t-cas tbody"); tb.innerHTML = "";
+  casData.tiers.forEach((t, i) => addCasRow(t.name, t.timeout_seconds, i));
+}
+
+function addCasRow(name = "ntfy", timeout = 5, idx = -1) {
+  const tb = $("#t-cas tbody");
+  const i = idx === -1 ? tb.children.length : idx;
+  const tr = document.createElement("tr");
+  const opts = TIER_OPTS.map(o => `<option ${o === name ? "selected" : ""}>${o}</option>`).join("");
+  tr.innerHTML = `
+    <td><span class="muted">${i + 1}</span> <button data-up title="Move up">↑</button><button data-dn title="Move down">↓</button></td>
+    <td><select data-f="name">${opts}</select></td>
+    <td><input type="number" min="1" max="60" value="${timeout}" data-f="timeout"></td>
+    <td><button class="danger" data-del>×</button></td>`;
+  tr.querySelector("[data-del]").addEventListener("click", () => { tr.remove(); renumberCas(); });
+  tr.querySelector("[data-up]").addEventListener("click", () => {
+    const prev = tr.previousElementSibling;
+    if (prev) tb.insertBefore(tr, prev);
+    renumberCas();
+  });
+  tr.querySelector("[data-dn]").addEventListener("click", () => {
+    const next = tr.nextElementSibling;
+    if (next) tb.insertBefore(next, tr);
+    renumberCas();
+  });
+  tb.appendChild(tr);
+  renumberCas();
+}
+
+function renumberCas() {
+  $$("#t-cas tbody tr").forEach((tr, i) => {
+    const num = tr.querySelector(".muted");
+    if (num) num.textContent = i + 1;
+  });
+}
+
+$("#btn-cas-add").addEventListener("click", () => addCasRow());
+$("#btn-cas-save").addEventListener("click", async () => {
+  const tiers = [];
+  $$("#t-cas tbody tr").forEach(tr => {
+    const name = tr.querySelector('[data-f="name"]').value;
+    const t = parseInt(tr.querySelector('[data-f="timeout"]').value, 10);
+    if (name && t > 0) tiers.push({ name, timeout_seconds: t });
+  });
+  try {
+    await J("/api/cascade-config", {
+      method: "POST",
+      body: JSON.stringify({ tiers, default_enabled_for_webhook: $("#cas-default").checked }),
+      headers: { "Content-Type": "application/json" }
+    });
+    $("#cas-status").textContent = `Saved (${tiers.length} tiers) ✓`;
+    setTimeout(() => $("#cas-status").textContent = "", 3000);
+    loadStatus();
+  } catch (e) { $("#cas-status").textContent = "Error: " + e.message; }
+});
+
+
+
+// ---- Delivery (policies + rules) ----
+let delivData = { default_policy: "legacy-cascade", policies: [], rules: [], available_tiers: [], legacy_cascade_tiers: [] };
+
+async function loadDelivery() {
+  try {
+    delivData = await J("/api/delivery-config");
+    renderDeliveryDefault();
+    renderPoliciesTable();
+    renderRulesTable();
+  } catch (e) { console.warn("delivery fetch:", e); }
+}
+
+function policyNames() {
+  return ["legacy-cascade", ...delivData.policies.map(p => p.name)];
+}
+
+function renderDeliveryDefault() {
+  const sel = $("#d-default-policy");
+  if (!sel) return;
+  const cur = delivData.default_policy;
+  sel.innerHTML = policyNames().map(n => `<option ${n === cur ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
+}
+
+function renderPoliciesTable() {
+  const tb = $("#t-pol tbody"); tb.innerHTML = "";
+  delivData.policies.forEach((p, i) => addPolicyRow(p.name, p.mode, p.tiers, i));
+}
+
+function addPolicyRow(name = "new-policy", mode = "cascade", tiers = [], idx = null) {
+  const tb = $("#t-pol tbody");
+  const tr = document.createElement("tr");
+  const tierTxt = tiers.map(t => `${t.name}(${t.timeout_seconds}s)`).join(" → ");
+  const tiersAvail = delivData.available_tiers || ["ntfy", "telegram", "smtp"];
+  tr.innerHTML = `
+    <td><input type="text" value="${escapeHtml(name)}" data-f="name"></td>
+    <td><select data-f="mode">
+      <option value="cascade" ${mode === "cascade" ? "selected" : ""}>cascade</option>
+      <option value="broadcast" ${mode === "broadcast" ? "selected" : ""}>broadcast</option>
+    </select></td>
+    <td><input type="text" value="${escapeHtml(JSON.stringify(tiers))}" data-f="tiers" placeholder='[{"name":"ntfy","timeout_seconds":5}]' style="font-family:monospace;font-size:11px"></td>
+    <td><button class="danger" data-del>×</button></td>`;
+  tr.querySelector("[data-del]").addEventListener("click", () => { tr.remove(); renderDeliveryDefault(); });
+  // Re-populate the default-policy dropdown when name changes
+  tr.querySelector('[data-f="name"]').addEventListener("input", () => { collectPoliciesFromTable(); renderDeliveryDefault(); });
+  tb.appendChild(tr);
+  renderDeliveryDefault();
+}
+
+function collectPoliciesFromTable() {
+  const policies = [];
+  $$("#t-pol tbody tr").forEach(tr => {
+    const name = tr.querySelector('[data-f="name"]').value.trim();
+    const mode = tr.querySelector('[data-f="mode"]').value;
+    let tiers = [];
+    try { tiers = JSON.parse(tr.querySelector('[data-f="tiers"]').value); } catch (e) {}
+    if (name && Array.isArray(tiers)) policies.push({ name, mode, tiers });
+  });
+  delivData.policies = policies;
+  return policies;
+}
+
+function renderRulesTable() {
+  const tb = $("#t-rules tbody"); tb.innerHTML = "";
+  delivData.rules.forEach((r, i) => addRuleRow(r.match || {}, r.policy, i));
+}
+
+function addRuleRow(match = {}, policy = "legacy-cascade", idx = -1) {
+  const tb = $("#t-rules tbody");
+  const i = idx === -1 ? tb.children.length : idx;
+  const tr = document.createElement("tr");
+  const matchTxt = Object.entries(match).map(([k, v]) => `${k}=${v}`).join("\n");
+  const opts = policyNames().map(n => `<option ${n === policy ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
+  tr.innerHTML = `
+    <td><span class="muted">${i + 1}</span></td>
+    <td><textarea data-f="match" rows="3" style="font-family:monospace;font-size:11px" placeholder="severity=critical\ncomponent=host\nhost=re:^prod-.*">${escapeHtml(matchTxt)}</textarea></td>
+    <td><select data-f="policy">${opts}</select></td>
+    <td><button class="danger" data-del>×</button></td>`;
+  tr.querySelector("[data-del]").addEventListener("click", () => { tr.remove(); renumberRules(); });
+  tb.appendChild(tr);
+  renumberRules();
+}
+
+function renumberRules() {
+  $$("#t-rules tbody tr").forEach((tr, i) => {
+    const num = tr.querySelector(".muted");
+    if (num) num.textContent = i + 1;
+  });
+}
+
+$("#btn-pol-add").addEventListener("click", () => addPolicyRow());
+$("#btn-rule-add").addEventListener("click", () => addRuleRow());
+$("#btn-delivery-save").addEventListener("click", async () => {
+  const policies = collectPoliciesFromTable();
+  const rules = [];
+  $$("#t-rules tbody tr").forEach(tr => {
+    const txt = tr.querySelector('[data-f="match"]').value.trim();
+    const match = {};
+    txt.split(/\n/).forEach(line => {
+      const eq = line.indexOf("=");
+      if (eq > 0) match[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+    });
+    const pol = tr.querySelector('[data-f="policy"]').value;
+    if (pol && Object.keys(match).length) rules.push({ match, policy: pol });
+  });
+  const payload = {
+    default_policy: $("#d-default-policy").value,
+    policies,
+    rules
+  };
+  try {
+    await J("/api/delivery-config", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: { "Content-Type": "application/json" }
+    });
+    $("#delivery-status").textContent = `Saved (${policies.length} policies, ${rules.length} rules) ✓`;
+    setTimeout(() => $("#delivery-status").textContent = "", 4000);
+  } catch (e) { $("#delivery-status").textContent = "Error: " + e.message; }
+});
+
+
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC()]);
+  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadDelivery()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
+
+// ---- About banner (dismissible + persisted) ----
+(function aboutBanner() {
+  const KEY = "klaxond.about.hidden";
+  const box = document.getElementById("about-box");
+  const btn = document.getElementById("about-close");
+  if (!box || !btn) return;
+  if (localStorage.getItem(KEY) === "1") box.classList.add("hidden");
+  btn.addEventListener("click", () => {
+    box.classList.add("hidden");
+    try { localStorage.setItem(KEY, "1"); } catch (e) {}
+  });
+})();
