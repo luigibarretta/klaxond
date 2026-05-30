@@ -715,6 +715,40 @@ def parse_healthchecks_payload(payload: dict, severity: str) -> dict:
 
 
 
+def parse_wud_payload(payload: dict, severity: str) -> dict:
+    """WUD (What's Up Docker) HTTP trigger payload — mode 'simple'.
+
+    WUD POSTs the following body (Content-Type: application/json):
+       { "title": "Container update available", "body": "Container X..." }
+
+    Optional extra keys we honor:
+      - runbook_url    : per-payload runbook (falls back to FALLBACK_RUNBOOKS['wud'])
+      - wud_url        : deep-link to WUD UI
+
+    WUD has no native multi-channel/retry, so cascade is always on (like Beszel/HC).
+    """
+    title_raw = payload.get("title") or "Container update available"
+    body_raw = payload.get("body") or ""
+
+    state_emoji = ICONS.get(severity, ICONS["info"])
+    title = f"{state_emoji} WUD: {title_raw}"
+
+    body = body_raw if body_raw else "Container update detected — see WUD UI for details."
+
+    tags = [TAG_PREFIXES.get(severity, "package"), "wud", "container-update"]
+
+    actions = []
+    rb = payload.get("runbook_url") or FALLBACK_RUNBOOKS.get("wud") or ""
+    if rb:
+        actions.append(("view", "📖 Runbook", rb))
+    wud_url = payload.get("wud_url") or "http://192.168.50.110:3033/"
+    actions.append(("view", "📦 Open WUD", wud_url))
+
+    priority = PRIORITIES.get(severity, "default")
+
+    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+
+
 def _strip_non_ascii(text: str) -> str:
     """Strip Unicode chars > 0x7F. ntfy headers are Latin-1 only — emoji
     in action labels (📖 Runbook) cause urllib to raise. We keep emoji in
@@ -1090,6 +1124,8 @@ class Handler(BaseHTTPRequestHandler):
             source = "beszel"
         elif self.path.startswith("/healthchecks/"):
             source = "healthchecks"
+        elif self.path.startswith("/wud/"):
+            source = "wud"
         else:
             self.send_response(404); self.end_headers(); return
 
@@ -1124,12 +1160,16 @@ class Handler(BaseHTTPRequestHandler):
             # Beszel has no native retries/multi-channel, so the cascade is
             # always on for /beszel/* regardless of CASCADE_ENABLED.
             with_cascade = True
-        else:  # source == "healthchecks"
+        elif source == "healthchecks":
             parts = parse_healthchecks_payload(payload, severity)
             # HC sends 3 channels separately if we didn't centralize here.
             # Through klaxond it gets the same cascade as Beszel — always on
             # so the missing-ping signal reaches us via tier-2/3 if ntfy
             # fails. (HC itself has retry but not multi-channel-with-fallback.)
+            with_cascade = True
+        else:  # source == "wud"
+            parts = parse_wud_payload(payload, severity)
+            # WUD HTTP trigger has no retry/multi-channel native, cascade always on
             with_cascade = True
 
         log.info("[%s/%s] %s", source, severity, parts["title"])
