@@ -124,6 +124,29 @@
       <label>Topic critical <input type="text" id="r-ntfy-crit"></label>
     </div>
     <div class="muted" id="r-ntfy-status"></div>
+    <p class="muted" style="margin-top:1em"><small>
+      ⓘ The form above is the legacy 3-severity dict view. The richer per-topic
+      view (any number of topics, custom severity names, N:M routing) is shown
+      below. For now it's read-only — edit via <code>klaxond.toml</code>
+      <code>[[ntfy.topics]]</code> array. UI editing arrives in Fase B (0.7.1).
+    </small></p>
+  </div>
+
+  <h3>ntfy topics (0.7.0+ rich view)</h3>
+  <div class="card">
+    <p class="muted"><small>
+      Each topic has a name (ntfy topic id), an optional bearer token, and a list
+      of severities it <i>handles</i>. Same severity in multiple topics → fan-out
+      (notification sent to all matching topics).
+    </small></p>
+    <table id="ntfy-topics-tbl" class="dense">
+      <thead>
+        <tr><th>Name</th><th>Token</th><th>Handles severities</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted" id="ntfy-topics-summary"><small>—</small></p>
+    <p class="muted"><small id="ntfy-topics-note"></small></p>
   </div>
 
   <h3>Telegram</h3>

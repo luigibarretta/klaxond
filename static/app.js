@@ -255,6 +255,34 @@ $("#btn-test-fire").addEventListener("click", async () => {
 
 
 
+// ---- ntfy topics (0.7.0+ rich view, readonly in Fase A) ----
+async function loadNtfyTopics() {
+  try {
+    const j = await J("/api/ntfy-topics");
+    const tb = $("#ntfy-topics-tbl tbody");
+    if (!tb) return;
+    tb.innerHTML = "";
+    (j.topics || []).forEach(t => {
+      const tr = document.createElement("tr");
+      const tokBadge = t.token === "***SET***"
+        ? '<span style="color:#2c8a47">✓ set</span>'
+        : '<span style="color:#c44">✗ missing</span>';
+      tr.innerHTML = `
+        <td><code>${escapeHtml(t.name || "(empty)")}</code></td>
+        <td>${tokBadge}</td>
+        <td>${(t.handles || []).map(s => `<code>${escapeHtml(s)}</code>`).join(" ")}</td>`;
+      tb.appendChild(tr);
+    });
+    const sum = `${(j.topics || []).length} topic(s) · severities routed: ${(j.known_severities || []).filter(s => s !== "resolved").map(s => `<code>${escapeHtml(s)}</code>`).join(", ") || "<em>none</em>"}`;
+    $("#ntfy-topics-summary").innerHTML = `<small>${sum}</small>`;
+    $("#ntfy-topics-note").textContent = j.note || "";
+  } catch (e) {
+    console.warn("loadNtfyTopics:", e);
+  }
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+
 // ---- Routing (channel config) ----
 async function loadRouting() {
   try {
@@ -724,11 +752,14 @@ $("#auth-save")?.addEventListener("click", async () => {
 document.querySelectorAll('[data-tab="auth"]').forEach(btn => {
   btn.addEventListener("click", () => { loadAuth(); });
 });
+document.querySelectorAll('[data-tab="routing"]').forEach(btn => {
+  btn.addEventListener("click", () => { loadNtfyTopics(); });
+});
 
 
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadDelivery(), loadDedup(), loadAuth()]);
+  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);

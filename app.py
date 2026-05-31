@@ -52,14 +52,36 @@ log = logging.getLogger("klaxond")
 # These get populated by _apply_channel_config() after TOML is loaded.
 # Order of precedence: env var > TOML > hardcoded fallback (defined below).
 NTFY_URL = ""
-TOPICS   = {"info": "", "warning": "", "critical": ""}
-TOKENS   = {"info": "", "warning": "", "critical": ""}
+# NTFY_TOPICS replaces the old TOPICS/TOKENS dicts (0.7.0+). Each entry:
+#   {"name": "topic_id", "token": "tk_...", "handles": ["info", "warning"]}
+# Same severity may appear in multiple topics → fan-out (notification sent to
+# all matching topics). Severities can be any non-empty string; ICONS /
+# PRIORITIES / TAG_PREFIXES fall back to 'info' defaults for unknown ones.
+NTFY_TOPICS: list = []
 PRIORITIES = {"info": "default", "warning": "high", "critical": "urgent", "resolved": "low"}
 
 ICONS = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨", "resolved": "✅"}
 TAG_PREFIXES = {"info": "information_source", "warning": "warning",
                 "critical": "rotating_light", "resolved": "white_check_mark"}
 FALLBACK_RUNBOOKS = {"beszel": "", "healthchecks": ""}
+
+NTFY_TOPICS_PATH = os.environ.get("NTFY_TOPICS_PATH", "/data/ntfy-topics.json")
+
+
+def _topics_for_severity(severity: str) -> list:
+    """Return all ntfy topics whose `handles` list contains this severity."""
+    return [t for t in NTFY_TOPICS if severity in (t.get("handles") or [])]
+
+
+def _all_known_severities() -> set:
+    """Union of severities declared by any topic + built-in display severities.
+    Used to validate the URL path /<source>/<severity>."""
+    s = set()
+    for t in NTFY_TOPICS:
+        s.update(t.get("handles") or [])
+    # 'resolved' is a display state, not gated by topic mapping → always accept
+    s.add("resolved")
+    return s
 
 GRAFANA_BASE = os.environ.get("GRAFANA_BASE", "https://grafana.example.com")
 
@@ -1092,24 +1114,84 @@ def _apply_toml_overrides():
 
 
 def _apply_channel_config():
-    """Populate NTFY_URL/TOPICS/TG_*/SMTP_* from TOML first, then let env
+    """Populate NTFY_URL/NTFY_TOPICS/TG_*/SMTP_* from TOML first, then let env
     overrides take precedence. Called once at startup; can be re-called
-    after the user edits values via the UI."""
-    global NTFY_URL, TOPICS, TOKENS, TG_CHAT, SMTP_HOST, SMTP_PORT, SMTP_FROM, SMTP_TO
+    after the user edits values via the UI.
+
+    NTFY_TOPICS bootstrap order (first that produces ≥1 entry wins):
+      1. /data/ntfy-topics.json   (UI-saved runtime state)        — Fase B
+      2. TOML [[ntfy.topics]]     (new array format, 0.7.0+)
+      3. TOML [ntfy.topics] dict  (legacy 3-severity dict format) + env tokens
+      4. Env-only fallback        (NTFY_TOKEN_*, TOPIC_*)
+    """
+    global NTFY_URL, NTFY_TOPICS, TG_CHAT, SMTP_HOST, SMTP_PORT, SMTP_FROM, SMTP_TO
     ntfy_cfg = TOML_CONFIG.get("ntfy", {}) or {}
     NTFY_URL = (os.environ.get("NTFY_URL") or ntfy_cfg.get("url") or "").rstrip("/")
-    toml_topics = ntfy_cfg.get("topics", {}) or {}
-    TOPICS = {
-        "info":     os.environ.get("TOPIC_INFO")  or toml_topics.get("info", ""),
-        "warning":  os.environ.get("TOPIC_WARN")  or toml_topics.get("warning", ""),
-        "critical": os.environ.get("TOPIC_CRIT")  or toml_topics.get("critical", ""),
+
+    # Try /data/ntfy-topics.json (Fase B — UI write). For Fase A this is read-only.
+    new_topics = None
+    try:
+        if os.path.exists(NTFY_TOPICS_PATH):
+            with open(NTFY_TOPICS_PATH) as f:
+                jp = json.load(f)
+            if isinstance(jp, dict) and isinstance(jp.get("topics"), list):
+                new_topics = jp["topics"]
+    except Exception as e:
+        log.warning("ntfy-topics.json read failed (%s) — falling back to TOML/env", e)
+
+    # Try TOML [[ntfy.topics]] array format (0.7.0+)
+    if new_topics is None:
+        toml_topics = ntfy_cfg.get("topics", None)
+        if isinstance(toml_topics, list) and toml_topics:
+            new_topics = [dict(t) for t in toml_topics]
+        elif isinstance(toml_topics, dict) and toml_topics:
+            # Legacy 3-severity dict format → upgrade in-memory
+            new_topics = [
+                {"name": toml_topics.get("info", ""),     "token": "", "handles": ["info"]},
+                {"name": toml_topics.get("warning", ""),  "token": "", "handles": ["warning"]},
+                {"name": toml_topics.get("critical", ""), "token": "", "handles": ["critical"]},
+            ]
+
+    # Env-only fallback (no TOML config at all)
+    if new_topics is None:
+        new_topics = [
+            {"name": os.environ.get("TOPIC_INFO", ""),  "token": "", "handles": ["info"]},
+            {"name": os.environ.get("TOPIC_WARN", ""),  "token": "", "handles": ["warning"]},
+            {"name": os.environ.get("TOPIC_CRIT", ""),  "token": "", "handles": ["critical"]},
+        ]
+
+    # Env override for TOPIC_* names (per-severity convenience), and tokens are
+    # ALWAYS env-driven for the 3 default severities for backward-compat.
+    env_overrides_name = {
+        "info":     os.environ.get("TOPIC_INFO", ""),
+        "warning":  os.environ.get("TOPIC_WARN", ""),
+        "critical": os.environ.get("TOPIC_CRIT", ""),
     }
-    # Tokens are SECRET → env-only.
-    TOKENS = {
+    env_overrides_token = {
         "info":     os.environ.get("NTFY_TOKEN_INFO", ""),
         "warning":  os.environ.get("NTFY_TOKEN_WARN", ""),
         "critical": os.environ.get("NTFY_TOKEN_CRIT", ""),
     }
+    for t in new_topics:
+        # If this topic exclusively handles one of the 3 default severities,
+        # and the corresponding env vars are set, use them (back-compat).
+        handles = t.get("handles") or []
+        if len(handles) == 1 and handles[0] in env_overrides_name:
+            sev = handles[0]
+            if env_overrides_name[sev]:
+                t["name"] = env_overrides_name[sev]
+            if env_overrides_token[sev] and not t.get("token"):
+                t["token"] = env_overrides_token[sev]
+        # Ensure required fields exist
+        t.setdefault("token", "")
+        t.setdefault("handles", [])
+
+    # Filter out topics with no name (incomplete config) — keep them but
+    # they won't fire. Logging tells operator if topics are missing.
+    NTFY_TOPICS = [t for t in new_topics if t.get("name")]
+    log.info("ntfy: %d topic(s) loaded, severities routed: %s",
+             len(NTFY_TOPICS),
+             sorted(_all_known_severities() - {"resolved"}))
     tg_cfg = TOML_CONFIG.get("telegram", {}) or {}
     TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID") or tg_cfg.get("chat_id", "")
     smtp_cfg = TOML_CONFIG.get("smtp", {}) or {}
@@ -1618,31 +1700,44 @@ def _strip_non_ascii(text: str) -> str:
     return "".join(c if ord(c) < 128 else "" for c in text).strip()
 
 def post_to_ntfy(severity: str, parts: dict, timeout: int = 5) -> bool:
-    topic = TOPICS[severity]
-    token = TOKENS[severity]
-    if not token:
+    """Fan-out: POST to ALL topics that declare this severity in handles[].
+    Returns True if at least one succeeded. If no topic handles this severity,
+    returns False (caller falls through to next cascade tier)."""
+    topics = _topics_for_severity(severity)
+    if not topics:
+        log.warning("ntfy: no topic handles severity '%s' — skipping", severity)
         return False
-    url = f"{NTFY_URL}/{topic}"
     title_b64 = base64.b64encode(parts["title"].encode("utf-8")).decode("ascii")
     encoded_title = f"=?UTF-8?B?{title_b64}?="
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Title": encoded_title,
-        "Tags": ",".join(parts["tags"]),
-        "Priority": parts["priority"],
-    }
+    actions_header = None
     if parts.get("actions"):
-        headers["Actions"] = "; ".join(
+        actions_header = "; ".join(
             f"{kind}, {_strip_non_ascii(label)}, {target}" for kind, label, target in parts["actions"][:3]
         )
-    req = urllib.request.Request(url, data=parts["body"].encode("utf-8"),
-                                 headers=headers, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return 200 <= resp.status < 300
-    except Exception as e:
-        log.warning("ntfy POST failed: %s", e)
-        return False
+    any_ok = False
+    for t in topics:
+        token = t.get("token") or ""
+        if not token:
+            log.warning("ntfy: topic '%s' has no token — skipping", t.get("name"))
+            continue
+        url = f"{NTFY_URL}/{t['name']}"
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Title": encoded_title,
+            "Tags": ",".join(parts["tags"]),
+            "Priority": parts["priority"],
+        }
+        if actions_header:
+            headers["Actions"] = actions_header
+        req = urllib.request.Request(url, data=parts["body"].encode("utf-8"),
+                                     headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                ok = 200 <= resp.status < 300
+                any_ok = any_ok or ok
+        except Exception as e:
+            log.warning("ntfy POST to %s failed: %s", t.get("name"), e)
+    return any_ok
 
 
 def post_to_telegram(severity: str, parts: dict, timeout: int = 8) -> bool:
@@ -1945,6 +2040,25 @@ class Handler(BaseHTTPRequestHandler):
                 "jwt_available": _JWT_OK,
                 "current_user": getattr(self, "_authed_user", {"sub": "anonymous", "mode": "none"}),
             })
+        elif self.path == "/api/ntfy-topics":
+            # Return all topics + their handles. Tokens redacted to ***SET***
+            # if present, empty string otherwise.
+            redacted = []
+            for t in NTFY_TOPICS:
+                r = {"name": t.get("name", ""), "handles": list(t.get("handles") or [])}
+                r["token"] = "***SET***" if (t.get("token") or "") else ""
+                redacted.append(r)
+            known = sorted(_all_known_severities())
+            # Detect orphan severities (no topic handles them); 'resolved' is always covered
+            orphans = []  # in Fase A nothing is orphan (severities derived from topics) — but custom URL severities could be
+            self._send_json({
+                "topics":   redacted,
+                "ntfy_url": NTFY_URL,
+                "known_severities": known,
+                "orphans":  orphans,
+                "writeable": False,  # Fase B will switch to True when POST handler lands
+                "note": "Edit via klaxond.toml [[ntfy.topics]] for now — Fase B adds UI write",
+            })
         elif self.path == "/api/dedup-config":
             # Return current per-source dedup settings + counts of currently-pending events.
             pending_counts = {}
@@ -1967,17 +2081,26 @@ class Handler(BaseHTTPRequestHandler):
                 "legacy_cascade_tiers": TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS,
             })
         elif self.path == "/api/channel-config":
+            # Build a per-severity legacy view from NTFY_TOPICS for backward-compat
+            # in the existing Channel-config UI tab. The richer per-topic view is
+            # served by /api/ntfy-topics (0.7.0+, used by the dedicated section).
+            legacy_topics = {}
+            legacy_tokens = {}
+            for sev in ("info", "warning", "critical"):
+                matches = _topics_for_severity(sev)
+                legacy_topics[sev] = matches[0]["name"] if matches else ""
+                legacy_tokens[sev] = bool(matches and matches[0].get("token"))
             self._send_json({
                 "ntfy": {
                     "url": NTFY_URL,
-                    "topics": dict(TOPICS),
+                    "topics": legacy_topics,
                     "url_from_env": bool(os.environ.get("NTFY_URL")),
                     "topics_from_env": {
                         "info":     bool(os.environ.get("TOPIC_INFO")),
                         "warning":  bool(os.environ.get("TOPIC_WARN")),
                         "critical": bool(os.environ.get("TOPIC_CRIT")),
                     },
-                    "tokens_configured": {sev: bool(tok) for sev, tok in TOKENS.items()},
+                    "tokens_configured": legacy_tokens,
                 },
                 "telegram": {
                     "chat_id": TG_CHAT,
@@ -2058,9 +2181,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404); self.end_headers(); return
 
         severity = self.path.split("/")[-1].lower()
-        if severity not in TOPICS:
+        if severity not in _all_known_severities():
             self.send_response(400); self.end_headers()
-            self.wfile.write(f"unknown severity {severity}".encode()); return
+            self.wfile.write(f"unknown severity {severity} (no topic handles it)".encode()); return
 
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length)
@@ -2125,7 +2248,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle_api_test(self):
         severity = self.path.split("/")[-1].lower()
-        if severity not in TOPICS:
+        if severity not in _all_known_severities():
             self.send_response(400); self.end_headers(); return
         length = int(self.headers.get("Content-Length", "0"))
         try:
@@ -2395,10 +2518,14 @@ class Handler(BaseHTTPRequestHandler):
             parts = parse_wud_payload(sample, severity)
         else:
             parts = parse_beszel_payload(sample, severity)
-        # Build the ntfy headers that WOULD be sent (without actually sending)
+        # Build the ntfy headers that WOULD be sent (without actually sending).
+        # On fan-out (multiple topics for same severity) we show the FIRST topic
+        # in the preview — the full list is shown in the dedicated ntfy-topics tab.
         title_b64 = base64.b64encode(parts["title"].encode("utf-8")).decode("ascii")
+        _preview_topics = _topics_for_severity(severity)
+        _preview_url = f"{NTFY_URL}/{_preview_topics[0]['name']}" if _preview_topics else f"{NTFY_URL}/(no topic handles '{severity}')"
         ntfy_preview = {
-            "url": f"{NTFY_URL}/{TOPICS[severity]}",
+            "url": _preview_url,
             "headers": {
                 "Title (raw)":  parts["title"],
                 "Title (RFC2047)": f"=?UTF-8?B?{title_b64}?=",

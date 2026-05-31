@@ -147,3 +147,38 @@ enabled           = false
 window_s          = 90
 strategy          = "key"   # key=container_name
 override_critical = false
+
+
+# ============================================================================
+# ntfy topics (0.7.0+) — N topics with arbitrary severity routing
+# ============================================================================
+# By default, klaxond bootstraps 3 topics from env vars:
+#   NTFY_TOKEN_INFO/WARN/CRIT + TOPIC_INFO/WARN/CRIT
+# Each handles ONE severity (info/warning/critical).
+#
+# To customize (multiple severities to same topic, custom severity names,
+# fan-out, etc.), uncomment + edit the [[ntfy.topics]] entries below.
+# Once /data/ntfy-topics.json exists (Fase B UI edit), it supersedes both
+# this TOML and the env vars.
+#
+# Each topic:
+#   name    = ntfy topic id (the part after https://ntfy.example.com/...)
+#   token   = bearer token (or leave "" to use env NTFY_TOKEN_<SEV>)
+#   handles = list of severities to route HERE. Same severity in multiple
+#             topics → fan-out (notification sent to all matching topics).
+# Severity names are arbitrary strings — common: info / warning / critical /
+# resolved. ICONS / PRIORITIES fall back to "info" defaults for unknowns.
+#
+# Example: 1 topic for everything, no severity distinction
+# [[ntfy.topics]]
+# name    = "homelab_all"
+# token   = ""                                 # set via env NTFY_TOKEN_<...>
+# handles = ["info", "warning", "critical"]
+#
+# Example: critical fan-out to two topics (operator + on-call)
+# [[ntfy.topics]]
+# name = "homelab_normal"     handles = ["info", "warning"]
+# [[ntfy.topics]]
+# name = "operator_pager"     handles = ["critical"]
+# [[ntfy.topics]]
+# name = "oncall_backup"      handles = ["critical"]
