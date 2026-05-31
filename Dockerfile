@@ -1,14 +1,21 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.13-alpine
 
-LABEL org.opencontainers.image.title="klaxon"
+LABEL org.opencontainers.image.title="klaxond"
 LABEL org.opencontainers.image.description="Homelab notification bridge — Grafana/Beszel webhook → ntfy with cascade (Telegram, SMTP) and admin UI"
-LABEL org.opencontainers.image.source="https://git.luigibarretta.com/luigibarretta/homelab-klaxon"
+LABEL org.opencontainers.image.source="https://example.com/yourname/klaxond"
 LABEL org.opencontainers.image.licenses="MIT"
 
 WORKDIR /app
 
-# Everything is stdlib — no pip install needed.
+# Runtime deps:
+#  - PyJWT[crypto]: OIDC id_token verification (RS256/RS512/ES256)
+#  - bcrypt: basic-auth password hashing
+# Pinned to current major to keep image reproducible.
+RUN apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev openssl-dev \
+ && pip install --no-cache-dir 'PyJWT[crypto]==2.10.1' 'bcrypt==4.2.1' \
+ && apk del .build-deps
+
 COPY app.py /app/app.py
 COPY static/ /app/static/
 COPY klaxon.default.toml /app/klaxon.default.toml

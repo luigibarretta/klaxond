@@ -75,16 +75,28 @@ _DEFAULT_COMPONENT_DASHBOARDS = {
 }
 
 
-def _load_render_config() -> dict:
-    """Read render-config.json from disk; bootstrap with defaults if missing."""
+def _load_render_config(toml_seed: dict = None) -> dict:
+    """Read render-config.json from disk; bootstrap with TOML seed if available,
+    or in-code defaults otherwise, on first boot.
+
+    `toml_seed` is the [render.component_dashboards] section of klaxon.toml.
+    Order of bootstrap precedence on first boot (no render-config.json):
+      1. TOML seed (if non-empty)         — operator's deploy-time choice
+      2. _DEFAULT_COMPONENT_DASHBOARDS    — hard-coded fallback
+    Once render-config.json exists, it is the source of truth (UI edits persist
+    there); TOML seed is NOT re-applied to avoid surprising operators who edit
+    via UI.
+    """
     try:
         with open(RENDER_CONFIG_PATH, "r") as f:
             data = json.load(f)
-        # Coerce list values back into tuples for downstream code
         return {k: tuple(v) for k, v in data.get("component_dashboards", {}).items()}
     except FileNotFoundError:
-        _save_render_config(_DEFAULT_COMPONENT_DASHBOARDS)
-        return {k: tuple(v) for k, v in _DEFAULT_COMPONENT_DASHBOARDS.items()}
+        seed = toml_seed if toml_seed else _DEFAULT_COMPONENT_DASHBOARDS
+        # Coerce TOML list values to tuples for in-memory use; persist as lists
+        cleaned = {k: tuple(v) if isinstance(v, (list, tuple)) else (str(v), "") for k, v in seed.items()}
+        _save_render_config(cleaned)
+        return cleaned
     except Exception as e:
         log.warning("render-config read failed (%s) — using defaults", e)
         return {k: tuple(v) for k, v in _DEFAULT_COMPONENT_DASHBOARDS.items()}
@@ -103,7 +115,9 @@ def _save_render_config(component_dashboards: dict) -> None:
     os.replace(tmp, RENDER_CONFIG_PATH)
 
 
-COMPONENT_DASHBOARDS = _load_render_config()
+# Defer COMPONENT_DASHBOARDS init until after TOML is loaded so we can use
+# the TOML [render.component_dashboards] as bootstrap seed on first boot.
+COMPONENT_DASHBOARDS = {}  # populated below, right after TOML_CONFIG init
 
 # ============================================================================
 # Dedup config — group multiple inbound events per source into one notification
@@ -140,11 +154,15 @@ _DEFAULT_DEDUP_SETTINGS = {
 }
 
 
-def _load_dedup_settings() -> dict:
+def _load_dedup_settings(toml_seed: dict = None) -> dict:
+    """Bootstrap order on first boot (when /data/dedup-config.json missing):
+      1. TOML [dedup.<source>] section (if provided)         — deploy-time
+      2. _DEFAULT_DEDUP_SETTINGS                              — in-code defaults
+    Once dedup-config.json exists, it's the source of truth (UI edits live here).
+    """
     try:
         with open(DEDUP_CONFIG_PATH, "r") as f:
             raw = json.load(f)
-        # Merge with defaults so newly added fields don't break older configs
         out = {}
         for src in DEDUP_SOURCES:
             cur = dict(_DEFAULT_DEDUP_SETTINGS[src])
@@ -152,8 +170,14 @@ def _load_dedup_settings() -> dict:
             out[src] = cur
         return out
     except FileNotFoundError:
-        _save_dedup_settings(_DEFAULT_DEDUP_SETTINGS)
-        return dict(_DEFAULT_DEDUP_SETTINGS)
+        seed = {}
+        for src in DEDUP_SOURCES:
+            cur = dict(_DEFAULT_DEDUP_SETTINGS[src])
+            if toml_seed and isinstance(toml_seed.get(src), dict):
+                cur.update(toml_seed[src])
+            seed[src] = cur
+        _save_dedup_settings(seed)
+        return seed
     except Exception as e:
         log.warning("dedup-config read failed (%s) — using defaults", e)
         return dict(_DEFAULT_DEDUP_SETTINGS)
@@ -170,7 +194,8 @@ def _save_dedup_settings(settings: dict) -> None:
     os.replace(tmp, DEDUP_CONFIG_PATH)
 
 
-DEDUP_SETTINGS = _load_dedup_settings()
+# Populated below, right after TOML_CONFIG init (uses [dedup] as seed if present).
+DEDUP_SETTINGS = {src: dict(_DEFAULT_DEDUP_SETTINGS[src]) for src in DEDUP_SOURCES}
 
 
 def _dedup_key(source: str, payload, parts: dict, common_labels: dict) -> str:
@@ -396,6 +421,479 @@ class DedupBuffer:
 
 
 # ============================================================================
+# Auth — pluggable authentication for UI + admin API
+# ============================================================================
+# Modes:
+#   none           : no auth (default; webhook endpoints already public)
+#   basic          : HTTP Basic Auth (single user, bcrypt hash)
+#   oidc           : OIDC Authorization Code flow (Authentik, Keycloak,
+#                    Authelia, Google, generic via issuer discovery)
+#   trusted-proxy  : honor X-Forwarded-User header from upstream reverse
+#                    proxy (e.g. Traefik + Authentik forwardAuth). klaxond
+#                    itself does no auth; restricted by CIDR allowlist on
+#                    request peer addr to prevent header spoofing from
+#                    untrusted networks.
+#
+# Webhook endpoints (/webhook/, /beszel/, /healthchecks/, /wud/) are ALWAYS
+# auth-free regardless of mode (emitters like WUD/Beszel can't OIDC). UI and
+# /api/* are gated when mode != none.
+#
+# Bootstrap precedence:
+#   1. /data/auth-config.json (UI-saved)
+#   2. TOML [auth] section
+#   3. In-code defaults (mode=none)
+# Env overrides for secrets:
+#   AUTH_OIDC_CLIENT_SECRET   (never persisted to file)
+#   AUTH_BASIC_PASSWORD_HASH  (bcrypt hash; use 'python -c "import bcrypt; print(bcrypt.hashpw(b\"PASSWORD\", bcrypt.gensalt()).decode())"' to compute)
+#   AUTH_SESSION_SECRET       (HMAC key for session cookie; auto-generated if missing)
+# ============================================================================
+import hmac
+import hashlib
+import secrets
+import ipaddress
+try:
+    import bcrypt
+    _BCRYPT_OK = True
+except ImportError:
+    _BCRYPT_OK = False
+try:
+    import jwt as pyjwt  # PyJWT
+    from jwt import PyJWKClient
+    _JWT_OK = True
+except ImportError:
+    _JWT_OK = False
+
+AUTH_CONFIG_PATH = os.environ.get("AUTH_CONFIG_PATH", "/data/auth-config.json")
+AUTH_SESSION_KEY_PATH = os.environ.get("AUTH_SESSION_KEY_PATH", "/data/auth-session.key")
+AUTH_SESSION_COOKIE = "klaxon_session"
+
+_DEFAULT_AUTH = {
+    "mode": "none",  # none | basic | oidc | trusted-proxy
+    "session_timeout_hours": 8,
+    "basic": {
+        # password_hash NEVER stored here in TOML; only via env AUTH_BASIC_PASSWORD_HASH
+        # or written here at runtime from /api/auth-config POST (then persisted in JSON).
+        "username": "",
+        "password_hash": "",
+        "realm": "klaxond",
+    },
+    "oidc": {
+        "provider":         "authentik",  # cosmetic preset name
+        "issuer":           "",   # e.g. https://idp.example.com/application/o/klaxond/
+        "client_id":        "",
+        "client_secret":    "",   # may be overridden by env AUTH_OIDC_CLIENT_SECRET
+        "scopes":           "openid profile email",
+        "required_group":   "",   # optional: claim 'groups' must contain this value
+        "redirect_path":    "/auth/callback",  # appended to the request Host
+    },
+    "trusted_proxy": {
+        "user_header":      "X-Forwarded-User",
+        "email_header":     "X-Forwarded-Email",
+        "groups_header":    "X-Forwarded-Groups",
+        "trusted_cidrs":    ["127.0.0.1/32", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"],
+    },
+}
+
+
+def _load_auth_config(toml_seed: dict = None) -> dict:
+    try:
+        with open(AUTH_CONFIG_PATH, "r") as f:
+            raw = json.load(f)
+        # Deep-merge with defaults so new fields are present
+        out = json.loads(json.dumps(_DEFAULT_AUTH))  # deep copy
+        for k, v in raw.items():
+            if isinstance(v, dict) and isinstance(out.get(k), dict):
+                out[k].update(v)
+            else:
+                out[k] = v
+        return out
+    except FileNotFoundError:
+        out = json.loads(json.dumps(_DEFAULT_AUTH))
+        if toml_seed and isinstance(toml_seed, dict):
+            for k, v in toml_seed.items():
+                if isinstance(v, dict) and isinstance(out.get(k), dict):
+                    out[k].update(v)
+                else:
+                    out[k] = v
+        # Env override for OIDC client secret
+        sec = os.environ.get("AUTH_OIDC_CLIENT_SECRET")
+        if sec:
+            out.setdefault("oidc", {})["client_secret"] = sec
+        # Env override for basic password hash
+        hsh = os.environ.get("AUTH_BASIC_PASSWORD_HASH")
+        if hsh:
+            out.setdefault("basic", {})["password_hash"] = hsh
+        _save_auth_config(out)
+        return out
+    except Exception as e:
+        log.warning("auth-config read failed (%s) — using defaults", e)
+        return json.loads(json.dumps(_DEFAULT_AUTH))
+
+
+def _save_auth_config(cfg: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(AUTH_CONFIG_PATH), exist_ok=True)
+    except Exception:
+        pass
+    tmp = AUTH_CONFIG_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f, indent=2)
+    os.replace(tmp, AUTH_CONFIG_PATH)
+
+
+def _load_or_create_session_key() -> bytes:
+    """HMAC key for session cookie signing. Persisted across restarts so old
+    cookies remain valid; env AUTH_SESSION_SECRET overrides (rotate by changing
+    env + restart, invalidates all sessions)."""
+    env = os.environ.get("AUTH_SESSION_SECRET")
+    if env:
+        return env.encode("utf-8")
+    try:
+        with open(AUTH_SESSION_KEY_PATH, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        key = secrets.token_bytes(32)
+        try:
+            os.makedirs(os.path.dirname(AUTH_SESSION_KEY_PATH), exist_ok=True)
+        except Exception:
+            pass
+        with open(AUTH_SESSION_KEY_PATH, "wb") as f:
+            f.write(key)
+        os.chmod(AUTH_SESSION_KEY_PATH, 0o600)
+        return key
+
+
+# ----- OIDC helpers ---------------------------------------------------------
+class _OIDCCache:
+    """In-memory cache for OIDC discovery doc + JWKS."""
+    def __init__(self):
+        self._discovery = {}     # issuer -> dict
+        self._jwks_client = {}   # issuer -> PyJWKClient
+
+    def discovery(self, issuer: str) -> dict:
+        if issuer in self._discovery:
+            return self._discovery[issuer]
+        url = issuer.rstrip("/") + "/.well-known/openid-configuration"
+        with urllib.request.urlopen(url, timeout=10) as r:
+            doc = json.loads(r.read().decode())
+        self._discovery[issuer] = doc
+        return doc
+
+    def jwks(self, issuer: str) -> "PyJWKClient":
+        if issuer in self._jwks_client:
+            return self._jwks_client[issuer]
+        if not _JWT_OK:
+            raise RuntimeError("PyJWT not installed")
+        d = self.discovery(issuer)
+        jwks_uri = d.get("jwks_uri")
+        if not jwks_uri:
+            raise RuntimeError("issuer discovery missing jwks_uri")
+        c = PyJWKClient(jwks_uri)
+        self._jwks_client[issuer] = c
+        return c
+
+
+_OIDC_CACHE = _OIDCCache()
+_OIDC_STATE_STORE = {}     # state -> (created_ts, return_to) — short-lived
+_OIDC_STATE_TTL = 600      # 10 minutes
+
+
+class AuthManager:
+    """Verify request → session_user dict or None (anonymous).
+    Mode-driven: none/basic/oidc/trusted-proxy.
+    Webhook endpoints are always public regardless of mode.
+    """
+    PUBLIC_PATH_PREFIXES = (
+        "/webhook/", "/beszel/", "/healthchecks/", "/wud/",
+        "/healthz",
+        "/auth/login", "/auth/callback", "/auth/logout",
+        "/static/", "/favicon.ico",  # login page assets
+    )
+
+    def __init__(self):
+        self.session_key = _load_or_create_session_key()
+
+    def is_public(self, path: str) -> bool:
+        return any(path == p or path.startswith(p) for p in self.PUBLIC_PATH_PREFIXES)
+
+    def sign_session(self, payload: dict) -> str:
+        """Returns a cookie value: <b64payload>.<b64sig>"""
+        body = json.dumps(payload, separators=(",", ":"), default=str).encode()
+        b = base64.urlsafe_b64encode(body).decode().rstrip("=")
+        sig = hmac.new(self.session_key, b.encode(), hashlib.sha256).hexdigest()
+        return f"{b}.{sig}"
+
+    def verify_session(self, cookie_value: str) -> dict | None:
+        try:
+            b, sig = cookie_value.split(".", 1)
+            expected = hmac.new(self.session_key, b.encode(), hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(sig, expected):
+                return None
+            # Pad base64 properly
+            pad = "=" * (-len(b) % 4)
+            body = base64.urlsafe_b64decode(b + pad)
+            payload = json.loads(body.decode())
+            if payload.get("exp", 0) < time_mod.time():
+                return None
+            return payload
+        except Exception:
+            return None
+
+    def authenticate(self, handler) -> dict | None:
+        """Returns user dict (subject/email/groups) if authenticated, else None.
+        Sends 401/302 if not authenticated and the path is non-public."""
+        cfg = AUTH_CONFIG
+        mode = cfg.get("mode", "none")
+        if mode == "none":
+            return {"sub": "anonymous", "mode": "none"}
+
+        # Session cookie (any mode that uses sessions)
+        cookies = handler.headers.get("Cookie", "")
+        sess_value = None
+        for c in cookies.split(";"):
+            c = c.strip()
+            if c.startswith(AUTH_SESSION_COOKIE + "="):
+                sess_value = c[len(AUTH_SESSION_COOKIE) + 1:]
+                break
+        if sess_value:
+            user = self.verify_session(sess_value)
+            if user:
+                return user
+
+        if mode == "basic":
+            auth = handler.headers.get("Authorization", "")
+            if auth.startswith("Basic "):
+                try:
+                    decoded = base64.b64decode(auth[6:]).decode()
+                    user, pwd = decoded.split(":", 1)
+                    if self._check_basic(user, pwd):
+                        # Set session cookie so subsequent requests don't need re-auth
+                        return self._issue_session(handler, {"sub": user, "mode": "basic"})
+                except Exception:
+                    pass
+            handler.send_response(401)
+            handler.send_header("WWW-Authenticate", f'Basic realm="{cfg.get("basic",{}).get("realm","klaxond")}"')
+            handler.end_headers()
+            return None
+
+        if mode == "trusted-proxy":
+            tp = cfg.get("trusted_proxy", {})
+            peer_ip = handler.client_address[0]
+            if not self._cidr_match(peer_ip, tp.get("trusted_cidrs", [])):
+                handler.send_response(403); handler.end_headers()
+                handler.wfile.write(b"untrusted peer (trusted-proxy mode)")
+                return None
+            uh = tp.get("user_header", "X-Forwarded-User")
+            user_val = handler.headers.get(uh)
+            if not user_val:
+                handler.send_response(401); handler.end_headers()
+                handler.wfile.write(f"missing {uh} header".encode())
+                return None
+            return {
+                "sub":    user_val,
+                "email":  handler.headers.get(tp.get("email_header", "X-Forwarded-Email")) or "",
+                "groups": (handler.headers.get(tp.get("groups_header", "X-Forwarded-Groups")) or "").split(","),
+                "mode":   "trusted-proxy",
+            }
+
+        if mode == "oidc":
+            # No session cookie → redirect to /auth/login (saving the original path)
+            ret = handler.path
+            handler.send_response(302)
+            handler.send_header("Location", f"/auth/login?return_to={urllib.parse.quote(ret)}")
+            handler.end_headers()
+            return None
+
+        return None
+
+    # --- helpers -----------------------------------------------------------
+    def _check_basic(self, user: str, pwd: str) -> bool:
+        cfg = AUTH_CONFIG.get("basic", {})
+        if not _BCRYPT_OK:
+            log.error("bcrypt not installed but basic auth requested")
+            return False
+        if cfg.get("username") != user:
+            return False
+        h = cfg.get("password_hash", "")
+        if not h:
+            return False
+        try:
+            return bcrypt.checkpw(pwd.encode(), h.encode())
+        except Exception:
+            return False
+
+    def _cidr_match(self, ip: str, cidrs: list) -> bool:
+        try:
+            addr = ipaddress.ip_address(ip)
+            for c in cidrs:
+                if addr in ipaddress.ip_network(c, strict=False):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _issue_session(self, handler, user_payload: dict) -> dict:
+        cfg = AUTH_CONFIG
+        ttl_h = int(cfg.get("session_timeout_hours", 8))
+        user_payload = dict(user_payload)
+        user_payload["exp"] = int(time_mod.time() + ttl_h * 3600)
+        cookie_val = self.sign_session(user_payload)
+        # Cookie is set on subsequent successful auth response — we add the
+        # Set-Cookie header pre-end_headers by storing into the handler.
+        handler._pending_set_cookie = (
+            f"{AUTH_SESSION_COOKIE}={cookie_val}; "
+            f"HttpOnly; Path=/; SameSite=Lax; Max-Age={ttl_h * 3600}"
+        )
+        return user_payload
+
+    # --- OIDC flow ---------------------------------------------------------
+    def oidc_login_redirect(self, handler) -> None:
+        """GET /auth/login — start OIDC flow"""
+        cfg = AUTH_CONFIG.get("oidc", {})
+        issuer = cfg.get("issuer", "").rstrip("/")
+        if not issuer or not cfg.get("client_id"):
+            handler.send_response(500); handler.end_headers()
+            handler.wfile.write(b"OIDC not configured (set issuer + client_id in Auth tab)")
+            return
+        try:
+            d = _OIDC_CACHE.discovery(issuer)
+        except Exception as e:
+            handler.send_response(502); handler.end_headers()
+            handler.wfile.write(f"OIDC discovery failed: {e}".encode())
+            return
+        # Parse return_to from query
+        q = urllib.parse.urlparse(handler.path).query
+        params = urllib.parse.parse_qs(q)
+        return_to = params.get("return_to", ["/"])[0]
+        # Build redirect_uri from Host header
+        host = handler.headers.get("Host", "")
+        scheme = "https" if handler.headers.get("X-Forwarded-Proto", "https") == "https" else "http"
+        redirect_uri = f"{scheme}://{host}{cfg.get('redirect_path', '/auth/callback')}"
+        state = secrets.token_urlsafe(24)
+        _OIDC_STATE_STORE[state] = (time_mod.time(), return_to)
+        # Cleanup old states
+        cutoff = time_mod.time() - _OIDC_STATE_TTL
+        for k in list(_OIDC_STATE_STORE.keys()):
+            if _OIDC_STATE_STORE[k][0] < cutoff:
+                _OIDC_STATE_STORE.pop(k, None)
+        # Build authorize URL
+        auth_url = d["authorization_endpoint"]
+        qp = {
+            "response_type": "code",
+            "client_id":     cfg["client_id"],
+            "redirect_uri":  redirect_uri,
+            "scope":         cfg.get("scopes", "openid profile email"),
+            "state":         state,
+        }
+        full = auth_url + ("&" if "?" in auth_url else "?") + urllib.parse.urlencode(qp)
+        handler.send_response(302)
+        handler.send_header("Location", full)
+        handler.end_headers()
+
+    def oidc_callback(self, handler) -> None:
+        """GET /auth/callback?code=...&state=..."""
+        cfg = AUTH_CONFIG.get("oidc", {})
+        issuer = cfg.get("issuer", "").rstrip("/")
+        q = urllib.parse.urlparse(handler.path).query
+        params = urllib.parse.parse_qs(q)
+        code = params.get("code", [None])[0]
+        state = params.get("state", [None])[0]
+        if not code or not state:
+            handler.send_response(400); handler.end_headers()
+            handler.wfile.write(b"missing code or state"); return
+        if state not in _OIDC_STATE_STORE:
+            handler.send_response(400); handler.end_headers()
+            handler.wfile.write(b"invalid or expired state"); return
+        _, return_to = _OIDC_STATE_STORE.pop(state)
+        try:
+            d = _OIDC_CACHE.discovery(issuer)
+        except Exception as e:
+            handler.send_response(502); handler.end_headers()
+            handler.wfile.write(f"OIDC discovery failed: {e}".encode()); return
+        host = handler.headers.get("Host", "")
+        scheme = "https" if handler.headers.get("X-Forwarded-Proto", "https") == "https" else "http"
+        redirect_uri = f"{scheme}://{host}{cfg.get('redirect_path', '/auth/callback')}"
+        # Exchange code for tokens
+        token_body = urllib.parse.urlencode({
+            "grant_type":    "authorization_code",
+            "code":          code,
+            "redirect_uri":  redirect_uri,
+            "client_id":     cfg["client_id"],
+            "client_secret": cfg.get("client_secret", ""),
+        }).encode()
+        req = urllib.request.Request(
+            d["token_endpoint"],
+            data=token_body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                tokens = json.loads(r.read().decode())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode()
+            handler.send_response(502); handler.end_headers()
+            handler.wfile.write(f"token exchange failed: {e.code} {body[:200]}".encode())
+            return
+        except Exception as e:
+            handler.send_response(502); handler.end_headers()
+            handler.wfile.write(f"token exchange failed: {e}".encode())
+            return
+        id_token = tokens.get("id_token")
+        if not id_token:
+            handler.send_response(502); handler.end_headers()
+            handler.wfile.write(b"no id_token in response"); return
+        # Verify id_token signature against JWKS
+        try:
+            jwks_client = _OIDC_CACHE.jwks(issuer)
+            signing_key = jwks_client.get_signing_key_from_jwt(id_token).key
+            claims = pyjwt.decode(
+                id_token, signing_key,
+                algorithms=["RS256", "RS384", "RS512", "ES256", "ES384"],
+                audience=cfg["client_id"],
+                issuer=d.get("issuer", issuer),
+            )
+        except Exception as e:
+            handler.send_response(401); handler.end_headers()
+            handler.wfile.write(f"id_token verify failed: {e}".encode()); return
+        # Optional group check
+        req_group = cfg.get("required_group", "").strip()
+        if req_group:
+            groups = claims.get("groups", []) or []
+            if req_group not in groups:
+                handler.send_response(403); handler.end_headers()
+                handler.wfile.write(f"required_group '{req_group}' not in user claims".encode())
+                return
+        user_payload = {
+            "sub":    claims.get("sub", ""),
+            "email":  claims.get("email", ""),
+            "name":   claims.get("name", "") or claims.get("preferred_username", ""),
+            "groups": claims.get("groups", []),
+            "mode":   "oidc",
+        }
+        ttl_h = int(AUTH_CONFIG.get("session_timeout_hours", 8))
+        user_payload["exp"] = int(time_mod.time() + ttl_h * 3600)
+        cookie_val = self.sign_session(user_payload)
+        handler.send_response(302)
+        handler.send_header("Location", return_to or "/")
+        handler.send_header("Set-Cookie",
+            f"{AUTH_SESSION_COOKIE}={cookie_val}; HttpOnly; Path=/; SameSite=Lax; Max-Age={ttl_h * 3600}")
+        handler.end_headers()
+
+    def logout(self, handler) -> None:
+        handler.send_response(302)
+        handler.send_header("Location", "/")
+        handler.send_header("Set-Cookie",
+            f"{AUTH_SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0")
+        handler.end_headers()
+
+
+# Auth instances populated after TOML loads (uses [auth] as seed on first boot).
+AUTH_CONFIG = {}
+AUTH_MANAGER = None  # type: AuthManager
+
+
+# ============================================================================
 # Bootstrap config (TOML) — cascading rules + render rules + inhibition rules.
 # Loaded from KLAXON_CONFIG (default /data/klaxon.toml). If missing on first
 # boot, bootstrapped from the bundled klaxon.default.toml shipped in the
@@ -541,6 +1039,24 @@ def _save_toml_config(cfg: dict) -> None:
 
 # Loaded at startup; refreshed on /api/config POST.
 TOML_CONFIG = _load_toml_config()
+
+# Now that TOML is loaded, bootstrap render-config from [render.component_dashboards]
+# of klaxon.toml on first boot (when /data/render-config.json doesn't exist).
+_render_seed = (TOML_CONFIG.get("render", {}) or {}).get("component_dashboards", {}) or {}
+COMPONENT_DASHBOARDS = _load_render_config(toml_seed=_render_seed)
+
+# Same pattern for dedup settings: [dedup.<source>] in TOML seeds the JSON file
+# on first boot. Once /data/dedup-config.json exists, it's the source of truth.
+_dedup_seed = TOML_CONFIG.get("dedup", {}) or {}
+DEDUP_SETTINGS = _load_dedup_settings(toml_seed=_dedup_seed)
+
+# Auth — same bootstrap pattern: [auth] in TOML seeds /data/auth-config.json
+# on first boot. Once auth-config.json exists, that's the source of truth
+# (the Authentication tab edits it).
+_auth_seed = TOML_CONFIG.get("auth", {}) or {}
+AUTH_CONFIG = _load_auth_config(toml_seed=_auth_seed)
+AUTH_MANAGER = AuthManager()
+log.info("auth mode = %s", AUTH_CONFIG.get("mode"))
 
 # ============================================================================
 # Apply TOML config overrides (if klaxon.toml provided non-empty sections)
@@ -1354,7 +1870,41 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         log.info("%s - %s", self.address_string(), fmt % args)
 
+    def end_headers(self):
+        # Inject pending Set-Cookie (from AuthManager._issue_session)
+        pc = getattr(self, "_pending_set_cookie", None)
+        if pc:
+            self.send_header("Set-Cookie", pc)
+            self._pending_set_cookie = None
+        BaseHTTPRequestHandler.end_headers(self)
+
+    def _require_auth(self) -> bool:
+        """Returns True if request is authorized (or public path), False if AuthManager
+        already wrote a 401/403/302 response and the caller must return immediately."""
+        if AUTH_MANAGER.is_public(self.path):
+            return True
+        user = AUTH_MANAGER.authenticate(self)
+        if user is None:
+            return False
+        self._authed_user = user
+        return True
+
     def do_GET(self):
+        # Special-case OIDC routes before auth gating
+        if self.path.startswith("/auth/login"):
+            return AUTH_MANAGER.oidc_login_redirect(self)
+        if self.path.startswith("/auth/callback"):
+            return AUTH_MANAGER.oidc_callback(self)
+        if self.path.startswith("/auth/logout"):
+            return AUTH_MANAGER.logout(self)
+        if self.path == "/auth/me":
+            user = AUTH_MANAGER.authenticate(self) if AUTH_CONFIG.get("mode") != "none" else {"sub": "anonymous", "mode": "none"}
+            if user is None: return
+            return self._send_json(user)
+
+        # All other paths: enforce auth (webhook paths return True via is_public)
+        if not self._require_auth(): return
+
         if self.path == "/healthz":
             self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
         elif self.path in ("/", "/ui", "/ui/"):
@@ -1381,6 +1931,20 @@ class Handler(BaseHTTPRequestHandler):
             tiers = TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS
             default_enabled = TOML_CONFIG.get("cascade", {}).get("default_enabled_for_webhook", CASCADE_ENABLED)
             self._send_json({"tiers": tiers, "default_enabled_for_webhook": default_enabled, "runtime_enabled": _cascade_runtime_enabled})
+        elif self.path == "/api/auth-config":
+            # Strip secrets from public response
+            redacted = json.loads(json.dumps(AUTH_CONFIG))
+            if redacted.get("basic", {}).get("password_hash"):
+                redacted["basic"]["password_hash"] = "***SET***"
+            if redacted.get("oidc", {}).get("client_secret"):
+                redacted["oidc"]["client_secret"] = "***SET***"
+            self._send_json({
+                "settings": redacted,
+                "available_modes": ["none", "basic", "oidc", "trusted-proxy"],
+                "bcrypt_available": _BCRYPT_OK,
+                "jwt_available": _JWT_OK,
+                "current_user": getattr(self, "_authed_user", {"sub": "anonymous", "mode": "none"}),
+            })
         elif self.path == "/api/dedup-config":
             # Return current per-source dedup settings + counts of currently-pending events.
             pending_counts = {}
@@ -1458,7 +2022,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers(); self.wfile.write(data)
 
     def do_POST(self):
+        # Gate ALL writes behind auth (webhook endpoints are still public via PUBLIC_PATH_PREFIXES)
+        if not self._require_auth(): return
+
         # ---- admin/UI endpoints ----
+        if self.path == "/api/auth-config":
+            return self._handle_auth_config_update()
         if self.path.startswith("/api/test/"):
             return self._handle_api_test()
         if self.path == "/api/cascade/toggle":
@@ -1649,6 +2218,97 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json({"ok": True, "settings": cleaned})
         except Exception as e:
             log.error("dedup config save failed: %s", e)
+            self.send_response(500); self.end_headers()
+            self.wfile.write(str(e).encode())
+
+    def _handle_auth_config_update(self):
+        global AUTH_CONFIG
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        incoming = payload.get("settings") if isinstance(payload, dict) else None
+        if not isinstance(incoming, dict):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"missing 'settings' object"); return
+        # Validate mode
+        valid_modes = {"none", "basic", "oidc", "trusted-proxy"}
+        mode = incoming.get("mode", AUTH_CONFIG.get("mode", "none"))
+        if mode not in valid_modes:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"invalid mode (must be one of {valid_modes})".encode()); return
+
+        # Build new config — deep-merge so we don't drop fields the UI didn't send
+        new_cfg = json.loads(json.dumps(AUTH_CONFIG))
+        new_cfg["mode"] = mode
+        if "session_timeout_hours" in incoming:
+            try:
+                new_cfg["session_timeout_hours"] = max(1, min(int(incoming["session_timeout_hours"]), 720))
+            except Exception:
+                pass
+
+        # Basic auth: if a fresh password is provided in plaintext, bcrypt-hash it
+        b_in = incoming.get("basic", {}) or {}
+        if isinstance(b_in, dict):
+            b = new_cfg.setdefault("basic", {})
+            if "username" in b_in:
+                b["username"] = str(b_in["username"])
+            if "realm" in b_in:
+                b["realm"] = str(b_in["realm"])
+            if b_in.get("password"):  # plaintext (one-time, from UI)
+                if not _BCRYPT_OK:
+                    self.send_response(500); self.end_headers()
+                    self.wfile.write(b"bcrypt not installed in image"); return
+                b["password_hash"] = bcrypt.hashpw(str(b_in["password"]).encode(), bcrypt.gensalt()).decode()
+            elif "password_hash" in b_in and b_in["password_hash"] not in ("***SET***", ""):
+                b["password_hash"] = str(b_in["password_hash"])
+
+        # OIDC: secrets handled carefully (don't accept "***SET***" placeholder)
+        o_in = incoming.get("oidc", {}) or {}
+        if isinstance(o_in, dict):
+            o = new_cfg.setdefault("oidc", {})
+            for k in ("provider", "issuer", "client_id", "scopes", "required_group", "redirect_path"):
+                if k in o_in:
+                    o[k] = str(o_in[k])
+            cs = o_in.get("client_secret")
+            if cs and cs != "***SET***":
+                o["client_secret"] = str(cs)
+
+        # Trusted proxy
+        tp_in = incoming.get("trusted_proxy", {}) or {}
+        if isinstance(tp_in, dict):
+            tp = new_cfg.setdefault("trusted_proxy", {})
+            for k in ("user_header", "email_header", "groups_header"):
+                if k in tp_in:
+                    tp[k] = str(tp_in[k])
+            if isinstance(tp_in.get("trusted_cidrs"), list):
+                cleaned_cidrs = []
+                for c in tp_in["trusted_cidrs"]:
+                    try:
+                        ipaddress.ip_network(str(c), strict=False)
+                        cleaned_cidrs.append(str(c))
+                    except Exception:
+                        continue
+                tp["trusted_cidrs"] = cleaned_cidrs
+
+        try:
+            _save_auth_config(new_cfg)
+            AUTH_CONFIG = new_cfg
+            # Invalidate OIDC discovery cache so a new issuer is picked up
+            _OIDC_CACHE._discovery.clear()
+            _OIDC_CACHE._jwks_client.clear()
+            log.info("auth config updated: mode=%s", new_cfg["mode"])
+            # Return redacted
+            redacted = json.loads(json.dumps(new_cfg))
+            if redacted.get("basic", {}).get("password_hash"):
+                redacted["basic"]["password_hash"] = "***SET***"
+            if redacted.get("oidc", {}).get("client_secret"):
+                redacted["oidc"]["client_secret"] = "***SET***"
+            self._send_json({"ok": True, "settings": redacted})
+        except Exception as e:
+            log.error("auth config save failed: %s", e)
             self.send_response(500); self.end_headers()
             self.wfile.write(str(e).encode())
 

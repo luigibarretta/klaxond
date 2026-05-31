@@ -600,9 +600,135 @@ document.querySelectorAll('[data-tab="grouping"]').forEach(btn => {
 });
 
 
+// ---- Authentication tab ----
+let authData = { settings: {}, current_user: {} };
+
+const OIDC_ISSUER_HINTS = {
+  authentik: "https://idp.example.com/application/o/klaxond/",
+  keycloak:  "https://idp.example.com/realms/<realm>",
+  authelia:  "https://idp.example.com",
+  google:    "https://accounts.google.com",
+  other:     "",
+};
+
+function _showSubcard(mode) {
+  const map = {
+    none: [],
+    basic: ["auth-basic-h", "auth-basic-card"],
+    oidc:  ["auth-oidc-h", "auth-oidc-card"],
+    "trusted-proxy": ["auth-tp-h", "auth-tp-card"],
+  };
+  for (const id of ["auth-basic-h","auth-basic-card","auth-oidc-h","auth-oidc-card","auth-tp-h","auth-tp-card"]) {
+    document.getElementById(id)?.classList.add("hidden");
+  }
+  for (const id of (map[mode] || [])) {
+    document.getElementById(id)?.classList.remove("hidden");
+  }
+}
+
+async function loadAuth() {
+  try {
+    const j = await J("/api/auth-config");
+    authData = j;
+    const s = j.settings || {};
+    document.querySelectorAll('input[name="auth-mode"]').forEach(r => {
+      r.checked = (r.value === (s.mode || "none"));
+    });
+    _showSubcard(s.mode || "none");
+    if (!j.bcrypt_available) $("#auth-bcrypt-warn")?.classList.remove("hidden");
+    if (!j.jwt_available)    $("#auth-jwt-warn")?.classList.remove("hidden");
+    $("#auth-session-h").value = s.session_timeout_hours || 8;
+    const cu = j.current_user || {};
+    $("#auth-current-user").textContent = `${cu.sub || "?"} (mode=${cu.mode || "?"})`;
+    // basic
+    const b = s.basic || {};
+    $("#auth-basic-user").value = b.username || "";
+    $("#auth-basic-realm").value = b.realm || "klaxond";
+    $("#auth-basic-pwd").value = "";
+    $("#auth-basic-status").textContent = b.password_hash === "***SET***" ? "set" : "not set";
+    // oidc
+    const o = s.oidc || {};
+    $("#auth-oidc-provider").value = o.provider || "authentik";
+    $("#auth-oidc-issuer").value = o.issuer || "";
+    $("#auth-oidc-cid").value = o.client_id || "";
+    $("#auth-oidc-csec").value = "";
+    $("#auth-oidc-csec-status").textContent = o.client_secret === "***SET***" ? "set" : "not set";
+    $("#auth-oidc-scopes").value = o.scopes || "openid profile email";
+    $("#auth-oidc-group").value = o.required_group || "";
+    $("#auth-oidc-redirect").value = o.redirect_path || "/auth/callback";
+    $("#auth-oidc-full-redirect").textContent = `${location.protocol}//${location.host}${o.redirect_path || "/auth/callback"}`;
+    // trusted-proxy
+    const tp = s.trusted_proxy || {};
+    $("#auth-tp-uheader").value = tp.user_header || "X-Forwarded-User";
+    $("#auth-tp-eheader").value = tp.email_header || "X-Forwarded-Email";
+    $("#auth-tp-gheader").value = tp.groups_header || "X-Forwarded-Groups";
+    $("#auth-tp-cidrs").value = (tp.trusted_cidrs || []).join(", ");
+  } catch (e) {
+    $("#auth-status").textContent = "Error loading: " + e.message;
+  }
+}
+
+document.querySelectorAll('input[name="auth-mode"]').forEach(r => {
+  r.addEventListener("change", () => _showSubcard(r.value));
+});
+document.getElementById("auth-oidc-provider")?.addEventListener("change", e => {
+  const hint = OIDC_ISSUER_HINTS[e.target.value] || "";
+  if (hint) $("#auth-oidc-issuer").placeholder = hint;
+});
+
+$("#auth-save")?.addEventListener("click", async () => {
+  const mode = document.querySelector('input[name="auth-mode"]:checked')?.value || "none";
+  const out = {
+    mode,
+    session_timeout_hours: parseInt($("#auth-session-h").value, 10) || 8,
+    basic: {
+      username: $("#auth-basic-user").value.trim(),
+      realm:    $("#auth-basic-realm").value.trim(),
+      password: $("#auth-basic-pwd").value,  // empty = keep
+    },
+    oidc: {
+      provider:       $("#auth-oidc-provider").value,
+      issuer:         $("#auth-oidc-issuer").value.trim(),
+      client_id:      $("#auth-oidc-cid").value.trim(),
+      client_secret:  $("#auth-oidc-csec").value,  // empty = keep
+      scopes:         $("#auth-oidc-scopes").value.trim(),
+      required_group: $("#auth-oidc-group").value.trim(),
+      redirect_path:  $("#auth-oidc-redirect").value.trim() || "/auth/callback",
+    },
+    trusted_proxy: {
+      user_header:   $("#auth-tp-uheader").value.trim(),
+      email_header:  $("#auth-tp-eheader").value.trim(),
+      groups_header: $("#auth-tp-gheader").value.trim(),
+      trusted_cidrs: $("#auth-tp-cidrs").value.split(",").map(x => x.trim()).filter(Boolean),
+    },
+  };
+  $("#auth-status").textContent = "Saving…";
+  try {
+    const r = await J("/api/auth-config", {
+      method: "POST",
+      body: JSON.stringify({ settings: out }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (r.ok) {
+      $("#auth-status").textContent = `Saved ✓ (mode=${r.settings.mode}). Reload page to apply.`;
+      authData.settings = r.settings;
+      _showSubcard(r.settings.mode);
+    } else {
+      $("#auth-status").textContent = "Error: " + (r.error || "unknown");
+    }
+  } catch (e) {
+    $("#auth-status").textContent = "Error: " + e.message;
+  }
+});
+
+document.querySelectorAll('[data-tab="auth"]').forEach(btn => {
+  btn.addEventListener("click", () => { loadAuth(); });
+});
+
+
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadDelivery(), loadDedup()]);
+  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadDelivery(), loadDedup(), loadAuth()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);

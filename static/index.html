@@ -23,6 +23,7 @@
   <button class="tab" data-tab="cascade">Cascade</button>
   <button class="tab" data-tab="delivery">Delivery rules</button>
   <button class="tab" data-tab="grouping">Grouping</button>
+  <button class="tab" data-tab="auth">Authentication</button>
   <button class="tab" data-tab="test">Send test</button>
 </nav>
 
@@ -221,6 +222,104 @@
     <span id="dedup-status" class="muted" style="margin-left:1em"></span>
   </p>
   <p class="muted"><small>Pending counts shown in cards are live (refreshed when this tab is opened).</small></p>
+</section>
+
+<section id="tab-auth" class="tabpane">
+  <h2>Authentication</h2>
+  <p class="muted">
+    Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>,
+    <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are
+    always public regardless of mode — emitters can't OIDC.
+    <br/>Current logged-in user: <code id="auth-current-user">—</code>.
+  </p>
+
+  <h3>Mode</h3>
+  <div class="card">
+    <label><input type="radio" name="auth-mode" value="none">
+      <b>None</b> — public (default; suitable when klaxond is on a trusted internal network)
+    </label><br/>
+    <label><input type="radio" name="auth-mode" value="basic">
+      <b>Basic</b> — single user with bcrypt password (browser native)
+      <small id="auth-bcrypt-warn" class="muted hidden" style="color:#c44">⚠ bcrypt not installed in image — basic auth will fail</small>
+    </label><br/>
+    <label><input type="radio" name="auth-mode" value="oidc">
+      <b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)
+      <small id="auth-jwt-warn" class="muted hidden" style="color:#c44">⚠ PyJWT not installed in image — OIDC will fail</small>
+    </label><br/>
+    <label><input type="radio" name="auth-mode" value="trusted-proxy">
+      <b>Trusted proxy</b> — read <code>X-Forwarded-User</code> from upstream proxy (Traefik+Authentik forwardAuth, oauth2-proxy, ecc.) — CIDR-gated for safety
+    </label>
+  </div>
+
+  <h3>Session</h3>
+  <div class="card">
+    <label>Timeout (hours, 1..720)
+      <input type="number" id="auth-session-h" min="1" max="720" value="8" style="width:6em">
+    </label>
+  </div>
+
+  <h3 id="auth-basic-h">Basic auth config</h3>
+  <div class="card" id="auth-basic-card">
+    <label>Username <input type="text" id="auth-basic-user" autocomplete="username"></label>
+    <label>Realm <input type="text" id="auth-basic-realm" value="klaxond"></label>
+    <label>Set password (leave blank to keep existing)
+      <input type="password" id="auth-basic-pwd" autocomplete="new-password" placeholder="new password (bcrypt-hashed before storage)">
+    </label>
+    <p class="muted"><small>Password hash status: <code id="auth-basic-status">—</code></small></p>
+  </div>
+
+  <h3 id="auth-oidc-h">OIDC config</h3>
+  <div class="card" id="auth-oidc-card">
+    <label>Provider preset
+      <select id="auth-oidc-provider">
+        <option value="authentik">Authentik</option>
+        <option value="keycloak">Keycloak</option>
+        <option value="authelia">Authelia</option>
+        <option value="google">Google</option>
+        <option value="other">Other / Generic</option>
+      </select>
+    </label>
+    <label>Issuer URL
+      <input type="url" id="auth-oidc-issuer" placeholder="https://idp.example.com/application/o/klaxond/">
+      <small class="muted">Authentik: <code>https://&lt;host&gt;/application/o/&lt;slug&gt;/</code> · Keycloak: <code>https://&lt;host&gt;/realms/&lt;realm&gt;</code> · Authelia: <code>https://&lt;host&gt;</code> · Google: <code>https://accounts.google.com</code></small>
+    </label>
+    <label>Client ID
+      <input type="text" id="auth-oidc-cid" autocomplete="off">
+    </label>
+    <label>Client Secret
+      <input type="password" id="auth-oidc-csec" autocomplete="off" placeholder="(leave blank to keep existing)">
+      <small class="muted">Status: <code id="auth-oidc-csec-status">—</code></small>
+    </label>
+    <label>Scopes
+      <input type="text" id="auth-oidc-scopes" value="openid profile email">
+    </label>
+    <label>Required group (optional, to restrict to a specific group)
+      <input type="text" id="auth-oidc-group" placeholder="e.g. klaxond-admins">
+    </label>
+    <label>Redirect path
+      <input type="text" id="auth-oidc-redirect" value="/auth/callback">
+    </label>
+    <p class="muted"><small>Redirect URI used at the IdP: <code id="auth-oidc-full-redirect">https://&lt;host&gt;&lt;redirect_path&gt;</code></small></p>
+  </div>
+
+  <h3 id="auth-tp-h">Trusted-proxy config</h3>
+  <div class="card" id="auth-tp-card">
+    <label>User header <input type="text" id="auth-tp-uheader" value="X-Forwarded-User"></label>
+    <label>Email header <input type="text" id="auth-tp-eheader" value="X-Forwarded-Email"></label>
+    <label>Groups header <input type="text" id="auth-tp-gheader" value="X-Forwarded-Groups"></label>
+    <label>Trusted CIDRs (comma-separated)
+      <textarea id="auth-tp-cidrs" rows="2" placeholder="192.168.0.0/16, 10.0.0.0/8, 127.0.0.1/32"></textarea>
+      <small class="muted">Only requests from these source IPs will have their forwarded-user header honored. Critical to prevent header spoofing.</small>
+    </label>
+  </div>
+
+  <p>
+    <button id="auth-save" class="primary">Save</button>
+    <span id="auth-status" class="muted" style="margin-left:1em"></span>
+    <span style="float:right">
+      <a href="/auth/logout">Logout</a>
+    </span>
+  </p>
 </section>
 
 <section id="tab-test" class="tabpane">
