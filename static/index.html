@@ -15,6 +15,7 @@
 
 <nav class="tabs">
   <button class="tab active" data-tab="status">Status</button>
+  <button class="tab" data-tab="flow">Flow</button>
   <button class="tab" data-tab="inhibitions">Inhibitions</button>
   <button class="tab" data-tab="deliveries">Recent deliveries</button>
   <button class="tab" data-tab="render">Render config</button>
@@ -42,6 +43,36 @@
        Always on for <code>/beszel/*</code>; gated for <code>/webhook/*</code> (Grafana usually has its own retries).</p>
     <p>Default (env): <code id="cas-default">?</code> · Runtime: <code id="cas-runtime">?</code></p>
     <button id="btn-cascade-toggle">Toggle runtime cascade</button>
+  </div>
+</section>
+
+<section id="tab-flow" class="tabpane">
+  <h2>Flow — how klaxond routes inbound events</h2>
+  <p class="muted">
+    Auto-generated from your current configuration. Click any node to jump to
+    the relevant tab. Stats in parentheses are deliveries over the last 24h
+    from <code>/api/deliveries</code> (klaxond's in-memory ring buffer; resets
+    on restart).
+  </p>
+  <div class="card">
+    <div class="row" style="gap:1em; flex-wrap:wrap; margin-bottom:0.5em">
+      <button id="flow-refresh">Refresh</button>
+      <label><input type="checkbox" id="flow-show-source"> Show Mermaid source</label>
+      <button id="flow-download-svg" title="Download rendered diagram as SVG">Download SVG</button>
+      <span id="flow-status" class="muted" style="margin-left:auto"></span>
+    </div>
+    <div id="flow-diagram" style="min-height:300px; overflow:auto; padding:1em; background:#0d1117; border-radius:6px"></div>
+    <pre id="flow-source" class="hidden" style="margin-top:1em; padding:1em; background:#0d1117; border-radius:6px; overflow:auto; max-height:400px; font-size:12px"></pre>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Legend</h3>
+    <ul class="muted" style="margin:0; padding-left:1.5em; line-height:1.7">
+      <li><b style="color:#5b8def">Blue nodes</b> = emitters (POST /webhook/, /beszel/, /healthchecks/, /wud/)</li>
+      <li><b style="color:#9b6bff">Purple nodes</b> = klaxond internal stages (inhibition, dedup buffer, render, cascade)</li>
+      <li><b style="color:#48bb78">Green nodes</b> = delivery channels (ntfy, telegram, smtp)</li>
+      <li><b>Solid arrows</b> = primary path · <b>Dashed arrows</b> = fallback on failure</li>
+      <li><span style="color:#999">Greyed nodes</span> = configured but currently disabled</li>
+    </ul>
   </div>
 </section>
 
@@ -382,6 +413,7 @@
   <small>klaxond · <a href="https://github.com/your-org/klaxon" target="_blank">GitHub</a></small>
 </footer>
 
+<script src="mermaid.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

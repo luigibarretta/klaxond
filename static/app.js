@@ -826,6 +826,223 @@ document.querySelectorAll('[data-tab="routing"]').forEach(btn => {
 });
 
 
+// ---- Flow tab ----
+// Dynamic Mermaid diagram from all configs. Click nodes → switch tab.
+// Stats overlay reads /api/deliveries (24h window).
+
+// Make tab-switcher callable from outside (mermaid click handlers)
+function switchToTab(name) {
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".tabpane").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
+}
+window.flowGotoTab = switchToTab;  // expose to mermaid click callbacks
+
+function _aggregateDeliveries24h(items) {
+  // items from /api/deliveries: latest-first list of audit records
+  // Each: {source, severity, channel, ok, timestamp(ms)}
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  const bySource = {};       // source → count
+  const bySeverity = {};     // severity → count
+  const byChannel = {};      // channel → count
+  const bySourceSeverity = {}; // "source|severity" → count
+  for (const it of items || []) {
+    const ts = it.timestamp || 0;
+    if (ts < cutoff) continue;
+    if (it.source)   bySource[it.source]   = (bySource[it.source] || 0) + 1;
+    if (it.severity) bySeverity[it.severity] = (bySeverity[it.severity] || 0) + 1;
+    if (it.channel)  byChannel[it.channel] = (byChannel[it.channel] || 0) + 1;
+    const k = `${it.source}|${it.severity}`;
+    bySourceSeverity[k] = (bySourceSeverity[k] || 0) + 1;
+  }
+  return { bySource, bySeverity, byChannel, bySourceSeverity };
+}
+
+function _mermaidEscape(s) {
+  // Avoid quotes that break mermaid label parsing
+  return String(s || "").replace(/"/g, "\\\"").replace(/\n/g, "<br/>");
+}
+
+function buildMermaidDiagram(cfgs, stats) {
+  const { channel, cascade, ntfy, dedup, auth } = cfgs;
+  const s = stats || { bySource: {}, byChannel: {}, bySeverity: {} };
+
+  // Severity stat string per source
+  const srcStat = (source) => {
+    const n = s.bySource[source] || 0;
+    return n ? `<br/><small>${n} in 24h</small>` : "";
+  };
+  const dedupStat = (source) => {
+    const d = (dedup && dedup.settings) ? (dedup.settings[source] || {}) : {};
+    if (!d.enabled) return "";
+    return `<br/><small>dedup: ${d.strategy} ${d.window_s}s</small>`;
+  };
+  const chStat = (chan) => {
+    const n = s.byChannel[chan] || 0;
+    return n ? `<br/><small>${n} delivered</small>` : "";
+  };
+
+  // ntfy topics — group as one collapsed sub-node or list inline
+  let ntfyLabel = `ntfy${chStat("ntfy")}`;
+  if (ntfy && ntfy.topics && ntfy.topics.length) {
+    const lines = ntfy.topics.slice(0, 6).map(t =>
+      `${t.name}: ${(t.handles || []).join(", ")}`);
+    if (ntfy.topics.length > 6) lines.push(`… +${ntfy.topics.length - 6} more`);
+    ntfyLabel = `ntfy<br/><small>${lines.join("<br/>")}${chStat("ntfy") ? "<br/>" + (s.byChannel["ntfy"] || 0) + " delivered/24h" : ""}</small>`;
+  }
+
+  // Cascade
+  const cascadeOn = cascade ? (cascade.runtime_enabled !== false) : true;
+  const tiers = (cascade && cascade.tiers) || [{name:"ntfy"},{name:"telegram"},{name:"smtp"}];
+
+  // Telegram / SMTP configured?
+  const tgConfigured = !!(channel && channel.telegram && channel.telegram.chat_id);
+  const smtpConfigured = !!(channel && channel.smtp && channel.smtp.host);
+
+  // Auth chip in title
+  const authMode = (auth && auth.settings && auth.settings.mode) || "?";
+
+  const lines = [];
+  lines.push("---");
+  lines.push("config:");
+  lines.push("  flowchart:");
+  lines.push("    htmlLabels: true");
+  lines.push("    curve: basis");
+  lines.push("---");
+  lines.push(`flowchart LR`);
+  lines.push("  %% auto-generated from /api/* config");
+  lines.push("  classDef src fill:#2c5282,color:#fff,stroke:#5b8def");
+  lines.push("  classDef klx fill:#553c9a,color:#fff,stroke:#9b6bff");
+  lines.push("  classDef sink fill:#22543d,color:#fff,stroke:#48bb78");
+  lines.push("  classDef disabled fill:#444,color:#999,stroke:#666");
+
+  lines.push(`  subgraph SRC["Emitters (auth: ${authMode})"]`);
+  lines.push(`    AM["Grafana → /webhook/sev${srcStat("grafana")}${dedupStat("grafana")}"]`);
+  lines.push(`    BSZ["Beszel → /beszel/sev${srcStat("beszel")}${dedupStat("beszel")}"]`);
+  lines.push(`    HC["Healthchecks → /healthchecks/sev${srcStat("healthchecks")}${dedupStat("healthchecks")}"]`);
+  lines.push(`    WUD["WUD → /wud/sev${srcStat("wud")}${dedupStat("wud")}"]`);
+  lines.push("  end");
+
+  lines.push("  class AM,BSZ,HC,WUD src");
+
+  // Inhibition only applies to grafana
+  lines.push("  INH{\"Inhibition rules<br/>(grafana only)\"}");
+  lines.push("  DROP[\"suppress\"]");
+  lines.push("  RND[\"Render<br/>title/body/tags/actions\"]");
+  lines.push("  CAS{\"Cascade " + (cascadeOn ? "✓ on" : "✗ off") + "\"}");
+  lines.push("  class INH,DROP,RND,CAS klx");
+
+  lines.push("  AM --> INH");
+  lines.push("  INH -->|matched| DROP");
+  lines.push("  INH -->|pass| RND");
+  lines.push("  BSZ --> RND");
+  lines.push("  HC --> RND");
+  lines.push("  WUD --> RND");
+
+  lines.push("  RND --> CAS");
+
+  // ntfy node
+  lines.push(`  NTFY["${_mermaidEscape(ntfyLabel)}"]`);
+  lines.push("  class NTFY sink");
+  lines.push("  CAS -->|tier 1| NTFY");
+
+  // Telegram
+  if (tiers.find(t => t.name === "telegram")) {
+    const tgClass = tgConfigured ? "sink" : "disabled";
+    const tgLabel = tgConfigured
+      ? `Telegram<br/><small>chat ${channel.telegram.chat_id}${chStat("telegram") ? "<br/>" + (s.byChannel["telegram"] || 0) + " delivered/24h" : ""}</small>`
+      : "Telegram<br/><small>not configured</small>";
+    lines.push(`  TG["${_mermaidEscape(tgLabel)}"]`);
+    lines.push(`  class TG ${tgClass}`);
+    lines.push(`  CAS -.->|"tier 2 on ntfy fail"| TG`);
+  }
+
+  // SMTP
+  if (tiers.find(t => t.name === "smtp")) {
+    const smClass = smtpConfigured ? "sink" : "disabled";
+    const smLabel = smtpConfigured
+      ? `SMTP<br/><small>${channel.smtp.host}:${channel.smtp.port}${chStat("smtp") ? "<br/>" + (s.byChannel["smtp"] || 0) + " delivered/24h" : ""}</small>`
+      : "SMTP<br/><small>not configured</small>";
+    lines.push(`  SMTP["${_mermaidEscape(smLabel)}"]`);
+    lines.push(`  class SMTP ${smClass}`);
+    lines.push(`  CAS -.->|"tier 3 on tg fail"| SMTP`);
+  }
+
+  // Click-to-edit handlers
+  lines.push(`  click AM call flowGotoTab("inhibitions") "Inhibitions tab"`);
+  lines.push(`  click BSZ call flowGotoTab("grouping") "Grouping (dedup) tab"`);
+  lines.push(`  click HC call flowGotoTab("grouping") "Grouping (dedup) tab"`);
+  lines.push(`  click WUD call flowGotoTab("grouping") "Grouping (dedup) tab"`);
+  lines.push(`  click INH call flowGotoTab("inhibitions") "Inhibitions tab"`);
+  lines.push(`  click RND call flowGotoTab("render") "Render config tab"`);
+  lines.push(`  click CAS call flowGotoTab("cascade") "Cascade tab"`);
+  lines.push(`  click NTFY call flowGotoTab("routing") "Routing tab (ntfy topics)"`);
+  if (tiers.find(t => t.name === "telegram")) lines.push(`  click TG call flowGotoTab("routing") "Routing tab"`);
+  if (tiers.find(t => t.name === "smtp"))    lines.push(`  click SMTP call flowGotoTab("routing") "Routing tab"`);
+
+  return lines.join("\n");
+}
+
+let _flowMermaidInitialized = false;
+
+async function loadFlow() {
+  if (!window.mermaid) {
+    $("#flow-status").textContent = "Mermaid library not loaded";
+    return;
+  }
+  if (!_flowMermaidInitialized) {
+    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
+    _flowMermaidInitialized = true;
+  }
+  $("#flow-status").textContent = "Loading…";
+  let cfgs = {}, stats = null;
+  try {
+    const [channel, cascade, ntfy, dedup, auth, deliveries] = await Promise.all([
+      J("/api/channel-config"),
+      J("/api/cascade-config"),
+      J("/api/ntfy-topics"),
+      J("/api/dedup-config"),
+      J("/api/auth-config"),
+      J("/api/deliveries"),
+    ]);
+    cfgs = { channel, cascade, ntfy, dedup, auth };
+    stats = _aggregateDeliveries24h(deliveries);
+  } catch (e) {
+    $("#flow-status").textContent = "Config fetch failed: " + e.message;
+    return;
+  }
+  const src = buildMermaidDiagram(cfgs, stats);
+  $("#flow-source").textContent = src;
+  try {
+    const { svg, bindFunctions } = await mermaid.render("flow-svg-" + Date.now(), src);
+    $("#flow-diagram").innerHTML = svg;
+    if (bindFunctions) bindFunctions($("#flow-diagram"));
+    $("#flow-status").textContent = "Rendered ✓";
+  } catch (e) {
+    $("#flow-diagram").innerHTML = `<pre style="color:#c44">Mermaid render error: ${e.message}</pre>`;
+    $("#flow-status").textContent = "Render failed";
+  }
+}
+
+$("#flow-refresh")?.addEventListener("click", () => loadFlow());
+$("#flow-show-source")?.addEventListener("change", e => {
+  $("#flow-source")?.classList.toggle("hidden", !e.target.checked);
+});
+$("#flow-download-svg")?.addEventListener("click", () => {
+  const svg = $("#flow-diagram")?.querySelector("svg");
+  if (!svg) return;
+  const blob = new Blob([svg.outerHTML], { type: "image/svg+xml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "klaxond-flow-" + new Date().toISOString().split("T")[0] + ".svg";
+  a.click();
+  URL.revokeObjectURL(url);
+});
+document.querySelectorAll('[data-tab="flow"]').forEach(btn => {
+  btn.addEventListener("click", () => loadFlow());
+});
+
+
 // ---- Polling ----
 async function refreshAll() {
   await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth()]);

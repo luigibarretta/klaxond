@@ -2159,7 +2159,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", mime + "; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store")
+        # Vendored 3rd-party libs (mermaid etc.) are large + immutable per release →
+        # allow caching. Our own app.js/css/html change frequently → no-store.
+        if "mermaid" in os.path.basename(full).lower() or "vendor" in full:
+            self.send_header("Cache-Control", "public, max-age=86400, immutable")
+        else:
+            self.send_header("Cache-Control", "no-store")
         self.end_headers(); self.wfile.write(data)
 
     def do_POST(self):
