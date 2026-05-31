@@ -896,11 +896,11 @@ AUTH_MANAGER = None  # type: AuthManager
 # ============================================================================
 # Bootstrap config (TOML) — cascading rules + render rules + inhibition rules.
 # Loaded from KLAXON_CONFIG (default /data/klaxon.toml). If missing on first
-# boot, bootstrapped from the bundled klaxon.default.toml shipped in the
+# boot, bootstrapped from the bundled klaxond.default.toml shipped in the
 # image. After bootstrap, the file is read-write and can be edited via UI.
 # ============================================================================
 KLAXON_CONFIG = os.environ.get("KLAXON_CONFIG", "/data/klaxon.toml")
-KLAXON_DEFAULT = "/app/klaxon.default.toml"
+KLAXON_DEFAULT = "/app/klaxond.default.toml"
 
 
 def _bootstrap_config_if_missing():

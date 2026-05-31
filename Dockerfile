@@ -18,7 +18,7 @@ RUN apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev openssl-dev
 
 COPY app.py /app/app.py
 COPY static/ /app/static/
-COPY klaxon.default.toml /app/klaxon.default.toml
+COPY klaxond.default.toml /app/klaxond.default.toml
 
 # Persistent state lives here (klaxon.toml + render-config.json + future).
 VOLUME ["/data"]

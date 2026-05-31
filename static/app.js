@@ -635,8 +635,8 @@ async function loadAuth() {
       r.checked = (r.value === (s.mode || "none"));
     });
     _showSubcard(s.mode || "none");
-    if (!j.bcrypt_available) $("#auth-bcrypt-warn")?.classList.remove("hidden");
-    if (!j.jwt_available)    $("#auth-jwt-warn")?.classList.remove("hidden");
+    $("#auth-bcrypt-warn")?.classList.toggle("hidden", !!j.bcrypt_available);
+    $("#auth-jwt-warn")?.classList.toggle("hidden", !!j.jwt_available);
     $("#auth-session-h").value = s.session_timeout_hours || 8;
     const cu = j.current_user || {};
     $("#auth-current-user").textContent = `${cu.sub || "?"} (mode=${cu.mode || "?"})`;
