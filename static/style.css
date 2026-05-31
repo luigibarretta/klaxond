@@ -245,3 +245,6 @@ a:hover { text-decoration: underline; }
 .about-body p { margin: 6px 0; }
 .about-body code { background: rgba(255,255,255,0.05); }
 .about.hidden { display: none; }
+
+/* Generic utility — used by Auth tab radio warnings, Auth subcards, etc. */
+.hidden { display: none !important; }

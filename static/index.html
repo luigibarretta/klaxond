@@ -240,12 +240,14 @@
     </label><br/>
     <label><input type="radio" name="auth-mode" value="basic">
       <b>Basic</b> — single user with bcrypt password (browser native)
-      <small id="auth-bcrypt-warn" class="muted hidden" style="color:#c44">⚠ bcrypt not installed in image — basic auth will fail</small>
-    </label><br/>
+    </label>
+    <small id="auth-bcrypt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em">⚠ bcrypt not installed in image — basic auth will fail</small>
+    <br/>
     <label><input type="radio" name="auth-mode" value="oidc">
       <b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)
-      <small id="auth-jwt-warn" class="muted hidden" style="color:#c44">⚠ PyJWT not installed in image — OIDC will fail</small>
-    </label><br/>
+    </label>
+    <small id="auth-jwt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em">⚠ PyJWT not installed in image — OIDC will fail</small>
+    <br/>
     <label><input type="radio" name="auth-mode" value="trusted-proxy">
       <b>Trusted proxy</b> — read <code>X-Forwarded-User</code> from upstream proxy (Traefik+Authentik forwardAuth, oauth2-proxy, ecc.) — CIDR-gated for safety
     </label>
