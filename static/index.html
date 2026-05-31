@@ -137,14 +137,18 @@
     <p class="muted"><small>
       Each topic has a name (ntfy topic id), an optional bearer token, and a list
       of severities it <i>handles</i>. Same severity in multiple topics → fan-out
-      (notification sent to all matching topics).
+      (notification sent to all matching topics). Severity names can be any
+      non-empty string (e.g. <code>info</code>, <code>warning</code>,
+      <code>critical</code>, or custom like <code>low</code>/<code>page</code>).
+      <br/>Token <code>***SET***</code> = keep existing; empty = clear (env vars
+      repopulate at next reload for legacy info/warning/critical names).
     </small></p>
-    <table id="ntfy-topics-tbl" class="dense">
-      <thead>
-        <tr><th>Name</th><th>Token</th><th>Handles severities</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div id="ntfy-topics-editor"></div>
+    <p>
+      <button id="ntfy-topic-add">+ Add topic</button>
+      <button id="ntfy-topics-save" class="primary">Save</button>
+      <span id="ntfy-topics-status" class="muted" style="margin-left:1em"></span>
+    </p>
     <p class="muted" id="ntfy-topics-summary"><small>—</small></p>
     <p class="muted"><small id="ntfy-topics-note"></small></p>
   </div>

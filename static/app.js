@@ -255,31 +255,100 @@ $("#btn-test-fire").addEventListener("click", async () => {
 
 
 
-// ---- ntfy topics (0.7.0+ rich view, readonly in Fase A) ----
+// ---- ntfy topics (0.7.1+ editor) ----
+let ntfyTopicsData = { topics: [], known_severities: [], note: "", writeable: false };
+
 async function loadNtfyTopics() {
   try {
     const j = await J("/api/ntfy-topics");
-    const tb = $("#ntfy-topics-tbl tbody");
-    if (!tb) return;
-    tb.innerHTML = "";
-    (j.topics || []).forEach(t => {
-      const tr = document.createElement("tr");
-      const tokBadge = t.token === "***SET***"
-        ? '<span style="color:#2c8a47">✓ set</span>'
-        : '<span style="color:#c44">✗ missing</span>';
-      tr.innerHTML = `
-        <td><code>${escapeHtml(t.name || "(empty)")}</code></td>
-        <td>${tokBadge}</td>
-        <td>${(t.handles || []).map(s => `<code>${escapeHtml(s)}</code>`).join(" ")}</td>`;
-      tb.appendChild(tr);
-    });
-    const sum = `${(j.topics || []).length} topic(s) · severities routed: ${(j.known_severities || []).filter(s => s !== "resolved").map(s => `<code>${escapeHtml(s)}</code>`).join(", ") || "<em>none</em>"}`;
-    $("#ntfy-topics-summary").innerHTML = `<small>${sum}</small>`;
+    ntfyTopicsData = j;
+    renderNtfyTopicsEditor();
+    const sev = (j.known_severities || []).filter(s => s !== "resolved");
+    const sevStr = sev.length ? sev.map(s => `<code>${escapeHtml(s)}</code>`).join(", ") : "<em>none</em>";
+    $("#ntfy-topics-summary").innerHTML = `<small>${(j.topics || []).length} topic(s) · severities routed: ${sevStr}</small>`;
     $("#ntfy-topics-note").textContent = j.note || "";
   } catch (e) {
     console.warn("loadNtfyTopics:", e);
   }
 }
+
+function _renderTopicRow(t, idx) {
+  const handlesStr = (t.handles || []).join(", ");
+  return `
+    <div class="card" data-topic-idx="${idx}" style="margin-bottom:8px">
+      <div class="grid2">
+        <label>Topic name <input type="text" class="ntfy-t-name" value="${escapeHtml(t.name || "")}" placeholder="ntfy topic id"></label>
+        <label>Token
+          <input type="password" class="ntfy-t-token" value="${escapeHtml(t.token || "")}" placeholder="${t.token === '***SET***' ? '(keep existing — leave as ***SET***)' : 'tk_... (or empty for env fallback)'}">
+          <small class="muted">${t.token === '***SET***' ? '<span style="color:#2c8a47">✓ token set</span> — clear field to remove' : '<span style="color:#c44">✗ no token set</span>'}</small>
+        </label>
+      </div>
+      <label>Handles severities (comma-separated, any string allowed)
+        <input type="text" class="ntfy-t-handles" value="${escapeHtml(handlesStr)}" placeholder="info, warning, critical">
+      </label>
+      <p class="row" style="margin-top:8px">
+        <button type="button" class="ntfy-t-delete" data-idx="${idx}" style="color:#c44">Delete topic</button>
+      </p>
+    </div>`;
+}
+
+function renderNtfyTopicsEditor() {
+  const c = $("#ntfy-topics-editor");
+  if (!c) return;
+  const topics = ntfyTopicsData.topics || [];
+  c.innerHTML = topics.map((t, i) => _renderTopicRow(t, i)).join("");
+  // Wire delete buttons
+  c.querySelectorAll(".ntfy-t-delete").forEach(b => {
+    b.addEventListener("click", () => {
+      const idx = parseInt(b.dataset.idx, 10);
+      ntfyTopicsData.topics.splice(idx, 1);
+      renderNtfyTopicsEditor();
+    });
+  });
+}
+
+$("#ntfy-topic-add")?.addEventListener("click", () => {
+  if (!ntfyTopicsData.topics) ntfyTopicsData.topics = [];
+  ntfyTopicsData.topics.push({ name: "", token: "", handles: ["info"] });
+  renderNtfyTopicsEditor();
+});
+
+$("#ntfy-topics-save")?.addEventListener("click", async () => {
+  // Collect from DOM
+  const out = [];
+  $("#ntfy-topics-editor")?.querySelectorAll("[data-topic-idx]").forEach(card => {
+    const name = card.querySelector(".ntfy-t-name").value.trim();
+    const tokenRaw = card.querySelector(".ntfy-t-token").value;
+    const handlesStr = card.querySelector(".ntfy-t-handles").value;
+    const handles = handlesStr.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (!name) return;  // skip empty rows on save (use Delete instead)
+    out.push({ name, token: tokenRaw, handles });
+  });
+  $("#ntfy-topics-status").textContent = "Saving…";
+  $("#ntfy-topics-status").style.color = "";
+  try {
+    const r = await fetch("/api/ntfy-topics", {
+      method: "POST",
+      body: JSON.stringify({ topics: out }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      $("#ntfy-topics-status").style.color = "#c44";
+      $("#ntfy-topics-status").textContent = `Error ${r.status}: ${txt.slice(0, 200)}`;
+      return;
+    }
+    const j = await r.json();
+    $("#ntfy-topics-status").style.color = "#2c8a47";
+    $("#ntfy-topics-status").textContent = `Saved ✓ (${j.topics.length} topic(s), severities: ${(j.known_severities || []).filter(s => s !== "resolved").join(", ")})`;
+    // Reload to refresh badges
+    setTimeout(() => loadNtfyTopics(), 500);
+  } catch (e) {
+    $("#ntfy-topics-status").style.color = "#c44";
+    $("#ntfy-topics-status").textContent = "Error: " + e.message;
+  }
+});
+
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 

@@ -73,6 +73,23 @@ def _topics_for_severity(severity: str) -> list:
     return [t for t in NTFY_TOPICS if severity in (t.get("handles") or [])]
 
 
+def _save_ntfy_topics(topics: list) -> None:
+    """Persist topics to /data/ntfy-topics.json (atomic write).
+    Supersedes TOML + env on next config load."""
+    try:
+        os.makedirs(os.path.dirname(NTFY_TOPICS_PATH), exist_ok=True)
+    except Exception:
+        pass
+    tmp = NTFY_TOPICS_PATH + ".tmp"
+    payload = {"topics": [{"name": str(t["name"]),
+                            "token": str(t.get("token", "") or ""),
+                            "handles": [str(h) for h in (t.get("handles") or [])]}
+                          for t in topics]}
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2)
+    os.replace(tmp, NTFY_TOPICS_PATH)
+
+
 def _all_known_severities() -> set:
     """Union of severities declared by any topic + built-in display severities.
     Used to validate the URL path /<source>/<severity>."""
@@ -2056,8 +2073,9 @@ class Handler(BaseHTTPRequestHandler):
                 "ntfy_url": NTFY_URL,
                 "known_severities": known,
                 "orphans":  orphans,
-                "writeable": False,  # Fase B will switch to True when POST handler lands
-                "note": "Edit via klaxond.toml [[ntfy.topics]] for now — Fase B adds UI write",
+                "writeable": True,
+                "persisted_at": NTFY_TOPICS_PATH,
+                "note": "Edits saved to /data/ntfy-topics.json supersede TOML + env vars. Delete the file + restart to re-bootstrap from env.",
             })
         elif self.path == "/api/dedup-config":
             # Return current per-source dedup settings + counts of currently-pending events.
@@ -2167,6 +2185,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_render_preview()
         if self.path == "/api/dedup-config":
             return self._handle_dedup_config_update()
+        if self.path == "/api/ntfy-topics":
+            return self._handle_ntfy_topics_update()
 
         # ---- alert ingestion ----
         if self.path.startswith("/webhook/"):
@@ -2303,6 +2323,88 @@ class Handler(BaseHTTPRequestHandler):
             _cascade_runtime_enabled = not _cascade_runtime_enabled
         log.info("cascade runtime toggled → %s", _cascade_runtime_enabled)
         self._send_json({"cascade_enabled_runtime": _cascade_runtime_enabled})
+
+    def _handle_ntfy_topics_update(self):
+        """POST /api/ntfy-topics — replace the entire topics list, persist to
+        /data/ntfy-topics.json, reload runtime via _apply_channel_config().
+
+        Body shape: {"topics": [{"name":"...", "token":"...", "handles":["info"]}, ...]}
+        Token value "***SET***" means "keep existing" (don't overwrite redacted).
+        Token "" (empty string) means "clear it" (env will repopulate at next reload
+        if the legacy env vars are still set for that severity).
+        """
+        global NTFY_TOPICS
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        incoming = payload.get("topics") if isinstance(payload, dict) else None
+        if not isinstance(incoming, list):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"missing 'topics' list"); return
+
+        # Build existing tokens map for "keep" semantics
+        existing_by_name = {t["name"]: (t.get("token") or "") for t in NTFY_TOPICS}
+
+        cleaned = []
+        seen_names = set()
+        errors = []
+        for idx, t in enumerate(incoming):
+            if not isinstance(t, dict):
+                errors.append(f"topic[{idx}]: not an object")
+                continue
+            name = str(t.get("name", "")).strip()
+            if not name:
+                errors.append(f"topic[{idx}]: empty name")
+                continue
+            if name in seen_names:
+                errors.append(f"topic[{idx}]: duplicate name '{name}'")
+                continue
+            seen_names.add(name)
+            handles = t.get("handles", [])
+            if not isinstance(handles, list):
+                errors.append(f"topic[{idx}] '{name}': handles must be a list")
+                continue
+            handles = [str(h).strip().lower() for h in handles if str(h).strip()]
+            if not handles:
+                errors.append(f"topic[{idx}] '{name}': handles is empty")
+                continue
+            tok_in = t.get("token", "")
+            if tok_in == "***SET***":
+                tok_final = existing_by_name.get(name, "")
+            else:
+                tok_final = str(tok_in or "")
+            cleaned.append({"name": name, "token": tok_final, "handles": handles})
+
+        if errors:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(("validation errors:\n  - " + "\n  - ".join(errors)).encode())
+            return
+        if not cleaned:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"need at least one valid topic"); return
+
+        try:
+            _save_ntfy_topics(cleaned)
+            # Force reload from disk (clears env-override path since file exists)
+            _apply_channel_config()
+            log.info("ntfy-topics updated via UI: %d topic(s), severities=%s",
+                     len(NTFY_TOPICS),
+                     sorted(_all_known_severities() - {"resolved"}))
+            # Return redacted view (same shape as GET)
+            redacted = [{"name": t["name"],
+                         "token": "***SET***" if (t.get("token") or "") else "",
+                         "handles": list(t.get("handles") or [])}
+                        for t in NTFY_TOPICS]
+            self._send_json({"ok": True, "topics": redacted,
+                             "known_severities": sorted(_all_known_severities()),
+                             "persisted_at": NTFY_TOPICS_PATH})
+        except Exception as e:
+            log.error("ntfy-topics save failed: %s", e)
+            self.send_response(500); self.end_headers()
+            self.wfile.write(str(e).encode())
 
     def _handle_dedup_config_update(self):
         global DEDUP_SETTINGS
