@@ -248,3 +248,31 @@ a:hover { text-decoration: underline; }
 
 /* Generic utility — used by Auth tab radio warnings, Auth subcards, etc. */
 .hidden { display: none !important; }
+
+/* ============================================================================
+ * Flow tab — animated arrows + pulse on recent activity
+ * ============================================================================ */
+#flow-diagram.animate .edgePath path.flowchart-link,
+#flow-diagram.animate .edgePath path {
+  stroke-dasharray: 8, 4;
+  animation: flow-dash 1.5s linear infinite;
+}
+#flow-diagram.animate .edgePath:has(path[stroke-dasharray]) path {
+  /* Dashed (fallback) edges — make dashes bigger and slower for distinction */
+  stroke-dasharray: 5, 5;
+  animation: flow-dash 3s linear infinite reverse;
+}
+@keyframes flow-dash {
+  to { stroke-dashoffset: -24; }
+}
+/* Pulse node when recently active */
+#flow-diagram .node.recent-activity rect,
+#flow-diagram .node.recent-activity polygon {
+  animation: flow-pulse 1.5s ease-in-out infinite;
+}
+@keyframes flow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 8px #48bb78); }
+}
+/* Cursor pointer on clickable nodes (mermaid sets cursor:pointer in click; reinforce) */
+#flow-diagram .node[data-clickable] { cursor: pointer; }

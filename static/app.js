@@ -1016,14 +1016,69 @@ async function loadFlow() {
     const { svg, bindFunctions } = await mermaid.render("flow-svg-" + Date.now(), src);
     $("#flow-diagram").innerHTML = svg;
     if (bindFunctions) bindFunctions($("#flow-diagram"));
-    $("#flow-status").textContent = "Rendered ✓";
+    // Apply animation class based on toolbar toggle
+    $("#flow-diagram")?.classList.toggle("animate", !!$("#flow-animate")?.checked);
+    // Pulse nodes that had any activity in the last 60s
+    _pulseRecentActivityNodes(stats);
+    $("#flow-status").textContent = "Rendered ✓ at " + new Date().toLocaleTimeString();
   } catch (e) {
     $("#flow-diagram").innerHTML = `<pre style="color:#c44">Mermaid render error: ${e.message}</pre>`;
     $("#flow-status").textContent = "Render failed";
   }
 }
 
+// Map source name → mermaid node id (matches buildMermaidDiagram)
+const _NODE_FOR_SOURCE = { grafana: "AM", beszel: "BSZ", healthchecks: "HC", wud: "WUD" };
+const _NODE_FOR_CHANNEL = { ntfy: "NTFY", telegram: "TG", smtp: "SMTP" };
+
+function _pulseRecentActivityNodes(stats) {
+  // Clear previous pulse markers
+  $("#flow-diagram")?.querySelectorAll(".node.recent-activity").forEach(n => n.classList.remove("recent-activity"));
+  if (!stats) return;
+  // Compute activity in last 60s (re-fetch a fresh slice for live feel)
+  // Use what we have from /api/deliveries; cutoff at 60s window
+  const activeNodes = new Set();
+  for (const [src, cnt] of Object.entries(stats.bySource || {})) {
+    if (cnt > 0 && _NODE_FOR_SOURCE[src]) activeNodes.add(_NODE_FOR_SOURCE[src]);
+  }
+  for (const [chan, cnt] of Object.entries(stats.byChannel || {})) {
+    if (cnt > 0 && _NODE_FOR_CHANNEL[chan]) activeNodes.add(_NODE_FOR_CHANNEL[chan]);
+  }
+  activeNodes.forEach(id => {
+    const n = $("#flow-diagram")?.querySelector(`[id$="-${id}"], [id$="-${id}-1"]`);
+    if (n) n.classList.add("recent-activity");
+  });
+}
+
+// Stats-only refresh — fetch /api/deliveries, recompute 24h aggregates,
+// update text labels in the existing SVG (no full re-render)
+async function refreshFlowStats() {
+  if (!$("#flow-diagram")?.querySelector("svg")) return;  // no diagram yet
+  try {
+    const deliveries = await J("/api/deliveries");
+    const stats = _aggregateDeliveries24h(deliveries);
+    _pulseRecentActivityNodes(stats);
+    // Update status timestamp
+    const ts = $("#flow-status");
+    if (ts) ts.textContent = "Stats refreshed at " + new Date().toLocaleTimeString();
+  } catch (e) {
+    // silent
+  }
+}
+
+let _flowAutorefreshTimer = null;
+function _setupFlowAutorefresh() {
+  if (_flowAutorefreshTimer) { clearInterval(_flowAutorefreshTimer); _flowAutorefreshTimer = null; }
+  if ($("#flow-autorefresh")?.checked) {
+    _flowAutorefreshTimer = setInterval(refreshFlowStats, 30000);
+  }
+}
+
 $("#flow-refresh")?.addEventListener("click", () => loadFlow());
+$("#flow-animate")?.addEventListener("change", e => {
+  $("#flow-diagram")?.classList.toggle("animate", e.target.checked);
+});
+$("#flow-autorefresh")?.addEventListener("change", _setupFlowAutorefresh);
 $("#flow-show-source")?.addEventListener("change", e => {
   $("#flow-source")?.classList.toggle("hidden", !e.target.checked);
 });
@@ -1039,7 +1094,13 @@ $("#flow-download-svg")?.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 document.querySelectorAll('[data-tab="flow"]').forEach(btn => {
-  btn.addEventListener("click", () => loadFlow());
+  btn.addEventListener("click", () => { loadFlow(); _setupFlowAutorefresh(); });
+});
+// Stop autorefresh when leaving the tab (any tab click)
+document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
+  btn.addEventListener("click", () => {
+    if (_flowAutorefreshTimer) { clearInterval(_flowAutorefreshTimer); _flowAutorefreshTimer = null; }
+  });
 });
 
 
