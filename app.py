@@ -183,13 +183,14 @@ COMPONENT_DASHBOARDS = {}  # populated below, right after TOML_CONFIG init
 DEDUP_CONFIG_PATH = os.environ.get("DEDUP_CONFIG_PATH", "/data/dedup-config.json")
 DEDUP_PENDING_DIR = os.environ.get("DEDUP_PENDING_DIR", "/data/dedup_pending")
 
-DEDUP_SOURCES = ("grafana", "beszel", "healthchecks", "wud")
+DEDUP_SOURCES = ("grafana", "beszel", "healthchecks", "wud", "authentik")
 
 _DEFAULT_DEDUP_SETTINGS = {
     "grafana":      {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
     "beszel":       {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
     "healthchecks": {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
     "wud":          {"enabled": True,  "window_s": 90, "strategy": "key", "override_critical": False},
+    "authentik":    {"enabled": False, "window_s": 60, "strategy": "key", "override_critical": False},
 }
 
 
@@ -268,6 +269,15 @@ def _dedup_key(source: str, payload, parts: dict, common_labels: dict) -> str:
                  or (payload.get("check", {}) or {}).get("name") if isinstance(payload, dict) else None
             if ck:
                 return f"hc:{ck}"
+        elif source == "authentik":
+            # Group by (action, user) so a burst of logins from same user → 1 notif.
+            # Mapping output: data.user + data.event (login/login_failed/...)
+            data = payload.get("data") if isinstance(payload, dict) else None
+            data = data if isinstance(data, dict) else {}
+            user = data.get("user", "")
+            action = data.get("event") or data.get("status") or ""
+            if user or action:
+                return f"authentik:{action}:{user}"
     except Exception:
         pass
     return f"{source}:{title_fallback}"
@@ -643,7 +653,7 @@ class AuthManager:
     Webhook endpoints are always public regardless of mode.
     """
     PUBLIC_PATH_PREFIXES = (
-        "/webhook/", "/beszel/", "/healthchecks/", "/wud/",
+        "/webhook/", "/beszel/", "/healthchecks/", "/wud/", "/authentik/",
         "/healthz",
         "/auth/login", "/auth/callback", "/auth/logout",
         "/static/", "/favicon.ico",  # login page assets
@@ -1708,6 +1718,62 @@ def parse_wud_payload(payload, severity: str) -> dict:
     return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
 
 
+def parse_authentik_payload(payload: dict, severity: str) -> dict:
+    """Authentik notification webhook payload (from ntfy-body-mapping property mapping).
+
+    The mapping outputs an ntfy-native shape dict:
+      {
+        "topic":    "<ntfy topic>",          # we ignore (klaxond routes via NTFY_TOPICS)
+        "title":    "🔐 Authentication SUCCESS - <user>",
+        "message":  "<plain text body>",
+        "data":     {"severity": "info"|"critical", "auth_method": ..., ...},
+        "tags":     ["authentik", "login", "success"|"failed", ...],
+        "priority": 3|5,                      # ntfy priority scale
+        "click":    "<URL of the service>",   # primary click target
+        "actions":  [{"action":"view","label":"...","url":"..."}, ...],
+      }
+
+    Severity preference: body.data.severity > URL path severity (so a single
+    Authentik transport can route both info + critical correctly).
+    """
+    # Severity override from body
+    body_sev = ((payload.get("data") or {}).get("severity") or "").strip().lower()
+    if body_sev and body_sev in _all_known_severities():
+        severity = body_sev
+
+    title_raw = str(payload.get("title") or "Authentik notification")
+    body_raw  = str(payload.get("message") or "")
+
+    # Klaxond convention: emoji + source-tag prefix in title (mirrors other sources).
+    # Authentik mapping already includes a leading icon (🔐/🚨), so we just add a
+    # severity emoji prefix and keep its title intact.
+    state_emoji = ICONS.get(severity, ICONS["info"])
+    title = f"{state_emoji} {title_raw}"
+
+    # Tags: keep what the mapping produced + add severity prefix (for ntfy display)
+    tags = list(payload.get("tags") or [])
+    sev_tag = TAG_PREFIXES.get(severity)
+    if sev_tag and sev_tag not in tags:
+        tags.insert(0, sev_tag)
+    if "authentik" not in tags:
+        tags.append("authentik")
+
+    # Actions: convert {action, label, url} → klaxond's tuple format (kind, label, target)
+    actions = []
+    click = payload.get("click")
+    if click:
+        actions.append(("view", "Open Authentik", click))
+    for a in (payload.get("actions") or [])[:3]:
+        if isinstance(a, dict) and a.get("url") and a.get("label"):
+            actions.append(("view", str(a["label"]), str(a["url"])))
+    actions = actions[:3]  # cap to 3 (ntfy max)
+
+    # Priority: prefer klaxond's per-severity table; fall back to mapping value
+    priority = PRIORITIES.get(severity, "default")
+
+    return {"title": title, "body": body_raw, "tags": tags,
+            "actions": actions, "priority": priority}
+
 
 def _strip_non_ascii(text: str) -> str:
     """Strip Unicode chars > 0x7F. ntfy headers are Latin-1 only — emoji
@@ -2202,6 +2268,8 @@ class Handler(BaseHTTPRequestHandler):
             source = "healthchecks"
         elif self.path.startswith("/wud/"):
             source = "wud"
+        elif self.path.startswith("/authentik/"):
+            source = "authentik"
         else:
             self.send_response(404); self.end_headers(); return
 
@@ -2243,9 +2311,17 @@ class Handler(BaseHTTPRequestHandler):
             # so the missing-ping signal reaches us via tier-2/3 if ntfy
             # fails. (HC itself has retry but not multi-channel-with-fallback.)
             with_cascade = True
-        else:  # source == "wud"
+        elif source == "wud":
             parts = parse_wud_payload(payload, severity)
             # WUD HTTP trigger has no retry/multi-channel native, cascade always on
+            with_cascade = True
+        else:  # source == "authentik"
+            parts = parse_authentik_payload(payload, severity)
+            # parse_authentik_payload may override severity from body.data.severity
+            # → recompute it so cascade + dedup see the corrected value
+            body_sev = ((payload.get("data") or {}).get("severity") or "").strip().lower()
+            if body_sev and body_sev in _all_known_severities():
+                severity = body_sev
             with_cascade = True
 
         log.info("[%s/%s] %s", source, severity, parts["title"])
