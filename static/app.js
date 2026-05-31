@@ -499,9 +499,110 @@ $("#btn-delivery-save").addEventListener("click", async () => {
 });
 
 
+// ---- Dedup / grouping ----
+let dedupData = { settings: {}, sources: [], pending_counts: {}, defaults: {} };
+
+const STRATEGY_HELP = {
+  none: "no grouping (immediate delivery, equivalent to disabled)",
+  time: "all events in the window batched together",
+  key:  "group items sharing the same dedup key (per source)",
+};
+
+const SOURCE_HELP = {
+  wud:          "WUD container image updates — key=image.name → 1 notif per image even if fires on N hosts",
+  grafana:      "Grafana alerts (via /webhook/*) — key=commonLabels.alertname",
+  beszel:       "Beszel host/container metrics — key=container_name",
+  healthchecks: "Healthchecks deadman — key=check name",
+};
+
+async function loadDedup() {
+  try {
+    const j = await J("/api/dedup-config");
+    dedupData = j;
+    renderDedupCards();
+  } catch (e) {
+    const c = $("#dedup-cards");
+    if (c) c.innerHTML = '<p class="muted">Error loading dedup config: ' + e.message + "</p>";
+  }
+}
+
+function renderDedupCards() {
+  const c = $("#dedup-cards");
+  if (!c) return;
+  const sources = dedupData.sources || ["grafana", "beszel", "healthchecks", "wud"];
+  const settings = dedupData.settings || {};
+  const pending = dedupData.pending_counts || {};
+  let html = '<div class="grid2">';
+  for (const src of sources) {
+    const s = settings[src] || {};
+    const help = SOURCE_HELP[src] || "";
+    const pcount = pending[src] || 0;
+    html += `
+      <div class="card" data-src="${src}">
+        <h3 style="margin-top:0">${src.toUpperCase()}
+          <small class="muted" style="font-weight:normal">${pcount > 0 ? `· ${pcount} pending` : ""}</small>
+        </h3>
+        <p class="muted"><small>${help}</small></p>
+        <label><input type="checkbox" class="d-enabled" ${s.enabled ? "checked" : ""}> Enabled</label>
+        <label>Strategy
+          <select class="d-strategy">
+            <option value="key" ${s.strategy === "key" ? "selected" : ""}>key (recommended)</option>
+            <option value="time" ${s.strategy === "time" ? "selected" : ""}>time</option>
+            <option value="none" ${s.strategy === "none" ? "selected" : ""}>none</option>
+          </select>
+        </label>
+        <label>Window (seconds, 5..3600)
+          <input type="number" class="d-window" min="5" max="3600" value="${s.window_s || 90}">
+        </label>
+        <label title="By default, severity=critical events bypass the dedup window and deliver immediately. Toggle to also debounce critical (risky).">
+          <input type="checkbox" class="d-override" ${s.override_critical ? "checked" : ""}>
+          Override critical (debounce critical too)
+        </label>
+      </div>`;
+  }
+  html += "</div>";
+  c.innerHTML = html;
+}
+
+$("#dedup-save")?.addEventListener("click", async () => {
+  const out = {};
+  for (const card of document.querySelectorAll("#dedup-cards [data-src]")) {
+    const src = card.dataset.src;
+    out[src] = {
+      enabled:           card.querySelector(".d-enabled").checked,
+      strategy:          card.querySelector(".d-strategy").value,
+      window_s:          parseInt(card.querySelector(".d-window").value, 10) || 90,
+      override_critical: card.querySelector(".d-override").checked,
+    };
+  }
+  $("#dedup-status").textContent = "Saving…";
+  try {
+    const r = await J("/api/dedup-config", {
+      method: "POST",
+      body: JSON.stringify({ settings: out }),
+      headers: { "Content-Type": "application/json" },
+    });
+    if (r.ok) {
+      dedupData.settings = r.settings;
+      $("#dedup-status").textContent = "Saved ✓";
+      setTimeout(() => { $("#dedup-status").textContent = ""; }, 3000);
+    } else {
+      $("#dedup-status").textContent = "Error: " + (r.error || "unknown");
+    }
+  } catch (e) {
+    $("#dedup-status").textContent = "Error: " + e.message;
+  }
+});
+
+// Refresh pending counts when the grouping tab is shown
+document.querySelectorAll('[data-tab="grouping"]').forEach(btn => {
+  btn.addEventListener("click", () => { loadDedup(); });
+});
+
+
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadDelivery()]);
+  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadDelivery(), loadDedup()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);

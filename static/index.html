@@ -22,6 +22,7 @@
   <button class="tab" data-tab="routing">Routing</button>
   <button class="tab" data-tab="cascade">Cascade</button>
   <button class="tab" data-tab="delivery">Delivery rules</button>
+  <button class="tab" data-tab="grouping">Grouping</button>
   <button class="tab" data-tab="test">Send test</button>
 </nav>
 
@@ -194,6 +195,32 @@
     <button id="btn-delivery-save" class="primary">Save delivery config</button>
     <span id="delivery-status" class="muted"></span>
   </div>
+</section>
+
+<section id="tab-grouping" class="tabpane">
+  <h2>Notification grouping (dedup)</h2>
+  <p class="muted">
+    When enabled, klaxond buffers inbound events per source for the configured
+    window before delivering a single aggregated notification. Useful when a
+    cluster-wide trigger (e.g. WUD finding the same image update on N hosts)
+    would otherwise produce N pushes.
+  </p>
+  <p class="muted">
+    Strategy <b>key</b> groups events sharing the same dedup key:
+    WUD → image name, Grafana → alertname, Beszel → container name, HC → check name.
+    <br/>
+    <b>Severity caveat</b>: by default <code>critical</code> events are NOT debounced
+    (delivered immediately, even if buffering is enabled). Use the
+    <i>override critical</i> toggle per source if you want to debounce critical too.
+    Disk-backed pending queue at <code>/data/dedup_pending/</code> survives klaxond
+    restarts — pending events are flushed immediately on next start.
+  </p>
+  <div id="dedup-cards"></div>
+  <p>
+    <button id="dedup-save" class="primary">Save</button>
+    <span id="dedup-status" class="muted" style="margin-left:1em"></span>
+  </p>
+  <p class="muted"><small>Pending counts shown in cards are live (refreshed when this tab is opened).</small></p>
 </section>
 
 <section id="tab-test" class="tabpane">

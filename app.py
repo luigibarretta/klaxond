@@ -39,8 +39,10 @@ try:
     import tomllib
 except ImportError:
     tomllib = None
+import signal
 import threading
 import time as time_mod
+from collections import defaultdict
 from email.mime.text import MIMEText
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -102,6 +104,296 @@ def _save_render_config(component_dashboards: dict) -> None:
 
 
 COMPONENT_DASHBOARDS = _load_render_config()
+
+# ============================================================================
+# Dedup config — group multiple inbound events per source into one notification
+# within a configurable time window. Disabled by default for all sources except
+# WUD (out of the box).
+#
+# Config schema (per source):
+#   enabled          : bool
+#   window_s         : int  — flush after N seconds of inactivity
+#   strategy         : "none" | "time" | "key"
+#                      key = group items sharing the same dedup_key (per source)
+#                      time = all items in the window batched together
+#                      none = no grouping (delivery immediate, equivalent to disabled)
+#   override_critical: bool — if true, also debounce severity=critical
+#                      (otherwise critical always delivers immediately).
+#
+# Persistence:
+#   /data/dedup-config.json    — user settings (read by UI tab)
+#   /data/dedup_pending/       — pending event queue per source (.jsonl), so
+#                                 a klaxond restart doesn't lose buffered events.
+#                                 At startup, any pending_*.jsonl is flushed
+#                                 immediately (no window wait).
+# ============================================================================
+DEDUP_CONFIG_PATH = os.environ.get("DEDUP_CONFIG_PATH", "/data/dedup-config.json")
+DEDUP_PENDING_DIR = os.environ.get("DEDUP_PENDING_DIR", "/data/dedup_pending")
+
+DEDUP_SOURCES = ("grafana", "beszel", "healthchecks", "wud")
+
+_DEFAULT_DEDUP_SETTINGS = {
+    "grafana":      {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
+    "beszel":       {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
+    "healthchecks": {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
+    "wud":          {"enabled": True,  "window_s": 90, "strategy": "key", "override_critical": False},
+}
+
+
+def _load_dedup_settings() -> dict:
+    try:
+        with open(DEDUP_CONFIG_PATH, "r") as f:
+            raw = json.load(f)
+        # Merge with defaults so newly added fields don't break older configs
+        out = {}
+        for src in DEDUP_SOURCES:
+            cur = dict(_DEFAULT_DEDUP_SETTINGS[src])
+            cur.update(raw.get(src, {}))
+            out[src] = cur
+        return out
+    except FileNotFoundError:
+        _save_dedup_settings(_DEFAULT_DEDUP_SETTINGS)
+        return dict(_DEFAULT_DEDUP_SETTINGS)
+    except Exception as e:
+        log.warning("dedup-config read failed (%s) — using defaults", e)
+        return dict(_DEFAULT_DEDUP_SETTINGS)
+
+
+def _save_dedup_settings(settings: dict) -> None:
+    try:
+        os.makedirs(os.path.dirname(DEDUP_CONFIG_PATH), exist_ok=True)
+    except Exception:
+        pass
+    tmp = DEDUP_CONFIG_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(settings, f, indent=2)
+    os.replace(tmp, DEDUP_CONFIG_PATH)
+
+
+DEDUP_SETTINGS = _load_dedup_settings()
+
+
+def _dedup_key(source: str, payload, parts: dict, common_labels: dict) -> str:
+    """Compute the grouping key for one inbound event.
+    WUD: container image name (so the same image fired on N hosts groups into 1).
+    Grafana: alertname (so the same alert on N hosts groups into 1).
+    Beszel: container_name from labels (Beszel container metrics).
+    Healthchecks: check name from labels.
+    Anything missing → fallback to the rendered title (effectively per-alert).
+    """
+    title_fallback = parts.get("title", "?") if parts else "?"
+    try:
+        if source == "wud":
+            if isinstance(payload, list) and payload:
+                payload = payload[0]
+            if isinstance(payload, dict):
+                img = (payload.get("image") or {}).get("name") or payload.get("name")
+                if img:
+                    return f"wud:{img}"
+        elif source == "grafana":
+            an = common_labels.get("alertname") if isinstance(common_labels, dict) else None
+            if an:
+                return f"grafana:{an}"
+        elif source == "beszel":
+            cn = (payload.get("container_name") if isinstance(payload, dict) else None) \
+                 or common_labels.get("container_name")
+            if cn:
+                return f"beszel:{cn}"
+        elif source == "healthchecks":
+            ck = (payload.get("name") if isinstance(payload, dict) else None) \
+                 or (payload.get("check", {}) or {}).get("name") if isinstance(payload, dict) else None
+            if ck:
+                return f"hc:{ck}"
+    except Exception:
+        pass
+    return f"{source}:{title_fallback}"
+
+
+def _render_batch(source: str, severity: str, items: list) -> dict:
+    """Render a single aggregated notification from N buffered items."""
+    state_emoji = ICONS.get(severity, ICONS["info"])
+    src_label = source.upper() if source == "wud" else source.capitalize()
+    n = len(items)
+
+    # Group by key
+    groups = defaultdict(list)
+    for it in items:
+        groups[it.get("dedup_key", "?")].append(it)
+
+    title = f"{state_emoji} {src_label}: {n} grouped event{'s' if n > 1 else ''} ({len(groups)} group{'s' if len(groups) > 1 else ''})"
+
+    lines = []
+    for key, gitems in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        first = gitems[0]
+        first_title = (first.get("parts") or {}).get("title", "?").split(": ", 1)[-1]
+        if len(gitems) == 1:
+            lines.append(f"• {first_title}")
+        else:
+            # Try to extract per-item host where possible
+            hosts = []
+            for it in gitems:
+                lbls = it.get("common_labels") or {}
+                pl = it.get("payload") or {}
+                h = lbls.get("host") or lbls.get("instance") or (pl.get("watcher") if isinstance(pl, dict) else None)
+                if h and h not in hosts:
+                    hosts.append(h)
+            host_suffix = f" — {len(gitems)} hosts" + (f" ({', '.join(hosts[:5])}{'…' if len(hosts) > 5 else ''})" if hosts else "")
+            lines.append(f"• {first_title}{host_suffix}")
+    body = "\n".join(lines[:20])
+    if len(lines) > 20:
+        body += f"\n… +{len(lines) - 20} more"
+
+    tags = [TAG_PREFIXES.get(severity, "bell"), source, "grouped"]
+    actions = []  # batch render keeps actions empty; user can drill down in klaxond UI
+    priority = PRIORITIES.get(severity, "default")
+    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+
+
+class DedupBuffer:
+    """Per-source debouncing queue with disk-backed pending log.
+
+    submit() returns True if the event was buffered (caller does NOT deliver),
+    False if it should pass through to immediate delivery.
+
+    On startup, any pending file is immediately flushed (no window wait).
+    On SIGTERM, install_signal_handler() flushes all sources.
+    """
+
+    def __init__(self, deliver_fn):
+        self.deliver_fn = deliver_fn
+        self.queues = {src: [] for src in DEDUP_SOURCES}
+        self.timers = {src: None for src in DEDUP_SOURCES}
+        self.lock = threading.Lock()
+        try:
+            os.makedirs(DEDUP_PENDING_DIR, exist_ok=True)
+        except Exception:
+            pass
+        self._restore_pending()
+
+    def _pending_path(self, source: str) -> str:
+        return os.path.join(DEDUP_PENDING_DIR, f"pending_{source}.jsonl")
+
+    def _persist(self, source: str, item: dict) -> None:
+        try:
+            with open(self._pending_path(source), "a") as f:
+                f.write(json.dumps(item, default=str) + "\n")
+        except Exception as e:
+            log.warning("dedup: failed to persist %s item: %s", source, e)
+
+    def _clear_persisted(self, source: str) -> None:
+        try:
+            os.remove(self._pending_path(source))
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log.warning("dedup: failed to clear pending %s: %s", source, e)
+
+    def _restore_pending(self) -> None:
+        """At startup, flush any pending events immediately."""
+        for src in DEDUP_SOURCES:
+            p = self._pending_path(src)
+            if not os.path.exists(p):
+                continue
+            items = []
+            try:
+                with open(p, "r") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            items.append(json.loads(line))
+                        except Exception:
+                            continue
+            except Exception as e:
+                log.warning("dedup: restore read failed for %s: %s", src, e)
+                continue
+            if not items:
+                self._clear_persisted(src)
+                continue
+            log.info("dedup[%s]: restoring %d pending event(s) from disk → flushing immediately", src, len(items))
+            self.queues[src] = items
+            self._clear_persisted(src)
+            self._flush(src)
+
+    def submit(self, source: str, severity: str, payload, parts: dict,
+               common_labels: dict, with_cascade: bool) -> bool:
+        cfg = DEDUP_SETTINGS.get(source, {})
+        if not cfg.get("enabled"):
+            return False
+        if cfg.get("strategy") == "none":
+            return False
+        if severity == "critical" and not cfg.get("override_critical"):
+            return False
+        key = _dedup_key(source, payload, parts, common_labels)
+        item = {
+            "ts": time_mod.time(),
+            "source": source,
+            "severity": severity,
+            "payload": payload,
+            "parts": parts,
+            "common_labels": common_labels,
+            "with_cascade": with_cascade,
+            "dedup_key": key,
+        }
+        with self.lock:
+            self.queues[source].append(item)
+            self._persist(source, item)
+            if self.timers[source] is None:
+                window = int(cfg.get("window_s", 90))
+                t = threading.Timer(window, self._flush, args=[source])
+                t.daemon = True
+                self.timers[source] = t
+                t.start()
+                log.info("dedup[%s]: opened %ds window, key=%s", source, window, key)
+            else:
+                log.info("dedup[%s]: appended to window (key=%s, queue=%d)",
+                         source, key, len(self.queues[source]))
+        return True
+
+    def _flush(self, source: str) -> None:
+        with self.lock:
+            items = list(self.queues[source])
+            self.queues[source] = []
+            if self.timers[source] is not None:
+                self.timers[source] = None
+            self._clear_persisted(source)
+        if not items:
+            return
+        # Severity: take highest from the buffered items
+        sev_rank = {"info": 0, "warning": 1, "critical": 2}
+        severity = max((it.get("severity", "info") for it in items),
+                       key=lambda s: sev_rank.get(s, 0))
+        # Single-item case: deliver the original parts as-is (no batching cosmetics)
+        if len(items) == 1:
+            it = items[0]
+            parts = it.get("parts") or {}
+            ok, channel = self.deliver_fn(severity, parts, it.get("with_cascade", True),
+                                          labels=it.get("common_labels") or {},
+                                          source=source)
+            log.info("dedup[%s]: flushed 1 event → %s via %s", source, "OK" if ok else "FAIL", channel)
+            return
+        # Multi-item: render aggregated
+        parts = _render_batch(source, severity, items)
+        ok, channel = self.deliver_fn(severity, parts, True,
+                                      labels=items[0].get("common_labels") or {},
+                                      source=source)
+        log.info("dedup[%s]: flushed %d events → %s via %s",
+                 source, len(items), "OK" if ok else "FAIL", channel)
+
+    def flush_all_blocking(self, timeout_per_source: float = 5.0) -> None:
+        """Called from signal handler before exit."""
+        for src in DEDUP_SOURCES:
+            with self.lock:
+                t = self.timers[src]
+                pending = len(self.queues[src])
+            if pending == 0:
+                continue
+            log.info("dedup[%s]: SIGTERM flush (%d pending)", src, pending)
+            if t is not None:
+                t.cancel()
+            self._flush(src)
+
 
 # ============================================================================
 # Bootstrap config (TOML) — cascading rules + render rules + inhibition rules.
@@ -1089,6 +1381,18 @@ class Handler(BaseHTTPRequestHandler):
             tiers = TOML_CONFIG.get("cascade", {}).get("tiers") or _DEFAULT_TIERS
             default_enabled = TOML_CONFIG.get("cascade", {}).get("default_enabled_for_webhook", CASCADE_ENABLED)
             self._send_json({"tiers": tiers, "default_enabled_for_webhook": default_enabled, "runtime_enabled": _cascade_runtime_enabled})
+        elif self.path == "/api/dedup-config":
+            # Return current per-source dedup settings + counts of currently-pending events.
+            pending_counts = {}
+            for src in DEDUP_SOURCES:
+                with DEDUP_BUFFER.lock:
+                    pending_counts[src] = len(DEDUP_BUFFER.queues[src])
+            self._send_json({
+                "sources": list(DEDUP_SOURCES),
+                "settings": DEDUP_SETTINGS,
+                "pending_counts": pending_counts,
+                "defaults": _DEFAULT_DEDUP_SETTINGS,
+            })
         elif self.path == "/api/delivery-config":
             delivery = TOML_CONFIG.get("delivery", {}) or {}
             self._send_json({
@@ -1169,6 +1473,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_delivery_config_update()
         if self.path == "/api/render-preview":
             return self._handle_render_preview()
+        if self.path == "/api/dedup-config":
+            return self._handle_dedup_config_update()
 
         # ---- alert ingestion ----
         if self.path.startswith("/webhook/"):
@@ -1227,6 +1533,15 @@ class Handler(BaseHTTPRequestHandler):
 
         log.info("[%s/%s] %s", source, severity, parts["title"])
         commonLabels = payload.get("commonLabels", {}) if source == "grafana" else {}
+
+        # Dedup buffering: if enabled for this source + severity, queue and return
+        # 202 Accepted (caller knows it's been accepted but not delivered immediately).
+        if DEDUP_BUFFER.submit(source, severity, payload, parts, commonLabels, with_cascade):
+            self.send_response(202)
+            self.end_headers()
+            self.wfile.write(f"buffered (dedup window)".encode())
+            return
+
         ok, channel = deliver(severity, parts, with_cascade, labels=commonLabels, source=source)
         if ok:
             self.send_response(200)
@@ -1296,6 +1611,46 @@ class Handler(BaseHTTPRequestHandler):
             _cascade_runtime_enabled = not _cascade_runtime_enabled
         log.info("cascade runtime toggled → %s", _cascade_runtime_enabled)
         self._send_json({"cascade_enabled_runtime": _cascade_runtime_enabled})
+
+    def _handle_dedup_config_update(self):
+        global DEDUP_SETTINGS
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        new = payload.get("settings") if isinstance(payload, dict) else None
+        if not isinstance(new, dict):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"missing 'settings' object"); return
+        cleaned = {}
+        valid_strategies = {"none", "time", "key"}
+        for src in DEDUP_SOURCES:
+            base = dict(_DEFAULT_DEDUP_SETTINGS[src])
+            incoming = new.get(src, {})
+            if not isinstance(incoming, dict):
+                cleaned[src] = base; continue
+            base["enabled"] = bool(incoming.get("enabled", base["enabled"]))
+            try:
+                ws = int(incoming.get("window_s", base["window_s"]))
+                base["window_s"] = max(5, min(ws, 3600))  # clamp 5s..1h
+            except Exception:
+                pass
+            strat = str(incoming.get("strategy", base["strategy"]))
+            if strat in valid_strategies:
+                base["strategy"] = strat
+            base["override_critical"] = bool(incoming.get("override_critical", base["override_critical"]))
+            cleaned[src] = base
+        try:
+            _save_dedup_settings(cleaned)
+            DEDUP_SETTINGS = cleaned
+            log.info("dedup config updated: %s", {s: cleaned[s]["enabled"] for s in DEDUP_SOURCES})
+            self._send_json({"ok": True, "settings": cleaned})
+        except Exception as e:
+            log.error("dedup config save failed: %s", e)
+            self.send_response(500); self.end_headers()
+            self.wfile.write(str(e).encode())
 
     def _handle_render_config_update(self):
         global COMPONENT_DASHBOARDS
@@ -1495,7 +1850,29 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(500); self.end_headers()
             self.wfile.write(str(e).encode())
 
+# DedupBuffer is instantiated once `deliver()` is defined. We do it at module
+# import time after both `deliver` and the DEDUP_SETTINGS dict are ready
+# (the class is declared above; the instance must come AFTER deliver).
+DEDUP_BUFFER = DedupBuffer(deliver_fn=lambda *a, **kw: deliver(*a, **kw))
+
+
+def _shutdown_handler(signum, frame):
+    log.info("received signal %d → flushing dedup buffer before exit", signum)
+    try:
+        DEDUP_BUFFER.flush_all_blocking()
+    except Exception as e:
+        log.warning("dedup flush on shutdown failed: %s", e)
+    # Re-raise SIGTERM behavior (exit)
+    raise SystemExit(0)
+
+
+signal.signal(signal.SIGTERM, _shutdown_handler)
+signal.signal(signal.SIGINT, _shutdown_handler)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8181"))
-    log.info("klaxond listening on :%d  (cascade_enabled=%s)", port, CASCADE_ENABLED)
+    log.info("klaxond listening on :%d  (cascade_enabled=%s, dedup_sources_enabled=%s)",
+             port, CASCADE_ENABLED,
+             [s for s, c in DEDUP_SETTINGS.items() if c.get("enabled")])
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
