@@ -93,6 +93,7 @@ h3 {
 .dot.unknown { background: var(--gray); }
 .ch-name { font-weight: 500; }
 .ch-url { color: var(--muted); font-size: 12px; word-break: break-all; }
+.ch-status-text { font-size: 11px; font-weight: 500; vertical-align: middle; }
 .stat-card { display: flex; flex-direction: column; gap: 4px; }
 .stat-card .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .stat-card .stat-value { font-size: 1.8em; font-weight: 600; color: var(--text); line-height: 1.1; }

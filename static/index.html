@@ -131,6 +131,32 @@
     <span id="inhib-save-status" class="muted"></span>
   </div>
 
+  <h2 style="margin-top: 2em;">Test a rule <small class="muted">(dry-run — no state modified)</small></h2>
+  <p class="muted">
+    Given a source + label set, simulate which inhibition rule (if any) would match and whether the alert would be delivered. Useful when iterating on regexes / <code>match_by</code> labels against a real payload you have in hand.
+  </p>
+  <div class="card">
+    <div class="grid2">
+      <label>Source
+        <select id="inhib-test-source">
+          <option value="grafana">grafana</option>
+          <option value="beszel">beszel</option>
+          <option value="healthchecks">healthchecks</option>
+          <option value="wud">wud</option>
+          <option value="authentik">authentik</option>
+        </select>
+      </label>
+      <label>Labels (one per line, <code>label=value</code>)
+        <textarea id="inhib-test-labels" rows="5" placeholder="host=svr-01&#10;job=blackbox-https-public&#10;alertname=DiskFull" style="font-family:ui-monospace,monospace;font-size:12px"></textarea>
+      </label>
+    </div>
+    <div style="display:flex; gap:0.6em; align-items:center; margin-top:0.4em">
+      <button id="inhib-test-run" class="btn primary">Test</button>
+      <span id="inhib-test-status" class="muted"></span>
+    </div>
+    <div id="inhib-test-result" style="margin-top:0.8em"></div>
+  </div>
+
   <h2 style="margin-top: 2em;">Active suppressions <small class="muted">(transient in-memory state)</small></h2>
   <p class="muted">Lists currently-armed suppressions and their remaining TTL. The <b>Applies to</b> column shows which sources each suppression is scoped to (<code>*</code> = all). Clears automatically at TTL expiry or when the source alert resolves; use the <code>✕</code> button to force-clear early (suppressions re-arm naturally on the next source alert).</p>
   <table id="t-inhib">
@@ -145,10 +171,23 @@
 
 <section id="tab-deliveries" class="tabpane">
   <h2>Recent deliveries <small class="muted">(last 50, newest first)</small></h2>
-  <table id="t-deliv">
-    <thead><tr><th>Time</th><th>Source</th><th>Severity</th><th>Title</th><th>Channel</th></tr></thead>
-    <tbody></tbody>
-  </table>
+  <p class="muted">
+    Includes both delivered and <span class="ch-suppressed">suppressed</span> events.
+    Suppressed rows show the rule that matched in the Channel column.
+  </p>
+  <div style="display:flex; gap:0.8em; align-items:center; flex-wrap:wrap; margin-bottom:0.6em">
+    <label style="margin:0; flex:1 1 auto; min-width:200px">
+      <input type="search" id="deliv-filter" placeholder="Filter (title, source, severity, channel)…" autocomplete="off">
+    </label>
+    <label style="margin:0"><input type="checkbox" id="deliv-show-suppressed" checked> Show suppressed</label>
+    <span id="deliv-count" class="muted"></span>
+  </div>
+  <div class="table-scroll">
+    <table id="t-deliv">
+      <thead><tr><th>Time</th><th>Source</th><th>Severity</th><th>Title</th><th>Channel / Suppressed by</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </section>
 
 <section id="tab-render" class="tabpane">
@@ -457,7 +496,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.9.8</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.9.9</span></small>
 </footer>
 
 <!--

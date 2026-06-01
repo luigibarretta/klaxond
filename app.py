@@ -2394,6 +2394,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_inhibition_rules_update()
         if self.path == "/api/inhibitions/clear":
             return self._handle_inhibition_clear()
+        if self.path == "/api/inhibition-rules/test":
+            return self._handle_inhibition_rules_test()
 
         # ---- alert ingestion ----
         if self.path.startswith("/webhook/"):
@@ -2434,6 +2436,11 @@ class Handler(BaseHTTPRequestHandler):
         if not should_send:
             title = norm_labels.get("alertname") or norm_labels.get("host") or "alert"
             log.info("[%s/%s] SUPPRESSED: %s (%s)", source, severity, title, reason)
+            # Surface in the deliveries ring buffer with channel='suppressed'
+            # + suppressed_by populated, so the UI can show "why didn't I get
+            # the alert?" without grep'ing container logs.
+            suppressed_by = reason.replace("inhibited-by-", "") if reason.startswith("inhibited-by-") else reason
+            _log_delivery(source, severity, title, channel="suppressed", suppressed_by=suppressed_by)
             self.send_response(200)
             self.end_headers()
             self.wfile.write(f"suppressed by {reason}".encode())
@@ -2944,6 +2951,70 @@ class Handler(BaseHTTPRequestHandler):
         log.info("inhibitions cleared via UI: %d suppression(s) (all=%s, source=%s, anchor=%s)",
                  cleared, clear_all, target_source or "*", target_anchor or "*")
         self._send_json({"ok": True, "cleared": cleared, "remaining": after})
+
+    def _handle_inhibition_rules_test(self):
+        """Dry-run an alert against the current rule set + active suppressions.
+
+        Body: {"source": "<grafana|beszel|…>", "labels": {<labels>}}
+        Returns: {
+          would_send: bool,
+          reason: str,                # "ok" | "source" | "inhibited-by-<rule>"
+          matched_rule: str | null,   # rule.source name if a match was found
+          would_arm_suppression: bool,# true if this would register a new suppression
+          considered_rules: [<rule.source>, …],   # rules that COULD apply to this source
+        }
+
+        Does NOT modify state — pure read-only simulation. Useful for
+        iterating on regex/match_by while you have a real label set to test.
+        """
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        source = str(payload.get("source") or "").strip().lower()
+        labels = payload.get("labels") or {}
+        if not source:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"source is required"); return
+        if not isinstance(labels, dict):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"labels must be an object"); return
+
+        # Match against active state — same code path as apply_inhibition
+        # except we DO NOT register new suppressions or call _log_delivery.
+        considered = []
+        for r in INHIBITION_RULES:
+            applies_to = r.get("applies_to")
+            if not applies_to or source in applies_to:
+                considered.append(r["source"])
+
+        would_arm = False
+        if source == "grafana":
+            arm_idx = _alert_is_source(labels)
+            if arm_idx is not None:
+                would_arm = True
+
+        # Read-only suppression check (don't mutate _suppressions)
+        suppressed_by = _is_suppressed(labels, source)
+        if would_arm:
+            reason, would_send = "source", True
+            matched = INHIBITION_RULES[arm_idx]["source"]
+        elif suppressed_by:
+            reason, would_send = f"inhibited-by-{suppressed_by}", False
+            matched = suppressed_by
+        else:
+            reason, would_send = "ok", True
+            matched = None
+
+        self._send_json({
+            "would_send": would_send,
+            "reason": reason,
+            "matched_rule": matched,
+            "would_arm_suppression": would_arm,
+            "considered_rules": considered,
+        })
 
     def _handle_cascade_config_update(self):
         global TOML_CONFIG

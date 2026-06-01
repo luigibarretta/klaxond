@@ -60,7 +60,20 @@ async function loadStatus() {
     const s = await J("/api/status");
     const setCh = (id, up, url) => {
       const card = $("#" + id);
-      card.querySelector(".dot").className = "dot " + (up ? "up" : "down");
+      const dot = card.querySelector(".dot");
+      dot.className = "dot " + (up ? "up" : "down");
+      dot.title = up ? "Reachable" : "Unreachable";
+      // Add a textual status next to the dot (accessibility — color alone
+      // isn't enough for colorblind users + screen readers).
+      let statusText = card.querySelector(".ch-status-text");
+      if (!statusText) {
+        statusText = document.createElement("small");
+        statusText.className = "ch-status-text";
+        statusText.style.marginLeft = "6px";
+        dot.insertAdjacentElement("afterend", statusText);
+      }
+      statusText.textContent = up ? "✓ up" : "✗ down";
+      statusText.style.color = up ? "var(--green)" : "var(--red)";
       card.querySelector(".ch-url").textContent = url || "";
     };
     setCh("ch-ntfy", s.channels.ntfy, s.ntfy_url);
@@ -147,6 +160,57 @@ async function clearSuppression(source, anchor) {
     setTimeout(() => { status.textContent = ""; }, 3000);
     await loadInhib();
     if (typeof loadStatusActivity === "function") loadStatusActivity();
+  } catch (e) {
+    status.textContent = "❌ " + e.message;
+    status.style.color = "var(--red)";
+  }
+}
+
+async function testInhibitionRule() {
+  const source = $("#inhib-test-source").value;
+  const raw = $("#inhib-test-labels").value || "";
+  const labels = {};
+  const errors = [];
+  raw.split(/\r?\n/).forEach((line, i) => {
+    const t = line.trim();
+    if (!t) return;
+    const eq = t.indexOf("=");
+    if (eq < 1) { errors.push(`line ${i+1}: expected "label=value"`); return; }
+    labels[t.slice(0, eq).trim()] = t.slice(eq + 1).trim();
+  });
+  const status = $("#inhib-test-status");
+  const result = $("#inhib-test-result");
+  if (errors.length) {
+    status.textContent = "❌ " + errors[0];
+    status.style.color = "var(--red)";
+    result.innerHTML = "";
+    return;
+  }
+  status.textContent = "Testing…";
+  status.style.color = "";
+  try {
+    const res = await fetch("/api/inhibition-rules/test", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({source, labels}),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      status.textContent = "❌ " + (txt || res.statusText);
+      status.style.color = "var(--red)"; return;
+    }
+    const r = await res.json();
+    status.textContent = "";
+    const verdict = r.would_send
+      ? `<span style="color:var(--green)">✓ <b>Would be delivered</b></span> (reason: <code>${escapeHtml(r.reason)}</code>)`
+      : `<span style="color:var(--red)">✗ <b>Would be SUPPRESSED</b></span> by rule <code>${escapeHtml(r.matched_rule || "")}</code>`;
+    const arm = r.would_arm_suppression
+      ? '<br/><span style="color:var(--accent)">⚡ Source alert detected — would ARM a new suppression for this rule.</span>'
+      : "";
+    const considered = (r.considered_rules || []).length
+      ? `<br/><small class="muted">Rules considered for source <code>${escapeHtml(source)}</code>: ${r.considered_rules.map(s => `<code>${escapeHtml(s)}</code>`).join(", ")}</small>`
+      : `<br/><small class="muted">No rules apply to source <code>${escapeHtml(source)}</code>.</small>`;
+    result.innerHTML = verdict + arm + considered;
   } catch (e) {
     status.textContent = "❌ " + e.message;
     status.style.color = "var(--red)";
@@ -302,13 +366,38 @@ function _renderInhibRuleRow(r) {
   }
   tdTtl.appendChild(ttlWrap); tr.appendChild(tdTtl);
 
-  // --- Delete ---
-  const tdDel = document.createElement("td");
+  // --- Actions (duplicate + delete) ---
+  const tdAct = document.createElement("td");
+  tdAct.style.whiteSpace = "nowrap";
+  const dup = document.createElement("button");
+  dup.type = "button"; dup.className = "btn";
+  dup.textContent = "⎘"; dup.title = "Duplicate this rule";
+  dup.style.padding = "2px 8px"; dup.style.marginRight = "4px";
+  dup.addEventListener("click", () => {
+    // Snapshot current row state and append a clone below it.
+    const get = k => tr.querySelector(`[data-k="${k}"]`);
+    const mt = get("match_type").value;
+    const snapshot = {
+      source: get("source").value.trim() + " (copy)",
+      ttl_seconds: parseInt(get("ttl_seconds").value || "900", 10),
+      applies_to: Array.from(tr.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
+                  .filter(cb => cb.checked).map(cb => cb.value),
+    };
+    if (mt === "match_by") snapshot.match_by = get("match_label").value.trim();
+    else if (mt === "match_label") {
+      snapshot.match_label = get("match_label").value.trim();
+      snapshot.match_regex = get("match_regex").value.trim();
+    } else snapshot.match_all = true;
+    const clone = _renderInhibRuleRow(snapshot);
+    tr.parentNode.insertBefore(clone, tr.nextSibling);
+  });
   const btn = document.createElement("button");
-  btn.className = "btn"; btn.textContent = "✕"; btn.title = "Delete this rule";
-  btn.style.color = "var(--red)";
+  btn.type = "button"; btn.className = "btn";
+  btn.textContent = "✕"; btn.title = "Delete this rule";
+  btn.style.color = "var(--red)"; btn.style.padding = "2px 8px";
   btn.addEventListener("click", () => tr.remove());
-  tdDel.appendChild(btn); tr.appendChild(tdDel);
+  tdAct.appendChild(dup); tdAct.appendChild(btn);
+  tr.appendChild(tdAct);
 
   _markRowValidity(tr);
   return tr;
@@ -417,6 +506,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   if (save) save.addEventListener("click", saveInhibRules);
   if (clearAll) clearAll.addEventListener("click", clearAllSuppressions);
+  const testBtn = document.getElementById("inhib-test-run");
+  if (testBtn) testBtn.addEventListener("click", testInhibitionRule);
 });
 
 function fmtSecs(s) {
@@ -426,19 +517,50 @@ function fmtSecs(s) {
 }
 
 // ---- Deliveries ----
+let _delivCache = [];  // most recent fetch — filter applies client-side without re-fetching
+
 async function loadDeliv() {
   try {
-    const rows = await J("/api/deliveries");
-    const tb = $("#t-deliv tbody"); tb.innerHTML = "";
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No deliveries yet.</td></tr>'; return; }
-    rows.slice().reverse().forEach(r => {
-      const tr = document.createElement("tr");
-      const t = new Date(r.ts * 1000).toLocaleTimeString();
-      tr.innerHTML = `<td>${t}</td><td>${r.source}</td><td class="sev-${r.severity}">${r.severity}</td><td>${escapeHtml(r.title)}</td><td class="ch-${r.channel}">${r.channel}</td>`;
-      tb.appendChild(tr);
-    });
-  } catch (e) { console.warn("deliv fetch:", e); }
+    _delivCache = await J("/api/deliveries");
+  } catch (e) {
+    console.warn("deliv fetch:", e);
+    _delivCache = [];
+  }
+  renderDeliv();
 }
+
+function renderDeliv() {
+  const tb = $("#t-deliv tbody"); if (!tb) return;
+  tb.innerHTML = "";
+  const filter = ($("#deliv-filter")?.value || "").trim().toLowerCase();
+  const showSuppressed = $("#deliv-show-suppressed")?.checked !== false;
+  const rows = (_delivCache || []).slice().reverse();
+  let shown = 0, total = rows.length;
+  for (const r of rows) {
+    const isSupp = r.channel === "suppressed";
+    if (isSupp && !showSuppressed) continue;
+    if (filter) {
+      const hay = `${r.source} ${r.severity} ${r.title} ${r.channel} ${r.suppressed_by || ""}`.toLowerCase();
+      if (!hay.includes(filter)) continue;
+    }
+    const tr = document.createElement("tr");
+    const t = new Date(r.ts * 1000).toLocaleTimeString();
+    const chCell = isSupp
+      ? `<span class="ch-suppressed">suppressed by <code>${escapeHtml(r.suppressed_by || "?")}</code></span>`
+      : `<span class="ch-${r.channel}">${escapeHtml(r.channel)}</span>`;
+    tr.innerHTML = `<td>${t}</td><td>${escapeHtml(r.source)}</td><td class="sev-${r.severity}">${r.severity}</td><td>${escapeHtml(r.title)}</td><td>${chCell}</td>`;
+    tb.appendChild(tr); shown++;
+  }
+  const cnt = $("#deliv-count");
+  if (cnt) cnt.textContent = total === shown ? `${total} event(s)` : `${shown} / ${total} event(s)`;
+  if (!shown) tb.innerHTML = `<tr><td colspan="5" class="muted">${total ? "No events match the filter." : "No deliveries yet."}</td></tr>`;
+}
+
+// Re-render (client-side, no fetch) when filter changes
+document.addEventListener("DOMContentLoaded", () => {
+  $("#deliv-filter")?.addEventListener("input", renderDeliv);
+  $("#deliv-show-suppressed")?.addEventListener("change", renderDeliv);
+});
 
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
