@@ -204,6 +204,28 @@ code { background: var(--panel-light); padding: 1px 6px; border-radius: 3px; fon
 .ch-telegram { color: #06b6d4; }
 .ch-smtp { color: #a855f7; }
 .ch-all-failed, .ch-suppressed { color: var(--red); }
+.ch-dry-run { color: var(--muted); font-style: italic; }
+
+/* Recent deliveries: click-to-expand row */
+tr.deliv-row { transition: background 0.1s; }
+tr.deliv-row:hover { background: rgba(255,255,255,0.025); }
+tr.deliv-row.expanded { background: rgba(255,255,255,0.04); }
+tr.deliv-detail { background: rgba(0,0,0,0.2); }
+tr.deliv-detail .deliv-detail-cell {
+  padding: 10px 16px;
+  border-top: none;
+  font-size: 12px;
+}
+.deliv-detail-cell .kv {
+  display: flex; gap: 0.8em; padding: 2px 0;
+}
+.deliv-detail-cell .kv-k {
+  width: 110px; flex: 0 0 110px;
+  color: var(--muted); text-transform: uppercase;
+  font-size: 10px; letter-spacing: 0.05em;
+  padding-top: 2px;
+}
+.deliv-detail-cell .kv-v { flex: 1 1 auto; word-break: break-word; }
 footer { padding: 14px 24px; color: var(--muted); border-top: 1px solid var(--border); margin-top: 24px; text-align: center; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }

@@ -562,23 +562,58 @@ function renderDeliv() {
   const rows = (_delivCache || []).slice().reverse();
   let shown = 0, total = rows.length;
   for (const r of rows) {
-    const isSupp = r.channel === "suppressed";
+    const isSupp = r.channel === "suppressed" || r.channel === "dry-run-suppressed";
     if (isSupp && !showSuppressed) continue;
     if (filter) {
       const hay = `${r.source} ${r.severity} ${r.title} ${r.channel} ${r.suppressed_by || ""}`.toLowerCase();
       if (!hay.includes(filter)) continue;
     }
     const tr = document.createElement("tr");
+    tr.classList.add("deliv-row");
     const t = new Date(r.ts * 1000).toLocaleTimeString();
-    const chCell = isSupp
-      ? `<span class="ch-suppressed">suppressed by <code>${escapeHtml(r.suppressed_by || "?")}</code></span>`
-      : `<span class="ch-${r.channel}">${escapeHtml(r.channel)}</span>`;
+    let chCell;
+    if (r.channel === "suppressed") {
+      chCell = `<span class="ch-suppressed">suppressed by <code>${escapeHtml(r.suppressed_by || "?")}</code></span>`;
+    } else if (r.channel === "dry-run") {
+      chCell = `<span class="ch-dry-run">dry-run</span>`;
+    } else if (r.channel === "dry-run-suppressed") {
+      chCell = `<span class="ch-suppressed">dry-run (would suppress: <code>${escapeHtml(r.suppressed_by || "?")}</code>)</span>`;
+    } else {
+      chCell = `<span class="ch-${r.channel}">${escapeHtml(r.channel)}</span>`;
+    }
     tr.innerHTML = `<td>${t}</td><td>${escapeHtml(r.source)}</td><td class="sev-${r.severity}">${r.severity}</td><td>${escapeHtml(r.title)}</td><td>${chCell}</td>`;
+    tr.addEventListener("click", () => _toggleDelivExpand(tr, r));
+    tr.style.cursor = "pointer";
     tb.appendChild(tr); shown++;
   }
   const cnt = $("#deliv-count");
   if (cnt) cnt.textContent = total === shown ? `${total} event(s)` : `${shown} / ${total} event(s)`;
   if (!shown) tb.innerHTML = `<tr><td colspan="5" class="muted">${total ? "No events match the filter." : "No deliveries yet."}</td></tr>`;
+}
+
+function _toggleDelivExpand(tr, r) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("deliv-detail")) {
+    next.remove();
+    tr.classList.remove("expanded");
+    return;
+  }
+  const detail = document.createElement("tr");
+  detail.classList.add("deliv-detail");
+  const ts = new Date(r.ts * 1000);
+  const tsFull = ts.toISOString() + " (" + ts.toLocaleString() + ")";
+  const rows = [
+    ["timestamp", `<code>${escapeHtml(tsFull)}</code>`],
+    ["source",    `<code>${escapeHtml(r.source || "")}</code>`],
+    ["severity",  `<code>${escapeHtml(r.severity || "")}</code>`],
+    ["title",     `<code>${escapeHtml(r.title || "")}</code>`],
+    ["channel",   `<code>${escapeHtml(r.channel || "")}</code>`],
+  ];
+  if (r.suppressed_by) rows.push(["suppressed_by", `<code>${escapeHtml(r.suppressed_by)}</code>`]);
+  const html = rows.map(([k, v]) => `<div class="kv"><span class="kv-k">${k}</span><span class="kv-v">${v}</span></div>`).join("");
+  detail.innerHTML = `<td colspan="5" class="deliv-detail-cell">${html}</td>`;
+  tr.insertAdjacentElement("afterend", detail);
+  tr.classList.add("expanded");
 }
 
 // Re-render (client-side, no fetch) when filter changes
@@ -724,15 +759,45 @@ function renderNtfyMock(r) {
 
 
 // ---- Send test ----
+// When "Dry-run" is checked, route to /webhook/<sev>?dry_run=1 with a
+// Grafana-shape payload so the FULL ingest pipeline runs (normalize +
+// inhibition + parse + render) without actually delivering. Otherwise
+// the legacy /api/test/<sev> path that calls deliver() directly is used.
 $("#btn-test-fire").addEventListener("click", async () => {
   const sev = $("#t-sev").value;
-  const payload = {
-    title:     $("#t-title").value,
-    body:      $("#t-body").value,
-    component: $("#t-component").value,
-    host:      $("#t-host").value,
-  };
+  const dryRun = $("#t-dry-run")?.checked || false;
+  const button = $("#btn-test-fire");
+  button.disabled = true;
   try {
+    if (dryRun) {
+      // Build a Grafana-shape payload that exercises the real pipeline.
+      // Mirror what _handle_api_test does internally so the render output
+      // matches what a real Grafana alert would produce.
+      const title = $("#t-title").value || `klaxond test [${sev}]`;
+      const body  = $("#t-body").value  || "Synthetic alert from Send-test (dry-run)";
+      const component = $("#t-component").value || "";
+      const host      = $("#t-host").value || "";
+      const fake = {
+        status: "firing",
+        commonLabels: { alertname: title, severity: sev, component, host },
+        commonAnnotations: { summary: body },
+        alerts: [{ labels: { alertname: title, host, component }, annotations: { summary: body }, generatorURL: "" }],
+      };
+      const r = await J(`/webhook/${sev}?dry_run=1`, {
+        method: "POST", body: JSON.stringify(fake),
+        headers: {"Content-Type": "application/json"},
+      });
+      $("#t-result").textContent = JSON.stringify(r, null, 2);
+      showToast(`Dry-run: ${r.would_send ? "would deliver" : "would suppress"} (${r.reason})`, r.would_send ? "info" : "warn", 5000);
+      setTimeout(loadDeliv, 500);
+      return;
+    }
+    const payload = {
+      title:     $("#t-title").value,
+      body:      $("#t-body").value,
+      component: $("#t-component").value,
+      host:      $("#t-host").value,
+    };
     const r = await J(`/api/test/${sev}`, {
       method: "POST",
       body: JSON.stringify(payload),
@@ -742,6 +807,9 @@ $("#btn-test-fire").addEventListener("click", async () => {
     setTimeout(loadDeliv, 1000);
   } catch (e) {
     $("#t-result").textContent = "Error: " + e.message;
+    showToast("Send-test failed: " + e.message, "error");
+  } finally {
+    button.disabled = false;
   }
 });
 

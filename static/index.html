@@ -488,7 +488,13 @@
     </label>
   </div>
   <label>Body <textarea id="t-body" rows="3">Manual smoke test from the admin UI.</textarea></label>
-  <button id="btn-test-fire" class="primary">Fire test alert</button>
+  <div style="display:flex; gap:0.8em; align-items:center; margin: 0.4em 0;">
+    <button id="btn-test-fire" class="primary">Fire test alert</button>
+    <label style="margin:0">
+      <input type="checkbox" id="t-dry-run">
+      Dry-run <small class="muted">(simulate pipeline, no actual notification — uses /webhook/&lt;sev&gt;?dry_run=1)</small>
+    </label>
+  </div>
   <p class="muted">When a component is selected, the alert is built as a Grafana-shape payload with <code>commonLabels.component=&lt;chosen&gt;</code>. The render pipeline picks up the matching dashboard URL and adds the action button — exactly like a real alert would. Use this to verify your render config end-to-end without waiting for a real trigger.</p>
   <pre id="t-result">—</pre>
 </section>
@@ -496,7 +502,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.9.11</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.9.12</span></small>
 </footer>
 
 <!--
