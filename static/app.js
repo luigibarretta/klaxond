@@ -19,9 +19,23 @@ function activateTab(tabId) {
   if (btn && pane) {
     btn.classList.add("active");
     pane.classList.add("active");
+    _onTabActivated(tabId);
     return true;
   }
   return false;
+}
+
+// Per-tab initializer hook — called on EVERY activation (click OR hash route).
+// Loaders are idempotent (re-fetching is cheap). Add `case` here for new tabs.
+function _onTabActivated(tabId) {
+  try {
+    switch (tabId) {
+      case "flow":     if (typeof loadFlow === "function")       { loadFlow(); if (typeof _setupFlowAutorefresh === "function") _setupFlowAutorefresh(); } break;
+      case "auth":     if (typeof loadAuth === "function")        loadAuth(); break;
+      case "routing":  if (typeof loadNtfyTopics === "function")  loadNtfyTopics(); break;
+      case "grouping": if (typeof loadDedup === "function")       loadDedup(); break;
+    }
+  } catch (e) { console.warn("tab init failed:", tabId, e); }
 }
 
 function syncTabFromHash() {
@@ -1006,16 +1020,29 @@ function buildMermaidDiagram(cfgs, stats) {
 
 let _flowMermaidInitialized = false;
 
+// Wait for mermaid.min.js to finish loading (3.3MB async script).
+// Returns true if library is available within timeoutMs, false otherwise.
+async function _waitForMermaid(timeoutMs = 15000) {
+  if (window.mermaid) return true;
+  const t0 = Date.now();
+  $("#flow-status").textContent = "Loading Mermaid library (3.3MB)…";
+  while (!window.mermaid) {
+    if (Date.now() - t0 > timeoutMs) return false;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return true;
+}
+
 async function loadFlow() {
-  if (!window.mermaid) {
-    $("#flow-status").textContent = "Mermaid library not loaded";
+  if (!await _waitForMermaid()) {
+    $("#flow-status").textContent = "Mermaid library failed to load (timeout). Check Network tab.";
     return;
   }
   if (!_flowMermaidInitialized) {
     mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
     _flowMermaidInitialized = true;
   }
-  $("#flow-status").textContent = "Loading…";
+  $("#flow-status").textContent = "Fetching config…";
   let cfgs = {}, stats = null;
   try {
     const [channel, cascade, ntfy, dedup, auth, deliveries] = await Promise.all([

@@ -415,7 +415,12 @@
   <small>klaxond · <a href="https://github.com/your-org/klaxon" target="_blank">GitHub</a></small>
 </footer>
 
-<script src="mermaid.min.js"></script>
-<script src="app.js"></script>
+<!--
+  Mermaid is 3.3MB minified — load deferred so it doesn't block page parse.
+  app.js (also deferred) polls window.mermaid before calling render (see
+  _waitForMermaid). 'defer' preserves order: mermaid first, then app.
+-->
+<script src="mermaid.min.js" defer></script>
+<script src="app.js" defer></script>
 </body>
 </html>
