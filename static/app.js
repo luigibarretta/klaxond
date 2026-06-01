@@ -829,10 +829,19 @@ document.querySelectorAll('[data-tab="routing"]').forEach(btn => {
 // Dynamic Mermaid diagram from all configs. Click nodes → switch tab.
 // Stats overlay reads /api/deliveries (24h window).
 
-// Make tab-switcher callable from outside (mermaid click handlers)
+// Make tab-switcher callable from outside (mermaid click handlers).
+// Use the existing tab button's click handler so location.hash stays in sync
+// with the active pane — direct DOM manipulation would leave URL stale and
+// break subsequent tab navigation (clicking the same hash = no hashchange).
 function switchToTab(name) {
-  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
-  document.querySelectorAll(".tabpane").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
+  const btn = document.querySelector(`.tab[data-tab="${name}"]`);
+  if (btn) {
+    btn.click();  // delegates to the existing hashchange-aware handler
+  } else {
+    // Fallback: direct DOM update if the button doesn't exist (defensive)
+    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+    document.querySelectorAll(".tabpane").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
+  }
 }
 window.flowGotoTab = switchToTab;  // expose to mermaid click callbacks
 
