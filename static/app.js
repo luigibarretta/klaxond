@@ -69,6 +69,43 @@ async function loadStatus() {
     $("#cas-default").textContent = s.cascade_enabled_default;
     $("#cas-runtime").textContent = s.cascade_enabled_runtime;
   } catch (e) { console.warn("status fetch:", e); }
+  loadStatusActivity();
+}
+
+// Aggregate 24h activity from existing endpoints (no new backend needed).
+async function loadStatusActivity() {
+  // Deliveries: fetch ring buffer + count last 24h
+  try {
+    const items = await J("/api/deliveries");
+    const cutoff = Date.now() / 1000 - 24 * 3600;
+    const recent = (items || []).filter(it => (it.ts || 0) >= cutoff);
+    const bySource = {};
+    for (const it of recent) {
+      const k = it.source || "?";
+      bySource[k] = (bySource[k] || 0) + 1;
+    }
+    $("#stat-deliv-total").textContent = recent.length;
+    const parts = Object.entries(bySource).sort((a,b) => b[1]-a[1])
+                  .map(([k,v]) => `${k}: ${v}`);
+    $("#stat-deliv-breakdown").innerHTML = parts.length
+      ? "by source: " + parts.map(p => `<code>${escapeHtml(p)}</code>`).join(" · ")
+      : "by source: <span class='muted'>(no activity)</span>";
+  } catch (e) {
+    $("#stat-deliv-total").textContent = "?";
+    $("#stat-deliv-breakdown").textContent = "deliveries unreachable";
+  }
+  // Active suppressions count
+  try {
+    const inhib = await J("/api/inhibitions");
+    $("#stat-suppr-count").textContent = (inhib || []).length;
+  } catch (e) { $("#stat-suppr-count").textContent = "?"; }
+  // Dedup pending count (sum across all sources)
+  try {
+    const d = await J("/api/dedup-config");
+    const pc = d.pending_counts || {};
+    const total = Object.values(pc).reduce((a, b) => a + (b || 0), 0);
+    $("#stat-dedup-count").textContent = total;
+  } catch (e) { $("#stat-dedup-count").textContent = "?"; }
 }
 
 $("#btn-cascade-toggle").addEventListener("click", async () => {
@@ -76,19 +113,70 @@ $("#btn-cascade-toggle").addEventListener("click", async () => {
   loadStatus();
 });
 
-// ---- Inhibitions ----
+// ---- Inhibitions (active suppressions) ----
 async function loadInhib() {
   try {
     const rows = await J("/api/inhibitions");
     const tb = $("#t-inhib tbody"); tb.innerHTML = "";
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">No active suppressions.</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No active suppressions.</td></tr>'; return; }
     for (const r of rows) {
       const tr = document.createElement("tr");
       const scope = Array.isArray(r.applies_to) ? r.applies_to.join(", ") : "*";
-      tr.innerHTML = `<td><code>${escapeHtml(r.source)}</code></td><td>${escapeHtml(r.anchor)}</td><td><code>${escapeHtml(scope)}</code></td><td>${fmtSecs(r.expires_in_seconds)}</td>`;
+      tr.innerHTML = `<td><code>${escapeHtml(r.source)}</code></td><td>${escapeHtml(r.anchor)}</td><td><code>${escapeHtml(scope)}</code></td><td>${fmtSecs(r.expires_in_seconds)}</td><td><button class="btn" data-clear-suppression title="Force-clear this suppression" style="color:var(--red); padding:2px 8px">✕</button></td>`;
+      tr.querySelector("[data-clear-suppression]").addEventListener("click", () => clearSuppression(r.source, r.anchor));
       tb.appendChild(tr);
     }
   } catch (e) { console.warn("inhib fetch:", e); }
+}
+
+async function clearSuppression(source, anchor) {
+  const status = $("#inhib-clear-status");
+  try {
+    const res = await fetch("/api/inhibitions/clear", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({source, anchor}),
+    });
+    if (!res.ok) {
+      status.textContent = "❌ " + (await res.text() || res.statusText);
+      status.style.color = "var(--red)"; return;
+    }
+    const r = await res.json();
+    status.textContent = `Cleared ${r.cleared} suppression(s) for ${source}`;
+    status.style.color = "var(--green)";
+    setTimeout(() => { status.textContent = ""; }, 3000);
+    await loadInhib();
+    if (typeof loadStatusActivity === "function") loadStatusActivity();
+  } catch (e) {
+    status.textContent = "❌ " + e.message;
+    status.style.color = "var(--red)";
+  }
+}
+
+async function clearAllSuppressions() {
+  const status = $("#inhib-clear-status");
+  // Native confirm — appropriate for a force-clear action that bypasses TTL.
+  if (!confirm("Force-clear ALL active suppressions? Suppressions will re-arm on the next source alert. Continue?")) return;
+  try {
+    const res = await fetch("/api/inhibitions/clear", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({all: true}),
+    });
+    if (!res.ok) {
+      status.textContent = "❌ " + (await res.text() || res.statusText);
+      status.style.color = "var(--red)"; return;
+    }
+    const r = await res.json();
+    status.textContent = `Cleared ${r.cleared} suppression(s)`;
+    status.style.color = "var(--green)";
+    setTimeout(() => { status.textContent = ""; }, 3000);
+    await loadInhib();
+    if (typeof loadStatusActivity === "function") loadStatusActivity();
+  } catch (e) {
+    status.textContent = "❌ " + e.message;
+    status.style.color = "var(--red)";
+  }
 }
 
 // ---- Inhibition rules (CRUD) ----
@@ -101,53 +189,80 @@ function _matchTypeOf(r) {
   return "match_by";
 }
 
+// Common alert-label autocomplete values for the match_by field.
+const _COMMON_LABEL_NAMES = ["host", "job", "alertname", "instance", "service", "component", "severity"];
+
 function _renderInhibRuleRow(r) {
   const tr = document.createElement("tr");
   tr.classList.add("inhib-rule-row");
   const mt = _matchTypeOf(r);
-  const matchVal = mt === "match_by" ? (r.match_by || "")
-                 : mt === "match_label" ? `${r.match_label || ""}=${r.match_regex || ""}`
-                 : "*";
 
-  // Source name
+  // --- Source name ---
   const tdSrc = document.createElement("td");
   const inSrc = document.createElement("input");
   inSrc.type = "text"; inSrc.value = r.source || ""; inSrc.dataset.k = "source";
   inSrc.placeholder = "e.g. node-down"; inSrc.style.width = "100%";
+  inSrc.addEventListener("input", () => _markRowValidity(tr));
   tdSrc.appendChild(inSrc); tr.appendChild(tdSrc);
 
-  // Match type select
+  // --- Match type select ---
   const tdMt = document.createElement("td");
   const sel = document.createElement("select"); sel.dataset.k = "match_type";
+  const _MT_LABELS = {match_by: "match_by", match_label: "match_label + regex", match_all: "match_all"};
   for (const opt of ["match_by", "match_label", "match_all"]) {
-    const o = document.createElement("option"); o.value = opt; o.textContent = opt;
+    const o = document.createElement("option"); o.value = opt; o.textContent = _MT_LABELS[opt];
     if (opt === mt) o.selected = true;
     sel.appendChild(o);
   }
   tdMt.appendChild(sel); tr.appendChild(tdMt);
 
-  // Match value — single input that re-interprets based on match type.
-  // match_by: "<label>"     match_label: "<label>=<regex>"     match_all: disabled
+  // --- Match value cell ---
+  // Two distinct inputs (label + regex), shown/hidden by match_type. For
+  // match_by we show only the label input; for match_label we show both;
+  // for match_all both are hidden and a hint is shown instead.
   const tdMv = document.createElement("td");
-  const inMv = document.createElement("input");
-  inMv.type = "text"; inMv.value = matchVal; inMv.dataset.k = "match_value";
-  inMv.style.width = "100%";
-  inMv.placeholder = mt === "match_by" ? "host"
-                    : mt === "match_label" ? "job=^blackbox-.*"
-                    : "(n/a — suppresses everything)";
-  if (mt === "match_all") inMv.disabled = true;
-  tdMv.appendChild(inMv); tr.appendChild(tdMv);
+  const mvWrap = document.createElement("div");
+  mvWrap.style.display = "flex"; mvWrap.style.gap = "0.4em"; mvWrap.style.alignItems = "center";
 
-  sel.addEventListener("change", () => {
-    const v = sel.value;
-    inMv.disabled = (v === "match_all");
-    inMv.value = "";
-    inMv.placeholder = v === "match_by" ? "host"
-                      : v === "match_label" ? "job=^blackbox-.*"
-                      : "(n/a — suppresses everything)";
-  });
+  const inLabel = document.createElement("input");
+  inLabel.type = "text"; inLabel.dataset.k = "match_label";
+  inLabel.placeholder = "host"; inLabel.style.flex = "0 0 8em";
+  inLabel.setAttribute("list", "inhib-label-suggestions");
+  inLabel.value = r.match_by || r.match_label || "";
+  inLabel.addEventListener("input", () => _markRowValidity(tr));
 
-  // Applies to (checkboxes)
+  const eqSign = document.createElement("span");
+  eqSign.textContent = "="; eqSign.style.color = "var(--muted)";
+
+  const inRegex = document.createElement("input");
+  inRegex.type = "text"; inRegex.dataset.k = "match_regex";
+  inRegex.placeholder = "^blackbox-.*"; inRegex.style.flex = "1 1 auto";
+  inRegex.style.fontFamily = "ui-monospace, monospace"; inRegex.style.fontSize = "12px";
+  inRegex.value = r.match_regex || "";
+  inRegex.addEventListener("input", () => _markRowValidity(tr));
+
+  const mvHint = document.createElement("span");
+  mvHint.style.color = "var(--muted)"; mvHint.style.fontSize = "12px";
+  mvHint.textContent = "(suppresses every alert)";
+
+  mvWrap.appendChild(inLabel);
+  mvWrap.appendChild(eqSign);
+  mvWrap.appendChild(inRegex);
+  mvWrap.appendChild(mvHint);
+  tdMv.appendChild(mvWrap); tr.appendChild(tdMv);
+
+  function _applyMatchType(v) {
+    inLabel.style.display = (v === "match_all") ? "none" : "";
+    eqSign.style.display  = (v === "match_label") ? "" : "none";
+    inRegex.style.display = (v === "match_label") ? "" : "none";
+    mvHint.style.display  = (v === "match_all") ? "" : "none";
+    inLabel.placeholder = v === "match_label" ? "job" : "host";
+    _markRowValidity(tr);
+  }
+  _applyMatchType(mt);
+  sel.addEventListener("change", () => _applyMatchType(sel.value));
+
+  // --- Applies to (checkboxes) ---
   const tdAp = document.createElement("td");
   const wrap = document.createElement("div");
   wrap.dataset.k = "applies_to";
@@ -155,31 +270,75 @@ function _renderInhibRuleRow(r) {
   const selected = new Set(r.applies_to || []);
   for (const s of _inhibAvailableSources) {
     const lbl = document.createElement("label");
-    lbl.style.fontSize = "0.85em"; lbl.style.whiteSpace = "nowrap";
+    lbl.style.fontSize = "0.85em"; lbl.style.whiteSpace = "nowrap"; lbl.style.margin = "0";
     const cb = document.createElement("input");
     cb.type = "checkbox"; cb.value = s; cb.checked = selected.has(s);
     lbl.appendChild(cb);
     lbl.appendChild(document.createTextNode(" " + s));
     wrap.appendChild(lbl);
   }
-  tdAp.appendChild(wrap); tr.appendChild(tdAp);
+  const allHint = document.createElement("small");
+  allHint.className = "muted"; allHint.style.fontSize = "11px";
+  allHint.textContent = "(empty = all sources)";
+  tdAp.appendChild(wrap); tdAp.appendChild(allHint); tr.appendChild(tdAp);
 
-  // TTL
+  // --- TTL ---
   const tdTtl = document.createElement("td");
+  const ttlWrap = document.createElement("div");
+  ttlWrap.style.display = "flex"; ttlWrap.style.gap = "0.3em"; ttlWrap.style.alignItems = "center"; ttlWrap.style.flexWrap = "wrap";
   const inTtl = document.createElement("input");
   inTtl.type = "number"; inTtl.min = "30"; inTtl.max = "86400";
   inTtl.value = r.ttl_seconds || 900; inTtl.dataset.k = "ttl_seconds";
-  inTtl.style.width = "7em";
-  tdTtl.appendChild(inTtl); tr.appendChild(tdTtl);
+  inTtl.style.width = "5.5em";
+  inTtl.addEventListener("input", () => _markRowValidity(tr));
+  ttlWrap.appendChild(inTtl);
+  for (const [lbl, sec] of [["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600]]) {
+    const btn = document.createElement("button");
+    btn.type = "button"; btn.className = "btn"; btn.textContent = lbl;
+    btn.style.padding = "2px 6px"; btn.style.fontSize = "11px";
+    btn.title = `Set TTL to ${sec}s`;
+    btn.addEventListener("click", () => { inTtl.value = sec; _markRowValidity(tr); });
+    ttlWrap.appendChild(btn);
+  }
+  tdTtl.appendChild(ttlWrap); tr.appendChild(tdTtl);
 
-  // Delete
+  // --- Delete ---
   const tdDel = document.createElement("td");
   const btn = document.createElement("button");
   btn.className = "btn"; btn.textContent = "✕"; btn.title = "Delete this rule";
+  btn.style.color = "var(--red)";
   btn.addEventListener("click", () => tr.remove());
   tdDel.appendChild(btn); tr.appendChild(tdDel);
 
+  _markRowValidity(tr);
   return tr;
+}
+
+// Validate a single rule row in-place and flash the bad cell.
+// Returns null if valid, or a human-readable error string.
+function _validateInhibRow(tr) {
+  const get = k => tr.querySelector(`[data-k="${k}"]`);
+  const src = get("source").value.trim();
+  if (!src) return "source name is required";
+  const mt = get("match_type").value;
+  if (mt === "match_by") {
+    if (!get("match_label").value.trim()) return "label name is required for match_by";
+  } else if (mt === "match_label") {
+    if (!get("match_label").value.trim()) return "label name is required";
+    const rx = get("match_regex").value.trim();
+    if (!rx) return "regex is required";
+    try { new RegExp(rx); } catch (e) { return "invalid regex: " + e.message; }
+  }
+  const ttl = parseInt(get("ttl_seconds").value || "0", 10);
+  if (!Number.isFinite(ttl) || ttl < 30 || ttl > 86400) return "TTL must be 30..86400 seconds";
+  return null;
+}
+
+function _markRowValidity(tr) {
+  const err = _validateInhibRow(tr);
+  if (err) tr.dataset.invalid = err;
+  else delete tr.dataset.invalid;
+  tr.style.outline = err ? "1px solid var(--red)" : "";
 }
 
 async function loadInhibRules() {
@@ -196,25 +355,23 @@ function _collectInhibRules() {
   const rows = document.querySelectorAll("#t-inhib-rules tbody tr.inhib-rule-row");
   const out = [];
   for (const tr of rows) {
+    const err = _validateInhibRow(tr);
+    if (err) {
+      const src = tr.querySelector('[data-k="source"]').value.trim() || "(unnamed)";
+      return { error: `rule "${src}": ${err}` };
+    }
     const get = k => tr.querySelector(`[data-k="${k}"]`);
     const source = get("source").value.trim();
-    if (!source) continue;
     const mt = get("match_type").value;
-    const mv = get("match_value").value.trim();
     const ttl = parseInt(get("ttl_seconds").value || "900", 10);
     const applies = Array.from(tr.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
                     .filter(cb => cb.checked).map(cb => cb.value);
     const rule = { source, ttl_seconds: ttl, applies_to: applies };
     if (mt === "match_by") {
-      if (!mv) return { error: `rule "${source}": match_by value required` };
-      rule.match_by = mv;
+      rule.match_by = get("match_label").value.trim();
     } else if (mt === "match_label") {
-      const eq = mv.indexOf("=");
-      if (eq < 1 || eq === mv.length - 1) {
-        return { error: `rule "${source}": match_label must be "<label>=<regex>"` };
-      }
-      rule.match_label = mv.slice(0, eq).trim();
-      rule.match_regex = mv.slice(eq + 1).trim();
+      rule.match_label = get("match_label").value.trim();
+      rule.match_regex = get("match_regex").value.trim();
     } else {
       rule.match_all = true;
     }
@@ -253,11 +410,13 @@ async function saveInhibRules() {
 document.addEventListener("DOMContentLoaded", () => {
   const add = document.getElementById("inhib-add");
   const save = document.getElementById("inhib-save");
+  const clearAll = document.getElementById("inhib-clear-all");
   if (add) add.addEventListener("click", () => {
     const tb = $("#t-inhib-rules tbody");
     tb.appendChild(_renderInhibRuleRow({source: "", ttl_seconds: 900, applies_to: [], match_by: ""}));
   });
   if (save) save.addEventListener("click", saveInhibRules);
+  if (clearAll) clearAll.addEventListener("click", clearAllSuppressions);
 });
 
 function fmtSecs(s) {
@@ -541,12 +700,9 @@ async function loadRouting() {
   try {
     const c = await J("/api/channel-config");
     $("#r-ntfy-url").value = c.ntfy.url || "";
-    $("#r-ntfy-info").value = c.ntfy.topics.info || "";
-    $("#r-ntfy-warn").value = c.ntfy.topics.warning || "";
-    $("#r-ntfy-crit").value = c.ntfy.topics.critical || "";
-    const tok = c.ntfy.tokens_configured;
-    $("#r-ntfy-status").innerHTML = `tokens: info=${badge(tok.info)} warning=${badge(tok.warning)} critical=${badge(tok.critical)}` +
-      (c.ntfy.url_from_env ? " · <em>url overridden by env</em>" : "");
+    // ntfy topics are managed by the rich-view editor below (loadNtfyTopics).
+    // The "Save routing" button only persists ntfy URL + telegram + smtp.
+    $("#r-ntfy-status").innerHTML = c.ntfy.url_from_env ? "<em>url overridden by env</em>" : "";
     $("#r-tg-chat").value = c.telegram.chat_id || "";
     $("#r-tg-status").innerHTML = `bot token: ${badge(c.telegram.bot_token_configured)}` +
       (c.telegram.chat_id_from_env ? " · <em>chat_id overridden by env</em>" : "");
@@ -562,15 +718,9 @@ async function loadRouting() {
 const badge = ok => ok ? "<span style='color:var(--green)'>✓ configured</span>" : "<span style='color:var(--red)'>✗ missing</span>";
 
 $("#btn-routing-save").addEventListener("click", async () => {
+  // ntfy topics intentionally omitted — managed by the topic editor + /api/ntfy-topics.
   const payload = {
-    ntfy: {
-      url: $("#r-ntfy-url").value.trim(),
-      topics: {
-        info:     $("#r-ntfy-info").value.trim(),
-        warning:  $("#r-ntfy-warn").value.trim(),
-        critical: $("#r-ntfy-crit").value.trim(),
-      }
-    },
+    ntfy: { url: $("#r-ntfy-url").value.trim() },
     telegram: { chat_id: $("#r-tg-chat").value.trim() },
     smtp: {
       host: $("#r-smtp-host").value.trim(),
@@ -1333,15 +1483,3 @@ async function refreshAll() {
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
 
-// ---- About banner (dismissible + persisted) ----
-(function aboutBanner() {
-  const KEY = "klaxond.about.hidden";
-  const box = document.getElementById("about-box");
-  const btn = document.getElementById("about-close");
-  if (!box || !btn) return;
-  if (localStorage.getItem(KEY) === "1") box.classList.add("hidden");
-  btn.addEventListener("click", () => {
-    box.classList.add("hidden");
-    try { localStorage.setItem(KEY, "1"); } catch (e) {}
-  });
-})();

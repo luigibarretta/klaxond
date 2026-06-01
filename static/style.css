@@ -53,7 +53,23 @@ nav.tabs {
 main { padding: 24px; max-width: 1100px; margin: 0 auto; }
 .tabpane { display: none; }
 .tabpane.active { display: block; }
-h2 { margin-top: 24px; font-weight: 500; font-size: 1.05em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+h2 {
+  margin: 28px 0 12px;
+  font-weight: 600;
+  font-size: 1.25em;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+h2:first-child { margin-top: 8px; }
+h2 small.muted { font-size: 0.7em; font-weight: 400; letter-spacing: 0; margin-left: 0.4em; }
+h3 {
+  margin: 18px 0 8px;
+  font-weight: 500;
+  font-size: 0.85em;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -77,6 +93,14 @@ h2 { margin-top: 24px; font-weight: 500; font-size: 1.05em; color: var(--muted);
 .dot.unknown { background: var(--gray); }
 .ch-name { font-weight: 500; }
 .ch-url { color: var(--muted); font-size: 12px; word-break: break-all; }
+.stat-card { display: flex; flex-direction: column; gap: 4px; }
+.stat-card .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .stat-value { font-size: 1.8em; font-weight: 600; color: var(--text); line-height: 1.1; }
+.stat-card .stat-sub { font-size: 12px; }
+/* Tables sit in a scroll container so they don't overflow body on narrow
+ * viewports. Each <table> gets `display:block` below the breakpoint to
+ * become its own scrollable region. */
+.table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 table {
   width: 100%;
   border-collapse: collapse;
@@ -85,6 +109,16 @@ table {
   border-radius: 6px;
   overflow: hidden;
 }
+@media (max-width: 760px) {
+  /* Allow tables (without explicit wrapper) to scroll horizontally on phones */
+  table { display: block; overflow-x: auto; white-space: nowrap; }
+  table thead, table tbody, table tr { display: table; width: 100%; table-layout: auto; }
+}
+/* Inhibition rules table has a wide 6-col layout. Pin a minimum width so
+ * the row never collapses into illegible squashing — users can scroll. */
+#t-inhib-rules { min-width: 900px; }
+#t-inhib-rules td, #t-inhib-rules th { vertical-align: top; }
+#t-inhib-rules tbody tr:hover { background: rgba(255,255,255,0.02); }
 th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
 th { background: var(--panel-light); color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
 td input {
@@ -218,33 +252,6 @@ a:hover { text-decoration: underline; }
 }
 .ntfy-mock-actions a:hover { background: #2563eb; text-decoration: none; }
 
-
-/* About banner (dismissible) */
-.about {
-  background: linear-gradient(135deg, #1a2436 0%, #1e2a40 100%);
-  border: 1px solid #334155;
-  border-radius: 8px;
-  padding: 14px 18px;
-  margin-bottom: 18px;
-  position: relative;
-}
-.about-close {
-  position: absolute;
-  top: 6px; right: 8px;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 4px 8px;
-}
-.about-close:hover { color: var(--text); background: transparent; }
-.about-title { font-weight: 500; margin-bottom: 6px; color: var(--text); }
-.about-body { color: #cbd5e1; font-size: 13px; }
-.about-body p { margin: 6px 0; }
-.about-body code { background: rgba(255,255,255,0.05); }
-.about.hidden { display: none; }
 
 /* Generic utility — used by Auth tab radio warnings, Auth subcards, etc. */
 .hidden { display: none !important; }

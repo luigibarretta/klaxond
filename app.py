@@ -2392,6 +2392,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_ntfy_topics_update()
         if self.path == "/api/inhibition-rules":
             return self._handle_inhibition_rules_update()
+        if self.path == "/api/inhibitions/clear":
+            return self._handle_inhibition_clear()
 
         # ---- alert ingestion ----
         if self.path.startswith("/webhook/"):
@@ -2897,6 +2899,51 @@ class Handler(BaseHTTPRequestHandler):
                  len(cleaned_internal), cleared)
         self._send_json({"ok": True, "count": len(cleaned_internal),
                          "cleared_suppressions": cleared})
+
+    def _handle_inhibition_clear(self):
+        """Force-clear active suppressions.
+
+        Body shape:
+          {} or {"all": true}          → clear ALL active suppressions
+          {"source": "X", "anchor": "Y"} → clear specific (anchor may be "*"
+                                            for match_all rules; "" matches
+                                            stored anchor=None)
+
+        Idempotent — clearing a non-existent suppression is not an error.
+        Suppressions naturally re-arm on the next source alert.
+        """
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        clear_all = (not payload) or bool(payload.get("all"))
+        target_source = str(payload.get("source") or "").strip()
+        target_anchor = payload.get("anchor")
+        if target_anchor == "*":
+            target_anchor = None
+        with _supp_lock:
+            before = len(_suppressions)
+            if clear_all:
+                _suppressions[:] = []
+            else:
+                if not target_source:
+                    self.send_response(400); self.end_headers()
+                    self.wfile.write(b"source is required (or pass {'all': true})"); return
+                kept = []
+                for s in _suppressions:
+                    rule = INHIBITION_RULES[s["rule_idx"]]
+                    matches = (rule["source"] == target_source and
+                               (target_anchor is None or s["anchor"] == target_anchor))
+                    if not matches:
+                        kept.append(s)
+                _suppressions[:] = kept
+            after = len(_suppressions)
+        cleared = before - after
+        log.info("inhibitions cleared via UI: %d suppression(s) (all=%s, source=%s, anchor=%s)",
+                 cleared, clear_all, target_source or "*", target_anchor or "*")
+        self._send_json({"ok": True, "cleared": cleared, "remaining": after})
 
     def _handle_cascade_config_update(self):
         global TOML_CONFIG
