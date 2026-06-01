@@ -96,7 +96,7 @@ async function loadDeliv() {
   } catch (e) { console.warn("deliv fetch:", e); }
 }
 
-const escapeHtml = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // ---- Render config ----
 let rcData = {};
@@ -349,7 +349,6 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
   }
 });
 
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 
 // ---- Routing (channel config) ----
