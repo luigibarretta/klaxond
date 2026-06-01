@@ -1534,7 +1534,7 @@ def _is_suppressed(labels: dict, source: str) -> str | None:
     return None
 
 
-def apply_inhibition(source: str, labels: dict) -> tuple[bool, str]:
+def apply_inhibition(source: str, labels: dict, *, dry_run: bool = False) -> tuple[bool, str]:
     """Source-agnostic inhibition. Takes normalized labels (see
     _normalize_labels) plus the originating source name.
 
@@ -1544,12 +1544,16 @@ def apply_inhibition(source: str, labels: dict) -> tuple[bool, str]:
     suppress others". Non-Grafana sources never ARM new suppressions, but
     they ARE subject to existing ones (the whole point of going agnostic).
 
+    dry_run=True: skip _register_suppression entirely (read-only — used by
+    the /webhook/?dry_run=1 ingest path so tests don't mutate live state).
+
     Returns (should_send, reason).
     """
     if source == "grafana":
         source_idx = _alert_is_source(labels)
         if source_idx is not None:
-            _register_suppression(source_idx, labels, resolved=(labels.get("status") == "resolved"))
+            if not dry_run:
+                _register_suppression(source_idx, labels, resolved=(labels.get("status") == "resolved"))
             return True, "source"
 
     suppressed_by = _is_suppressed(labels, source)
@@ -2398,20 +2402,29 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_inhibition_rules_test()
 
         # ---- alert ingestion ----
-        if self.path.startswith("/webhook/"):
+        # Parse out query string from the path so it doesn't pollute the
+        # severity match. Dry-run can be requested via:
+        #   1) ?dry_run=1 on the URL                                 (curl-friendly)
+        #   2) "_klaxond_dry_run": true inside the JSON payload      (programmatic)
+        parsed_url = urllib.parse.urlparse(self.path)
+        url_path = parsed_url.path
+        qs = urllib.parse.parse_qs(parsed_url.query)
+        dry_run_qs = qs.get("dry_run", ["0"])[0].lower() in ("1", "true", "yes", "on")
+
+        if url_path.startswith("/webhook/"):
             source = "grafana"
-        elif self.path.startswith("/beszel/"):
+        elif url_path.startswith("/beszel/"):
             source = "beszel"
-        elif self.path.startswith("/healthchecks/"):
+        elif url_path.startswith("/healthchecks/"):
             source = "healthchecks"
-        elif self.path.startswith("/wud/"):
+        elif url_path.startswith("/wud/"):
             source = "wud"
-        elif self.path.startswith("/authentik/"):
+        elif url_path.startswith("/authentik/"):
             source = "authentik"
         else:
             self.send_response(404); self.end_headers(); return
 
-        severity = self.path.split("/")[-1].lower()
+        severity = url_path.split("/")[-1].lower()
         if severity not in _all_known_severities():
             self.send_response(400); self.end_headers()
             self.wfile.write(f"unknown severity {severity} (no topic handles it)".encode()); return
@@ -2424,6 +2437,8 @@ class Handler(BaseHTTPRequestHandler):
             log.error("invalid JSON: %s", e)
             self.send_response(400); self.end_headers(); return
 
+        dry_run = dry_run_qs or bool(isinstance(payload, dict) and payload.get("_klaxond_dry_run"))
+
         # Inhibition: source-agnostic from 0.9.6. Normalize payload to a
         # canonical {host,service,job,alertname,…} dict and run rules against
         # it. Source-alerts (the ones with `inhibition_source` label set in
@@ -2431,16 +2446,22 @@ class Handler(BaseHTTPRequestHandler):
         # suppressions. Non-Grafana sources never arm, but they are subject
         # to existing suppressions (e.g. Beszel CPU alert from host=svr-01 is
         # muted while node-down for that host is active).
+        # dry_run=True → apply_inhibition skips _register_suppression so
+        # synthetic tests don't pollute live state.
         norm_labels = _normalize_labels(source, payload)
-        should_send, reason = apply_inhibition(source, norm_labels)
+        should_send, reason = apply_inhibition(source, norm_labels, dry_run=dry_run)
         if not should_send:
             title = norm_labels.get("alertname") or norm_labels.get("host") or "alert"
-            log.info("[%s/%s] SUPPRESSED: %s (%s)", source, severity, title, reason)
-            # Surface in the deliveries ring buffer with channel='suppressed'
-            # + suppressed_by populated, so the UI can show "why didn't I get
-            # the alert?" without grep'ing container logs.
+            log.info("[%s/%s%s] SUPPRESSED: %s (%s)", source, severity,
+                     " DRY-RUN" if dry_run else "", title, reason)
             suppressed_by = reason.replace("inhibited-by-", "") if reason.startswith("inhibited-by-") else reason
-            _log_delivery(source, severity, title, channel="suppressed", suppressed_by=suppressed_by)
+            ch = "dry-run-suppressed" if dry_run else "suppressed"
+            _log_delivery(source, severity, title, channel=ch, suppressed_by=suppressed_by)
+            if dry_run:
+                return self._send_json({
+                    "dry_run": True, "would_send": False,
+                    "reason": reason, "suppressed_by": suppressed_by, "title": title,
+                })
             self.send_response(200)
             self.end_headers()
             self.wfile.write(f"suppressed by {reason}".encode())
@@ -2474,8 +2495,24 @@ class Handler(BaseHTTPRequestHandler):
                 severity = body_sev
             with_cascade = True
 
-        log.info("[%s/%s] %s", source, severity, parts["title"])
+        log.info("[%s/%s%s] %s", source, severity, " DRY-RUN" if dry_run else "", parts["title"])
         commonLabels = payload.get("commonLabels", {}) if source == "grafana" else {}
+
+        # Dry-run short-circuit: skip dedup buffer + deliver(). Log to ring
+        # buffer with channel='dry-run' so the test is visible in Recent
+        # deliveries (clearly tagged, won't be mistaken for a real delivery).
+        if dry_run:
+            _log_delivery(source, severity, parts["title"], channel="dry-run", suppressed_by="")
+            return self._send_json({
+                "dry_run": True, "would_send": True, "reason": reason,
+                "source": source, "severity": severity,
+                "with_cascade": with_cascade,
+                "parsed": {
+                    "title": parts["title"], "body": parts["body"],
+                    "tags": parts["tags"], "actions": parts["actions"],
+                    "priority": parts["priority"],
+                },
+            })
 
         # Dedup buffering: if enabled for this source + severity, queue and return
         # 202 Accepted (caller knows it's been accepted but not delivered immediately).
