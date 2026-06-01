@@ -620,7 +620,51 @@ function _toggleDelivExpand(tr, r) {
 document.addEventListener("DOMContentLoaded", () => {
   $("#deliv-filter")?.addEventListener("input", renderDeliv);
   $("#deliv-show-suppressed")?.addEventListener("change", renderDeliv);
+  $("#deliv-export-csv")?.addEventListener("click", exportDeliveriesCsv);
 });
+
+// Apply the same filter as renderDeliv so the CSV matches what the user sees.
+function _filteredDelivRows() {
+  const filter = ($("#deliv-filter")?.value || "").trim().toLowerCase();
+  const showSuppressed = $("#deliv-show-suppressed")?.checked !== false;
+  return (_delivCache || []).slice().reverse().filter(r => {
+    const isSupp = r.channel === "suppressed" || r.channel === "dry-run-suppressed";
+    if (isSupp && !showSuppressed) return false;
+    if (filter) {
+      const hay = `${r.source} ${r.severity} ${r.title} ${r.channel} ${r.suppressed_by || ""}`.toLowerCase();
+      if (!hay.includes(filter)) return false;
+    }
+    return true;
+  });
+}
+
+// RFC 4180 CSV: wrap in double-quotes if it contains commas/quotes/newlines;
+// escape embedded double-quotes by doubling them.
+function _csvCell(v) {
+  const s = String(v == null ? "" : v);
+  if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function exportDeliveriesCsv() {
+  const rows = _filteredDelivRows();
+  if (!rows.length) { showToast("No rows to export", "warn", 4000); return; }
+  const header = ["timestamp_iso", "timestamp_epoch", "source", "severity", "title", "channel", "suppressed_by"];
+  const lines = [header.join(",")];
+  for (const r of rows) {
+    const iso = new Date((r.ts || 0) * 1000).toISOString();
+    lines.push([iso, r.ts || "", r.source || "", r.severity || "", r.title || "", r.channel || "", r.suppressed_by || ""]
+                .map(_csvCell).join(","));
+  }
+  const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "klaxond-deliveries-" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`Exported ${rows.length} row(s)`, "success", 3000);
+}
 
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -724,9 +768,15 @@ $("#btn-load-beszel-sample").addEventListener("click", () => $("#pv-input").valu
 const _hcBtn = $("#btn-load-healthchecks-sample"); if (_hcBtn) _hcBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(healthchecksSample, null, 2));
 const _wudBtn = $("#btn-load-wud-sample"); if (_wudBtn) _wudBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(wudSample, null, 2));
 
-$("#btn-preview").addEventListener("click", async () => {
+async function _runPreviewRender() {
+  let payload;
+  try { payload = JSON.parse($("#pv-input").value || "{}"); }
+  catch (e) {
+    // JSON not yet valid (user mid-typing) — show in output but keep mock as-is
+    $("#pv-output").textContent = "Invalid JSON: " + e.message;
+    return;
+  }
   try {
-    const payload = JSON.parse($("#pv-input").value || "{}");
     const r = await J("/api/render-preview", {
       method: "POST",
       body: JSON.stringify({severity: $("#pv-sev").value, payload}),
@@ -738,6 +788,28 @@ $("#btn-preview").addEventListener("click", async () => {
     $("#pv-output").textContent = "Error: " + e.message;
     $("#pv-vis-body").textContent = "Error rendering preview";
   }
+}
+
+// Manual button still works for users who prefer explicit action
+$("#btn-preview").addEventListener("click", _runPreviewRender);
+
+// Live update: debounce 500ms on payload edit / severity change.
+// Skipped on initial render so an empty textarea doesn't fire a useless call.
+let _previewDebounce = null;
+function _schedulePreview() {
+  if (_previewDebounce) clearTimeout(_previewDebounce);
+  _previewDebounce = setTimeout(() => {
+    const v = $("#pv-input")?.value || "";
+    if (!v.trim()) return;  // nothing typed yet
+    _runPreviewRender();
+  }, 500);
+}
+$("#pv-input")?.addEventListener("input", _schedulePreview);
+$("#pv-sev")?.addEventListener("change", _schedulePreview);
+// Trigger after loading a sample (sample buttons set value via .value=…
+// which doesn't fire 'input', so we hook the loaders themselves).
+["#btn-load-grafana-sample", "#btn-load-beszel-sample", "#btn-load-healthchecks-sample", "#btn-load-wud-sample"].forEach(sel => {
+  $(sel)?.addEventListener("click", () => _schedulePreview());
 });
 
 function renderNtfyMock(r) {
@@ -1705,6 +1777,27 @@ async function refreshAll() {
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
 
+
+// ---- Theme toggle (light / dark) ----
+// Bootstrap happens inline in <head> (avoids flash of wrong theme). This
+// just wires the button click to flip and persist.
+(function setupThemeToggle() {
+  const btn = document.getElementById("theme-toggle");
+  if (!btn) return;
+  const updateGlyph = () => {
+    const cur = document.documentElement.getAttribute("data-theme") || "dark";
+    btn.textContent = cur === "light" ? "🌞" : "🌙";
+    btn.title = `Switch to ${cur === "light" ? "dark" : "light"} mode`;
+  };
+  updateGlyph();
+  btn.addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme") || "dark";
+    const next = cur === "light" ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("klaxond.theme", next); } catch (e) {}
+    updateGlyph();
+  });
+})();
 
 // ---- Toast notifications (non-blocking error / info banner) ----
 // Replaces the silent console.warn pattern in load* functions. Toasts stack

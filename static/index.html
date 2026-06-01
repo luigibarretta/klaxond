@@ -6,26 +6,50 @@
 <title>klaxond — notification daemon</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
+<script>
+  // Inline theme bootstrap — runs before app.js (which is deferred) so we
+  // avoid the flash of wrong theme. Reads localStorage, falls back to OS pref.
+  (function() {
+    try {
+      const saved = localStorage.getItem("klaxond.theme");
+      let theme = saved;
+      if (!theme) {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {}
+  })();
+</script>
 </head>
 <body>
 <header>
   <h1><span class="dot dot-running"></span> klaxond</h1>
   <small id="footer-tag">klaxond — cascade • inhibition • render</small>
+  <button id="theme-toggle" class="btn" title="Toggle light/dark theme" style="margin-left:auto; padding: 4px 10px; font-size: 14px;">🌓</button>
 </header>
 
 <nav class="tabs">
-  <button class="tab active" data-tab="status">Status</button>
-  <button class="tab" data-tab="flow">Flow</button>
-  <button class="tab" data-tab="inhibitions">Inhibitions</button>
-  <button class="tab" data-tab="deliveries">Recent deliveries</button>
-  <button class="tab" data-tab="render">Render config</button>
-  <button class="tab" data-tab="preview">Render preview</button>
-  <button class="tab" data-tab="routing">Routing</button>
-  <button class="tab" data-tab="cascade">Cascade</button>
-  <button class="tab" data-tab="delivery">Delivery rules</button>
-  <button class="tab" data-tab="grouping">Grouping</button>
-  <button class="tab" data-tab="auth">Authentication</button>
-  <button class="tab" data-tab="test">Send test</button>
+  <div class="tab-group" data-group="operations">
+    <span class="tab-group-label">Operations</span>
+    <button class="tab active" data-tab="status">Status</button>
+    <button class="tab" data-tab="flow">Flow</button>
+    <button class="tab" data-tab="inhibitions">Inhibitions</button>
+    <button class="tab" data-tab="deliveries">Recent deliveries</button>
+  </div>
+  <div class="tab-group" data-group="settings">
+    <span class="tab-group-label">Settings</span>
+    <button class="tab" data-tab="render">Render config</button>
+    <button class="tab" data-tab="routing">Routing</button>
+    <button class="tab" data-tab="cascade">Cascade</button>
+    <button class="tab" data-tab="delivery">Delivery rules</button>
+    <button class="tab" data-tab="grouping">Grouping</button>
+    <button class="tab" data-tab="auth">Authentication</button>
+  </div>
+  <div class="tab-group" data-group="tools">
+    <span class="tab-group-label">Tools</span>
+    <button class="tab" data-tab="preview">Render preview</button>
+    <button class="tab" data-tab="test">Send test</button>
+  </div>
 </nav>
 
 <main>
@@ -180,6 +204,7 @@
       <input type="search" id="deliv-filter" placeholder="Filter (title, source, severity, channel)…" autocomplete="off">
     </label>
     <label style="margin:0"><input type="checkbox" id="deliv-show-suppressed" checked> Show suppressed</label>
+    <button id="deliv-export-csv" class="btn" title="Download visible rows as CSV">Export CSV</button>
     <span id="deliv-count" class="muted"></span>
   </div>
   <div class="table-scroll">
@@ -206,7 +231,7 @@
 
 <section id="tab-preview" class="tabpane">
   <h2>Render preview</h2>
-  <p class="muted">Paste a sample payload (Grafana Alertmanager-shape OR Beszel-shape), pick severity, see what would be POSTed to ntfy. Nothing is delivered.</p>
+  <p class="muted">Paste a sample payload (Grafana Alertmanager-shape OR Beszel-shape), pick severity, see what would be POSTed to ntfy. <b>Updates live</b> as you type (debounced 500ms). Nothing is delivered.</p>
   <div class="grid2">
     <div>
       <label>Severity
@@ -502,7 +527,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.9.12</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.9.13</span></small>
 </footer>
 
 <!--

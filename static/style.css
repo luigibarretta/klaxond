@@ -1,4 +1,4 @@
-:root {
+:root, :root[data-theme="dark"] {
   --bg: #0f1419;
   --panel: #1a212b;
   --panel-light: #232c39;
@@ -10,6 +10,33 @@
   --yellow: #eab308;
   --red: #ef4444;
   --gray: #64748b;
+  --shadow: rgba(0, 0, 0, 0.4);
+  --hover-bg: #2d3748;
+  --row-hover: rgba(255, 255, 255, 0.03);
+  --row-expanded: rgba(255, 255, 255, 0.04);
+  --row-detail-bg: rgba(0, 0, 0, 0.2);
+  --badge-warn-fg: #1a212b;
+  --accent-hover: #2563eb;
+}
+:root[data-theme="light"] {
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --panel-light: #f1f5f9;
+  --text: #0f172a;
+  --muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #2563eb;
+  --green: #16a34a;
+  --yellow: #ca8a04;
+  --red: #dc2626;
+  --gray: #94a3b8;
+  --shadow: rgba(15, 23, 42, 0.08);
+  --hover-bg: #e2e8f0;
+  --row-hover: rgba(15, 23, 42, 0.03);
+  --row-expanded: rgba(15, 23, 42, 0.05);
+  --row-detail-bg: rgba(15, 23, 42, 0.04);
+  --badge-warn-fg: #1a212b;
+  --accent-hover: #1d4ed8;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -32,17 +59,44 @@ header h1 { margin: 0; font-size: 1.4em; font-weight: 600; }
 header small { color: var(--muted); }
 nav.tabs {
   display: flex;
-  gap: 4px;
-  padding: 8px 24px;
+  gap: 16px;
+  padding: 6px 24px 0;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  align-items: flex-end;
+}
+/* Each group: label on top (full width), tabs in a row below.
+ * Achieved via flex-wrap on the group with the label taking 100%. */
+.tab-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  position: relative;
+}
+.tab-group:not(:last-child) {
+  padding-right: 16px;
+  border-right: 1px solid var(--border);
+}
+.tab-group-label {
+  flex: 0 0 100%;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  padding: 0 6px 2px;
+  font-weight: 600;
+}
+@media (max-width: 800px) {
+  nav.tabs { flex-wrap: wrap; gap: 6px; }
+  .tab-group:not(:last-child) { border-right: none; padding-right: 0; }
+  .tab-group-label { padding-top: 4px; }
 }
 .tab {
   background: transparent;
   color: var(--muted);
   border: none;
-  padding: 8px 16px;
+  padding: 8px 14px;
   border-bottom: 2px solid transparent;
   cursor: pointer;
   white-space: nowrap;
@@ -65,7 +119,7 @@ nav.tabs {
   border-radius: 9px;
   vertical-align: 1px;
 }
-.tab .tab-badge.warn { background: var(--yellow); color: #1a212b; }
+.tab .tab-badge.warn { background: var(--yellow); color: var(--badge-warn-fg); }
 .tab .tab-badge.crit { background: var(--red); color: #fff; }
 .tab .tab-dirty {
   display: inline-block;
@@ -145,7 +199,7 @@ table {
  * the row never collapses into illegible squashing — users can scroll. */
 #t-inhib-rules { min-width: 900px; }
 #t-inhib-rules td, #t-inhib-rules th { vertical-align: top; }
-#t-inhib-rules tbody tr:hover { background: rgba(255,255,255,0.02); }
+#t-inhib-rules tbody tr:hover { background: var(--row-hover); }
 th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
 th { background: var(--panel-light); color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
 td input {
@@ -166,9 +220,9 @@ button {
   cursor: pointer;
   font-size: 13px;
 }
-button:hover { background: #2d3748; }
+button:hover { background: var(--hover-bg); }
 button.primary { background: var(--accent); border-color: var(--accent); }
-button.primary:hover { background: #2563eb; }
+button.primary:hover { background: var(--accent-hover); }
 button.danger { background: var(--red); border-color: var(--red); color: white; }
 label { display: block; margin: 8px 0; }
 input[type=text], select, textarea {
@@ -208,9 +262,9 @@ code { background: var(--panel-light); padding: 1px 6px; border-radius: 3px; fon
 
 /* Recent deliveries: click-to-expand row */
 tr.deliv-row { transition: background 0.1s; }
-tr.deliv-row:hover { background: rgba(255,255,255,0.025); }
-tr.deliv-row.expanded { background: rgba(255,255,255,0.04); }
-tr.deliv-detail { background: rgba(0,0,0,0.2); }
+tr.deliv-row:hover { background: var(--row-hover); }
+tr.deliv-row.expanded { background: var(--row-expanded); }
+tr.deliv-detail { background: var(--row-detail-bg); }
 tr.deliv-detail .deliv-detail-cell {
   padding: 10px 16px;
   border-top: none;
