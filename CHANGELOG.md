@@ -1,42 +1,178 @@
-## [0.5.9] - 2026-05-30
-### Added
-- POST /wud/<severity> endpoint for WUD (What's Up Docker) HTTP trigger
-  notifications. parse_wud_payload handles WUD's simple {title, body}
-  format. Cascade always-on (WUD has no retry native).
-- Frontend sample loaders: "Load Healthchecks sample" + "Load WUD sample"
-  buttons in Render Preview tab.
-- Backend _handle_render_preview now dispatches healthchecks (check+status)
-  and wud (title+body) payload shapes (was falling back to beszel parser).
-- klaxon.default.toml: fallback_runbooks.wud entry.
-
-### Fixed
-- Static UI restored from cc2b23f after drift recovery sync regression
-  (305 lines app.js, 113 HTML, 99 CSS lost). All tabs (Routing, Cascade,
-  Delivery rules, Inhibitions, Render preview ntfy-mock, Test) restored.
-
-# Changelog
-
-## [unreleased]
-- Build retry: clear act cache (.gitignore stale file issue)
-
 # Klaxon — CHANGELOG
 
-## 0.3.0 — 2026-05-26
+## 0.9.6 — 2026-06-01
+
+**Source-agnostic inhibition.** Previously only Grafana/Alertmanager alerts
+were subject to inhibition rules; Beszel/HC/WUD/Authentik always notified
+regardless of cluster state. As of 0.9.6:
+
+- New `_normalize_labels(source, payload)` projects every webhook to a
+  canonical `{host, service, job, alertname, status}` dict.
+- `apply_inhibition(source, labels)` runs against ALL five sources.
+- Source-alert ARMING (the `inhibition_source` label set on Grafana rules)
+  still comes only from Grafana — but EVERY source is now subject to
+  existing suppressions.
+- New `applies_to = ["grafana", "beszel", …]` field on rules to scope
+  suppression. Omitted → applies to all sources.
+
+Default rules updated:
+- `node-down` (host offline) → suppresses any alert with matching `host`
+  label across ALL sources (Beszel CPU alerts from the offline box are
+  now correctly muted, ditto WUD container updates).
+- `cluster-wide-restart` → suppresses EVERYTHING from EVERY source.
+- `traefik-down` / `authentik-down` → scoped to `applies_to=["grafana"]`
+  (blackbox job labels are a Grafana-only concept).
+
+UI:
+- Inhibitions tab shows new "Applies to" column.
+- Flow Mermaid now routes ALL emitters through INH (no more
+  "(grafana only)" caveat).
+
+Live-tested in-prod 2026-06-01: node-down host=svr-01 successfully
+suppressed Beszel system=svr-01 while letting svr-02 through;
+applies_to=[grafana] correctly scoped traefik-down away from Beszel.
+
+## 0.5.6 — 2026-05-27
+
+### Fixed
+
+- **Telegram: switched from Markdown to HTML parse_mode**. Markdown
+  parser rejected messages whose body contained stray underscores
+  (e.g. "remote_cache", a normal identifier in alerts) — Telegram
+  interpreted them as unclosed italic markers and returned 400 Bad
+  Request. HTML mode only requires escaping <, >, & in text — much
+  safer for free-form alert bodies. Title is now <b>...</b>,
+  severity is <code>...</code>.
+
+
+## 0.5.5 — 2026-05-27
+
+### Fixed
+
+- **Telegram tier: all action URLs now as inline_keyboard buttons**.
+  Previously, only the first action URL was appended as a markdown
+  link at the tail of the message text — runbook and dashboard URLs
+  beyond the first were dropped silently. Now klaxond posts one
+  Telegram inline_keyboard button per action (capped at 5 for safety),
+  matching what ntfy already showed. So a critical alert on Telegram
+  now has tappable "📖 Runbook" / "📊 Dashboard" / "View rule"
+  buttons under the message.
+
+  SMTP tier was already including all actions as text lines
+  ("label: url") so no change there.
+
+
+## 0.5.4 — 2026-05-27
 
 ### Added
-- **Delivery policies + rules**: TOML [delivery] section with named
-  policies (cascade or broadcast modes) and per-label match rules
-  (exact or regex via re: prefix). First-match wins, default_policy
-  as fallback. Backward-compatible — legacy [cascade] is wrapped as
-  the implicit "legacy-cascade" policy.
-- **/api/delivery-config**: GET + POST for the new section.
-- **Delivery rules UI tab**: default policy selector, policies table,
-  rules table with multi-line label=value editor (and re:regex).
 
-### Changed
-- deliver() refactored to walk a chosen policy (cascade or broadcast)
-  instead of a single global tier list. broadcast mode fires all
-  tiers in parallel — at least one success counts as delivered.
+- **Fallback runbook URLs per source** ([render.fallback_runbooks] in
+  klaxon.toml). Sources without a per-alert annotation channel (Beszel,
+  Healthchecks) now also get a "📖 Runbook" button — the URL is taken
+  from the toml config for the source. Grafana alerts continue to use
+  the per-rule annotation.runbook_url (which wins over any fallback).
+
+  Healthchecks supports per-payload override too: include
+  "runbook_url" in the JSON body and it overrides the toml fallback
+  for that specific check.
+
+  Example klaxon.toml:
+    [render.fallback_runbooks]
+    beszel       = "https://docs.example.com/runbooks/beszel.md"
+    healthchecks = "https://docs.example.com/runbooks/hc-deadman.md"
+
+  When empty (the default), no button is shown for that source.
+
+
+## 0.5.3 — 2026-05-27
+
+### Added
+
+- **Runbook action button** on Grafana-origin notifications. If the
+  alert rule sets `annotations.runbook_url`, klaxond prepends a
+  "📖 Runbook" button to the ntfy actions array, before the
+  existing component-dashboard button. Tapping the push opens the
+  runbook directly. ntfy supports up to 3 action buttons; runbook
+  + dashboard + rule URL fit comfortably.
+
+  Convention: link to a markdown file in your docs repo (e.g.
+  Gitea or Forgejo with mermaid rendering), or to a wiki page —
+  whatever your team uses. klaxond does not parse the runbook;
+  it just forwards the URL to ntfy.
+
+  No-op for Beszel and Healthchecks endpoints since those sources
+  don't have an annotation system. (HC checks already get a
+  "Open in HC" button via the "url" body field.)
+
+
+## 0.5.2 — 2026-05-27
+
+### Fixed
+
+- **Emoji conflict on RESOLVED**. When an alert resolved, the tag list
+  still contained the severity literal (`warning`/`critical`), which ntfy
+  auto-rendered as the matching Unicode emoji on the phone. Result:
+  title showed ✅ (resolved) while tags showed ⚠️ — visually contradictory.
+  All three parsers (Grafana, Beszel, Healthchecks) now drop the severity
+  literal from the tag list when status is resolved, keeping only the
+  resolved checkmark + component tag.
+
+### Added
+
+- **Structured audit log per delivery** (`audit_log_delivery()`). klaxond
+  emits one JSON line per delivery attempt with stable schema (audit,
+  source, severity, alertname, component, host, tiers_attempted, ok,
+  channel, duration_ms, timestamp). Promtail scrapes klaxond stdout to
+  Loki; the new Alert health dashboard plus future ad-hoc "who got what
+  when" queries consume this stream.
+
+
+## 0.5.1 — 2026-05-27
+
+### Fixed
+
+- **Emoji consistency across renderers**. Three small drifts that
+  added up to confusing UX:
+  1. `severity_tag_prefix` from `klaxon.toml` was loaded but never
+     applied at runtime — both Grafana and Beszel renderers used a
+     hardcoded dict inline. Setting the TOML field had no effect.
+  2. `severity_emoji.resolved` was loaded into ICONS but bypassed —
+     the literal "✅" was hardcoded in all three parsers.
+  3. The new /healthchecks parser used "⚠️" as fallback emoji while
+     /webhook and /beszel used "ℹ️".
+
+  All three parsers (Grafana, Beszel, Healthchecks) now read from
+  the same ICONS and TAG_PREFIXES globals, so a single edit to
+  klaxon.toml under [render.severity_emoji] / [render.severity_tag_prefix]
+  flips the rendering for every source.
+
+- **TAG_PREFIXES global** added next to ICONS/PRIORITIES.
+  Defaults: info=information_source, warning=warning,
+  critical=rotating_light, resolved=white_check_mark — all
+  TOML-overridable.
+
+
+## 0.5.0 — 2026-05-27
+
+### Added
+
+- **`/healthchecks/<sev>` endpoint** for Healthchecks self-hosted webhook
+  channels. Accepts the JSON body
+  `{check, status, code, last_ping, tags, url}` (HC's substitution
+  placeholders) and renders an alert with the same shape as
+  `/webhook/` and `/beszel/`. `status: up|ok|resolved` flips the
+  rendering to "✅ HC UP" with low priority; anything else (`down`,
+  `fail`) renders as "🚨 HC DOWN" with the severity priority from the
+  URL path. Cascade is always-on for this source (HC's native
+  webhook retry is single-channel).
+
+- **HA-ready** documentation in README.md: how to deploy klaxon
+  behind a load balancer with shared `/data` storage, what state is
+  file-backed vs in-memory, and the self-monitoring pattern that
+  works whether you run one instance or many. No code changes
+  needed — both config files are already atomically written and
+  read on every relevant request, so NFS/Ceph just works.
+
 
 ## 0.2.0 — 2026-05-26
 
@@ -83,7 +219,3 @@ First versioned release.
 - Python 3.13 stdlib only (no third-party deps).
 - Image: `python:3.13-alpine` base, ~50 MB total.
 - Persistent state: `/data` (klaxon.toml + render-config.json).
-# trigger CI rebuild after runner config fix
-# retrigger CI
-# trigger v0.3.4 with REGISTRY_TOKEN secret
-# retest with docker daemon DNS fix

@@ -1078,6 +1078,9 @@ def _save_toml_config(cfg: dict) -> None:
             lines.append(f'match_regex = "{inh["match_regex"]}"')
         if inh.get("match_all"):
             lines.append("match_all = true")
+        if inh.get("applies_to"):
+            quoted = ", ".join(f'"{s}"' for s in inh["applies_to"])
+            lines.append(f'applies_to = [{quoted}]')
         lines.append(f'ttl_seconds = {int(inh.get("ttl_seconds", 900))}')
         lines.append("")
     tmp = KLAXON_CONFIG + ".tmp"
@@ -1136,6 +1139,9 @@ def _apply_toml_overrides():
                 entry["match_label_regex"] = (r["match_label"], r["match_regex"])
             if r.get("match_all"):
                 entry["match_all"] = True
+            if r.get("applies_to"):
+                # Defensive cast: TOML reads as list[str]; ignore non-string entries.
+                entry["applies_to"] = [str(s) for s in r["applies_to"] if isinstance(s, str)]
             rebuilt.append(entry)
         INHIBITION_RULES = rebuilt
 
@@ -1324,24 +1330,37 @@ def _check_channel_reachability() -> dict:
 # source alert is identified by the `inhibition_source` label set on its
 # Grafana rule definition (in manage-grafana-dashboards.yml).
 # ============================================================================
+#
+# Each rule may set `applies_to` = list of source names ("grafana", "beszel",
+# "healthchecks", "wud", "authentik"). If omitted → applies to ALL sources
+# (cross-source suppression — e.g. node-down suppresses Beszel/HC alerts
+# from the same host too, not just Grafana alerts). The matching key
+# (`match_by` / `match_label_regex`) lookups happen against the NORMALIZED
+# label dict produced by _normalize_labels(), which exposes `host`, `service`,
+# `job`, `alertname` uniformly across all sources.
 INHIBITION_RULES = [
-    # node-down (host offline) → suppress everything with same `host` label
+    # node-down (host offline) → suppress everything with same `host` label,
+    # regardless of source (Grafana cascade alerts AND Beszel/HC/WUD from
+    # the same host all become noise when the box is offline).
     {"source": "node-down",
      "match_by": "host",                # suppress alerts whose label[host] == source's host
      "ttl_seconds": 900},
     # traefik-down → suppress all blackbox HTTP/HTTPS e2e probes (everything
-    # behind Traefik will fail until it's back)
+    # behind Traefik will fail until it's back). Blackbox is a Grafana-only
+    # concept; other sources don't have a `job=blackbox-*` label.
     {"source": "traefik-down",
      "match_label_regex": ("job", r"^blackbox-(https|http).*"),
+     "applies_to": ["grafana"],
      "ttl_seconds": 900},
     # authentik-down → suppress alerts on services gated by forwardAuth.
     # We don't have an explicit "auth-gated" label, so use a conservative
     # match: blackbox-https-public probes (which all chain through Authentik
-    # at the public e2e layer).
+    # at the public e2e layer). Grafana-only by construction.
     {"source": "authentik-down",
      "match_label_regex": ("job", r"^blackbox-https.*"),
+     "applies_to": ["grafana"],
      "ttl_seconds": 900},
-    # cluster-wide-restart → suppress EVERYTHING except itself for 30min.
+    # cluster-wide-restart → suppress EVERYTHING from EVERY source for 30min.
     # Half the cluster rebooting is going to fire dozens of derivative
     # alerts while services come back; mute them en masse.
     {"source": "cluster-wide-restart",
@@ -1400,9 +1419,95 @@ def _register_suppression(rule_idx: int, labels: dict, resolved: bool) -> None:
                      rule["source"], anchor or "*")
 
 
-def _is_suppressed(labels: dict) -> str | None:
+def _normalize_labels(source: str, payload) -> dict:
+    """Project a per-source webhook payload to a canonical label dict so
+    inhibition rules (keyed on host/service/job/alertname) can match
+    uniformly across all 5 sources. Returns at least {"source": source}.
+
+    Keys produced where applicable: host, service, job, alertname,
+    inhibition_source, status (raw — 'firing' or 'resolved'-ish).
+    """
+    out = {"source": source, "status": "firing"}
+
+    if source == "grafana":
+        common = (payload.get("commonLabels") or {}) if isinstance(payload, dict) else {}
+        # Pass through commonLabels verbatim (host/job/alertname/etc all
+        # already in there) + alias instance→host if host missing.
+        for k, v in common.items():
+            out[k] = v
+        if "host" not in out and out.get("instance"):
+            out["host"] = out["instance"]
+        out["status"] = (payload.get("status") if isinstance(payload, dict) else None) or "firing"
+        return out
+
+    if source == "beszel":
+        if isinstance(payload, dict):
+            host = payload.get("system") or payload.get("host")
+            if host: out["host"] = host
+            alert = payload.get("alert") or payload.get("name")
+            if alert: out["alertname"] = alert
+            status = (payload.get("status") or "").lower()
+            if status in ("resolved", "ok", "back to normal"):
+                out["status"] = "resolved"
+        out["job"] = "beszel"
+        return out
+
+    if source == "healthchecks":
+        if isinstance(payload, dict):
+            check = payload.get("check") or payload.get("name")
+            if check: out["alertname"] = check
+            # HC channel template carries `tags` as a space-separated string;
+            # honour host=… / service=… conventions if present.
+            tags_str = payload.get("tags") or ""
+            if isinstance(tags_str, str):
+                for tok in tags_str.split():
+                    if "=" in tok:
+                        k, v = tok.split("=", 1)
+                        k = k.strip().lower()
+                        if k in ("host", "service") and v:
+                            out[k] = v
+            status = (payload.get("status") or "").lower()
+            if status in ("up", "ok", "resolved"):
+                out["status"] = "resolved"
+        out["job"] = "healthchecks"
+        return out
+
+    if source == "wud":
+        if isinstance(payload, dict):
+            host = payload.get("watcher") or payload.get("host")
+            if host: out["host"] = host
+            name = payload.get("name")
+            if name:
+                out["service"] = name
+                out["alertname"] = "container-update"
+        elif isinstance(payload, list) and payload:
+            # Batch fires don't have a single host; use first container's
+            # watcher as best-effort (caller can still match_all rules).
+            first = payload[0] if isinstance(payload[0], dict) else {}
+            host = first.get("watcher") or first.get("host")
+            if host: out["host"] = host
+            out["alertname"] = "container-update-batch"
+        out["job"] = "wud"
+        return out
+
+    if source == "authentik":
+        if isinstance(payload, dict):
+            data = payload.get("data") or {}
+            host = data.get("host") or data.get("client_ip")
+            if host: out["host"] = host
+        out["job"] = "authentik"
+        return out
+
+    return out
+
+
+def _is_suppressed(labels: dict, source: str) -> str | None:
     """If `labels` describe an alert that should be suppressed, return the
-    name of the source rule. Else None."""
+    name of the source rule. Else None.
+
+    Rules with `applies_to` set restrict matching to those source names; an
+    unset/empty `applies_to` means the rule applies to ALL sources.
+    """
     _cleanup_expired()
     with _supp_lock:
         active = list(_suppressions)
@@ -1412,6 +1517,9 @@ def _is_suppressed(labels: dict) -> str | None:
         rule = INHIBITION_RULES[supp["rule_idx"]]
         if rule["source"] == own_source:
             return None
+        applies_to = rule.get("applies_to")
+        if applies_to and source not in applies_to:
+            continue
         if rule.get("match_all"):
             return rule["source"]
         if "match_by" in rule:
@@ -1426,26 +1534,25 @@ def _is_suppressed(labels: dict) -> str | None:
     return None
 
 
-def apply_inhibition(payload: dict, severity: str) -> tuple[bool, str]:
-    """Examine a Grafana webhook payload. For each alert in payload['alerts'],
-    update suppression state if it's a source alert, or check if it should be
-    suppressed. Returns (should_send, reason).
-    
-    Decision is based on commonLabels for grouped payloads. Resolved source
-    alerts clear their suppression."""
-    common = payload.get("commonLabels", {}) or {}
-    status = payload.get("status", "firing")
+def apply_inhibition(source: str, labels: dict) -> tuple[bool, str]:
+    """Source-agnostic inhibition. Takes normalized labels (see
+    _normalize_labels) plus the originating source name.
 
-    # Update suppression state from source alerts
-    source_idx = _alert_is_source(common)
-    if source_idx is not None:
-        _register_suppression(source_idx, common, resolved=(status == "resolved"))
-        # Source alerts always go through (we want to be notified that
-        # node-down is firing/resolved)
-        return True, "source"
+    Source-alert detection (the thing that ARMS suppression) still only fires
+    for Grafana, because the `inhibition_source` label is set inside Grafana
+    rule definitions — it's the human-curated marker for "this alert should
+    suppress others". Non-Grafana sources never ARM new suppressions, but
+    they ARE subject to existing ones (the whole point of going agnostic).
 
-    # Check if this alert is suppressed
-    suppressed_by = _is_suppressed(common)
+    Returns (should_send, reason).
+    """
+    if source == "grafana":
+        source_idx = _alert_is_source(labels)
+        if source_idx is not None:
+            _register_suppression(source_idx, labels, resolved=(labels.get("status") == "resolved"))
+            return True, "source"
+
+    suppressed_by = _is_suppressed(labels, source)
     if suppressed_by:
         return False, f"inhibited-by-{suppressed_by}"
 
@@ -1453,15 +1560,22 @@ def apply_inhibition(payload: dict, severity: str) -> tuple[bool, str]:
 
 
 def inhibition_status() -> list:
-    """Return a snapshot of current suppressions, for /healthz?inhibition=1."""
+    """Return a snapshot of current suppressions, for /healthz?inhibition=1
+    and the Inhibitions tab."""
     _cleanup_expired()
     now = time_mod.time()
     with _supp_lock:
-        return [{
-            "source": INHIBITION_RULES[s["rule_idx"]]["source"],
-            "anchor": s["anchor"] or "*",
-            "expires_in_seconds": int(s["expiry"] - now),
-        } for s in _suppressions]
+        out = []
+        for s in _suppressions:
+            rule = INHIBITION_RULES[s["rule_idx"]]
+            applies_to = rule.get("applies_to") or ["*"]
+            out.append({
+                "source": rule["source"],
+                "anchor": s["anchor"] or "*",
+                "applies_to": applies_to,
+                "expires_in_seconds": int(s["expiry"] - now),
+            })
+        return out
 
 
 
@@ -2286,17 +2400,24 @@ class Handler(BaseHTTPRequestHandler):
             log.error("invalid JSON: %s", e)
             self.send_response(400); self.end_headers(); return
 
-        # Inhibition: only applied to Grafana alerts. Beszel events are
-        # host metrics, independent of cluster state, so they always notify.
+        # Inhibition: source-agnostic from 0.9.6. Normalize payload to a
+        # canonical {host,service,job,alertname,…} dict and run rules against
+        # it. Source-alerts (the ones with `inhibition_source` label set in
+        # Grafana) still come ONLY from Grafana — they're what ARMS new
+        # suppressions. Non-Grafana sources never arm, but they are subject
+        # to existing suppressions (e.g. Beszel CPU alert from host=svr-01 is
+        # muted while node-down for that host is active).
+        norm_labels = _normalize_labels(source, payload)
+        should_send, reason = apply_inhibition(source, norm_labels)
+        if not should_send:
+            title = norm_labels.get("alertname") or norm_labels.get("host") or "alert"
+            log.info("[%s/%s] SUPPRESSED: %s (%s)", source, severity, title, reason)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(f"suppressed by {reason}".encode())
+            return
+
         if source == "grafana":
-            should_send, reason = apply_inhibition(payload, severity)
-            if not should_send:
-                title = payload.get("commonLabels", {}).get("alertname", "alert")
-                log.info("[grafana/%s] SUPPRESSED: %s (%s)", severity, title, reason)
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(f"suppressed by {reason}".encode())
-                return
             parts = parse_grafana_payload(payload, severity)
             with_cascade = CASCADE_ENABLED
         elif source == "beszel":

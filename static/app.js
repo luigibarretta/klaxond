@@ -80,10 +80,11 @@ async function loadInhib() {
   try {
     const rows = await J("/api/inhibitions");
     const tb = $("#t-inhib tbody"); tb.innerHTML = "";
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">No active suppressions.</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">No active suppressions.</td></tr>'; return; }
     for (const r of rows) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td><code>${r.source}</code></td><td>${r.anchor}</td><td>${fmtSecs(r.expires_in_seconds)}</td>`;
+      const scope = Array.isArray(r.applies_to) ? r.applies_to.join(", ") : "*";
+      tr.innerHTML = `<td><code>${escapeHtml(r.source)}</code></td><td>${escapeHtml(r.anchor)}</td><td><code>${escapeHtml(scope)}</code></td><td>${fmtSecs(r.expires_in_seconds)}</td>`;
       tb.appendChild(tr);
     }
   } catch (e) { console.warn("inhib fetch:", e); }
@@ -956,20 +957,22 @@ function buildMermaidDiagram(cfgs, stats) {
 
   lines.push("  GRA --> AM");
 
-  // Inhibition only applies to grafana (via Alertmanager)
-  lines.push("  INH{\"Inhibition rules<br/>(grafana only)\"}");
+  // Inhibition is source-agnostic (0.9.6+): ALL emitters flow through it.
+  // Source-alert ARMING (the inhibition_source label) is grafana-only, but
+  // EVERY source is subject to existing suppressions via _normalize_labels.
+  lines.push("  INH{\"Inhibition rules<br/><small>cross-source (all emitters)</small>\"}");
   lines.push("  DROP[\"suppress\"]");
   lines.push("  RND[\"Render<br/>title/body/tags/actions\"]");
   lines.push("  CAS{\"Cascade " + (cascadeOn ? "✓ on" : "✗ off") + "\"}");
   lines.push("  class INH,DROP,RND,CAS klx");
 
   lines.push("  AM --> INH");
+  lines.push("  BSZ --> INH");
+  lines.push("  HC --> INH");
+  lines.push("  WUD --> INH");
+  lines.push("  AKN --> INH");
   lines.push("  INH -->|matched| DROP");
   lines.push("  INH -->|pass| RND");
-  lines.push("  BSZ --> RND");
-  lines.push("  HC --> RND");
-  lines.push("  WUD --> RND");
-  lines.push("  AKN --> RND");
 
   lines.push("  RND --> CAS");
 

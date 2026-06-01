@@ -80,9 +80,9 @@
 
 <section id="tab-inhibitions" class="tabpane">
   <h2>Active inhibitions (bridge in-memory safety net)</h2>
-  <p class="muted">Inhibition rules are also declared in Alertmanager (<a href="https://alertmanager.example.com/#/silences" target="_blank">silences UI</a>) — this list reflects the bridge's own safety-net layer for direct posts.</p>
+  <p class="muted">Source-agnostic (0.9.6+): rules apply to all 5 emitters by default. <b>Applies to</b> column shows which sources each active suppression scopes to (<code>*</code> = all). Inhibition rules can also be declared in Alertmanager (<a href="https://alertmanager.example.com/#/silences" target="_blank">silences UI</a>); this list reflects only the bridge's own safety-net layer for direct posts.</p>
   <table id="t-inhib">
-    <thead><tr><th>Source</th><th>Anchor</th><th>Expires in</th></tr></thead>
+    <thead><tr><th>Source</th><th>Anchor</th><th>Applies to</th><th>Expires in</th></tr></thead>
     <tbody></tbody>
   </table>
 </section>
