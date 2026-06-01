@@ -79,8 +79,35 @@
 </section>
 
 <section id="tab-inhibitions" class="tabpane">
-  <h2>Active inhibitions (bridge in-memory safety net)</h2>
-  <p class="muted">Source-agnostic (0.9.6+): rules apply to all 5 emitters by default. <b>Applies to</b> column shows which sources each active suppression scopes to (<code>*</code> = all). Inhibition rules can also be declared in Alertmanager (<a href="https://alertmanager.example.com/#/silences" target="_blank">silences UI</a>); this list reflects only the bridge's own safety-net layer for direct posts.</p>
+  <h2>Inhibition rules <small class="muted">(persisted to <code>klaxon.toml</code>)</small></h2>
+  <p class="muted">
+    Source-agnostic (0.9.6+): rules apply to all 5 emitters by default. Restrict scope by selecting one or more sources under <b>Applies to</b> (empty = all). Match type is exclusive — pick one:
+    <code>match_by</code> (single label, equality vs. source anchor),
+    <code>match_label + match_regex</code> (regex vs. one label),
+    or <code>match_all</code> (suppress everything).
+    Saving replaces the in-memory rules and clears any active suppressions — they re-arm naturally on the next source alert.
+  </p>
+  <table id="t-inhib-rules">
+    <thead>
+      <tr>
+        <th>Source <small class="muted">(<code>inhibition_source</code> label)</small></th>
+        <th>Match type</th>
+        <th>Match value</th>
+        <th>Applies to</th>
+        <th>TTL (sec)</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+  <div style="margin: 0.8em 0; display: flex; gap: 0.6em; align-items: center;">
+    <button id="inhib-add" class="btn">+ Add rule</button>
+    <button id="inhib-save" class="btn primary">Save</button>
+    <span id="inhib-save-status" class="muted"></span>
+  </div>
+
+  <h2 style="margin-top: 2em;">Active suppressions <small class="muted">(transient in-memory state)</small></h2>
+  <p class="muted">Lists currently-armed suppressions and their remaining TTL. The <b>Applies to</b> column shows which sources each suppression is scoped to (<code>*</code> = all). This is observation-only — clears automatically at TTL expiry or when the source alert resolves.</p>
   <table id="t-inhib">
     <thead><tr><th>Source</th><th>Anchor</th><th>Applies to</th><th>Expires in</th></tr></thead>
     <tbody></tbody>

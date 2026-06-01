@@ -30,10 +30,11 @@ function activateTab(tabId) {
 function _onTabActivated(tabId) {
   try {
     switch (tabId) {
-      case "flow":     if (typeof loadFlow === "function")       { loadFlow(); if (typeof _setupFlowAutorefresh === "function") _setupFlowAutorefresh(); } break;
-      case "auth":     if (typeof loadAuth === "function")        loadAuth(); break;
-      case "routing":  if (typeof loadNtfyTopics === "function")  loadNtfyTopics(); break;
-      case "grouping": if (typeof loadDedup === "function")       loadDedup(); break;
+      case "flow":        if (typeof loadFlow === "function")       { loadFlow(); if (typeof _setupFlowAutorefresh === "function") _setupFlowAutorefresh(); } break;
+      case "auth":        if (typeof loadAuth === "function")        loadAuth(); break;
+      case "routing":     if (typeof loadNtfyTopics === "function")  loadNtfyTopics(); break;
+      case "grouping":    if (typeof loadDedup === "function")       loadDedup(); break;
+      case "inhibitions": if (typeof loadInhibRules === "function")  loadInhibRules(); break;
     }
   } catch (e) { console.warn("tab init failed:", tabId, e); }
 }
@@ -89,6 +90,175 @@ async function loadInhib() {
     }
   } catch (e) { console.warn("inhib fetch:", e); }
 }
+
+// ---- Inhibition rules (CRUD) ----
+let _inhibAvailableSources = [];
+
+function _matchTypeOf(r) {
+  if (r.match_all) return "match_all";
+  if (r.match_label && r.match_regex) return "match_label";
+  if (r.match_by) return "match_by";
+  return "match_by";
+}
+
+function _renderInhibRuleRow(r) {
+  const tr = document.createElement("tr");
+  tr.classList.add("inhib-rule-row");
+  const mt = _matchTypeOf(r);
+  const matchVal = mt === "match_by" ? (r.match_by || "")
+                 : mt === "match_label" ? `${r.match_label || ""}=${r.match_regex || ""}`
+                 : "*";
+
+  // Source name
+  const tdSrc = document.createElement("td");
+  const inSrc = document.createElement("input");
+  inSrc.type = "text"; inSrc.value = r.source || ""; inSrc.dataset.k = "source";
+  inSrc.placeholder = "e.g. node-down"; inSrc.style.width = "100%";
+  tdSrc.appendChild(inSrc); tr.appendChild(tdSrc);
+
+  // Match type select
+  const tdMt = document.createElement("td");
+  const sel = document.createElement("select"); sel.dataset.k = "match_type";
+  for (const opt of ["match_by", "match_label", "match_all"]) {
+    const o = document.createElement("option"); o.value = opt; o.textContent = opt;
+    if (opt === mt) o.selected = true;
+    sel.appendChild(o);
+  }
+  tdMt.appendChild(sel); tr.appendChild(tdMt);
+
+  // Match value — single input that re-interprets based on match type.
+  // match_by: "<label>"     match_label: "<label>=<regex>"     match_all: disabled
+  const tdMv = document.createElement("td");
+  const inMv = document.createElement("input");
+  inMv.type = "text"; inMv.value = matchVal; inMv.dataset.k = "match_value";
+  inMv.style.width = "100%";
+  inMv.placeholder = mt === "match_by" ? "host"
+                    : mt === "match_label" ? "job=^blackbox-.*"
+                    : "(n/a — suppresses everything)";
+  if (mt === "match_all") inMv.disabled = true;
+  tdMv.appendChild(inMv); tr.appendChild(tdMv);
+
+  sel.addEventListener("change", () => {
+    const v = sel.value;
+    inMv.disabled = (v === "match_all");
+    inMv.value = "";
+    inMv.placeholder = v === "match_by" ? "host"
+                      : v === "match_label" ? "job=^blackbox-.*"
+                      : "(n/a — suppresses everything)";
+  });
+
+  // Applies to (checkboxes)
+  const tdAp = document.createElement("td");
+  const wrap = document.createElement("div");
+  wrap.dataset.k = "applies_to";
+  wrap.style.display = "flex"; wrap.style.flexWrap = "wrap"; wrap.style.gap = "0.4em";
+  const selected = new Set(r.applies_to || []);
+  for (const s of _inhibAvailableSources) {
+    const lbl = document.createElement("label");
+    lbl.style.fontSize = "0.85em"; lbl.style.whiteSpace = "nowrap";
+    const cb = document.createElement("input");
+    cb.type = "checkbox"; cb.value = s; cb.checked = selected.has(s);
+    lbl.appendChild(cb);
+    lbl.appendChild(document.createTextNode(" " + s));
+    wrap.appendChild(lbl);
+  }
+  tdAp.appendChild(wrap); tr.appendChild(tdAp);
+
+  // TTL
+  const tdTtl = document.createElement("td");
+  const inTtl = document.createElement("input");
+  inTtl.type = "number"; inTtl.min = "30"; inTtl.max = "86400";
+  inTtl.value = r.ttl_seconds || 900; inTtl.dataset.k = "ttl_seconds";
+  inTtl.style.width = "7em";
+  tdTtl.appendChild(inTtl); tr.appendChild(tdTtl);
+
+  // Delete
+  const tdDel = document.createElement("td");
+  const btn = document.createElement("button");
+  btn.className = "btn"; btn.textContent = "✕"; btn.title = "Delete this rule";
+  btn.addEventListener("click", () => tr.remove());
+  tdDel.appendChild(btn); tr.appendChild(tdDel);
+
+  return tr;
+}
+
+async function loadInhibRules() {
+  try {
+    const data = await J("/api/inhibition-rules");
+    _inhibAvailableSources = data.available_sources || [];
+    const tb = $("#t-inhib-rules tbody"); tb.innerHTML = "";
+    for (const r of (data.rules || [])) tb.appendChild(_renderInhibRuleRow(r));
+    $("#inhib-save-status").textContent = "";
+  } catch (e) { console.warn("inhib-rules fetch:", e); }
+}
+
+function _collectInhibRules() {
+  const rows = document.querySelectorAll("#t-inhib-rules tbody tr.inhib-rule-row");
+  const out = [];
+  for (const tr of rows) {
+    const get = k => tr.querySelector(`[data-k="${k}"]`);
+    const source = get("source").value.trim();
+    if (!source) continue;
+    const mt = get("match_type").value;
+    const mv = get("match_value").value.trim();
+    const ttl = parseInt(get("ttl_seconds").value || "900", 10);
+    const applies = Array.from(tr.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
+                    .filter(cb => cb.checked).map(cb => cb.value);
+    const rule = { source, ttl_seconds: ttl, applies_to: applies };
+    if (mt === "match_by") {
+      if (!mv) return { error: `rule "${source}": match_by value required` };
+      rule.match_by = mv;
+    } else if (mt === "match_label") {
+      const eq = mv.indexOf("=");
+      if (eq < 1 || eq === mv.length - 1) {
+        return { error: `rule "${source}": match_label must be "<label>=<regex>"` };
+      }
+      rule.match_label = mv.slice(0, eq).trim();
+      rule.match_regex = mv.slice(eq + 1).trim();
+    } else {
+      rule.match_all = true;
+    }
+    out.push(rule);
+  }
+  return { rules: out };
+}
+
+async function saveInhibRules() {
+  const collected = _collectInhibRules();
+  const status = $("#inhib-save-status");
+  if (collected.error) { status.textContent = "❌ " + collected.error; status.style.color = "#e57373"; return; }
+  status.textContent = "Saving…"; status.style.color = "";
+  try {
+    const res = await fetch("/api/inhibition-rules", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ rules: collected.rules }),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      status.textContent = "❌ " + (txt || res.statusText);
+      status.style.color = "#e57373"; return;
+    }
+    const r = await res.json();
+    status.textContent = `✓ Saved ${r.count} rule(s). Cleared ${r.cleared_suppressions} active suppression(s).`;
+    status.style.color = "#81c784";
+    await loadInhibRules();
+    await loadInhib();
+  } catch (e) {
+    status.textContent = "❌ " + e.message;
+    status.style.color = "#e57373";
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const add = document.getElementById("inhib-add");
+  const save = document.getElementById("inhib-save");
+  if (add) add.addEventListener("click", () => {
+    const tb = $("#t-inhib-rules tbody");
+    tb.appendChild(_renderInhibRuleRow({source: "", ttl_seconds: 900, applies_to: [], match_by: ""}));
+  });
+  if (save) save.addEventListener("click", saveInhibRules);
+});
 
 function fmtSecs(s) {
   if (s < 60) return s + "s";
@@ -1158,7 +1328,7 @@ document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
 
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth()]);
+  await Promise.all([loadStatus(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);

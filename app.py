@@ -2205,6 +2205,24 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_static(self.path[len("/ui/"):])
         elif self.path == "/inhibitions" or self.path == "/api/inhibitions":
             self._send_json(inhibition_status())
+        elif self.path == "/api/inhibition-rules":
+            # Flat shape for UI consumption: match_label_regex tuple → flat
+            # match_label + match_regex keys (mirrors TOML on-disk shape).
+            rules_out = []
+            for r in INHIBITION_RULES:
+                row = {"source": r["source"], "ttl_seconds": int(r.get("ttl_seconds", 900))}
+                if "match_by" in r:
+                    row["match_by"] = r["match_by"]
+                if "match_label_regex" in r:
+                    row["match_label"], row["match_regex"] = r["match_label_regex"]
+                if r.get("match_all"):
+                    row["match_all"] = True
+                row["applies_to"] = list(r.get("applies_to") or [])
+                rules_out.append(row)
+            self._send_json({
+                "rules": rules_out,
+                "available_sources": list(DEDUP_SOURCES),
+            })
         elif self.path == "/api/status":
             self._send_json({
                 "cascade_enabled_runtime": _cascade_runtime_enabled,
@@ -2372,6 +2390,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_dedup_config_update()
         if self.path == "/api/ntfy-topics":
             return self._handle_ntfy_topics_update()
+        if self.path == "/api/inhibition-rules":
+            return self._handle_inhibition_rules_update()
 
         # ---- alert ingestion ----
         if self.path.startswith("/webhook/"):
@@ -2767,6 +2787,116 @@ class Handler(BaseHTTPRequestHandler):
             log.error("render config save failed: %s", e)
             self.send_response(500); self.end_headers()
             self.wfile.write(str(e).encode())
+
+    def _handle_inhibition_rules_update(self):
+        """Replace INHIBITION_RULES wholesale from a UI-submitted list.
+
+        Body shape: {"rules": [<rule>, …]} where each rule is:
+          {source: str, ttl_seconds: int, applies_to: [<source>, …],
+           match_by?: str, match_label?: str, match_regex?: str,
+           match_all?: bool}
+        Exactly one of match_by / match_label+match_regex / match_all is
+        required. Empty applies_to means "all sources".
+
+        Side effect: any active suppressions are cleared, because their
+        rule_idx references would be stale after the list is replaced.
+        Suppressions will re-arm naturally the next time a source alert
+        fires.
+        """
+        global INHIBITION_RULES, TOML_CONFIG
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            payload = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        new_rules = payload.get("rules", [])
+        if not isinstance(new_rules, list):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"rules must be a list"); return
+
+        valid_sources = set(DEDUP_SOURCES)
+        cleaned_internal = []   # in-memory shape (match_label_regex tuple)
+        cleaned_toml = []       # TOML shape (match_label + match_regex flat)
+        errors = []
+        for i, r in enumerate(new_rules):
+            if not isinstance(r, dict):
+                errors.append(f"rule[{i}]: not an object")
+                continue
+            src = str(r.get("source") or "").strip()
+            if not src:
+                errors.append(f"rule[{i}]: source is required")
+                continue
+            try:
+                ttl = int(r.get("ttl_seconds", 900))
+            except Exception:
+                ttl = 900
+            ttl = max(30, min(86400, ttl))   # 30s..24h
+
+            # Exactly one match type
+            match_types = sum(bool(r.get(k)) for k in ("match_by", "match_all")) + \
+                          (1 if (r.get("match_label") and r.get("match_regex")) else 0)
+            if match_types == 0:
+                errors.append(f"rule[{i}] ({src}): one of match_by / match_label+match_regex / match_all is required")
+                continue
+            if match_types > 1:
+                errors.append(f"rule[{i}] ({src}): only one match type may be set")
+                continue
+
+            internal = {"source": src, "ttl_seconds": ttl}
+            toml_row = {"source": src, "ttl_seconds": ttl}
+            if r.get("match_by"):
+                internal["match_by"] = str(r["match_by"]).strip()
+                toml_row["match_by"] = internal["match_by"]
+            elif r.get("match_label") and r.get("match_regex"):
+                lbl = str(r["match_label"]).strip()
+                rx = str(r["match_regex"]).strip()
+                try:
+                    re.compile(rx)
+                except Exception as e:
+                    errors.append(f"rule[{i}] ({src}): invalid regex: {e}")
+                    continue
+                internal["match_label_regex"] = (lbl, rx)
+                toml_row["match_label"] = lbl
+                toml_row["match_regex"] = rx
+            else:   # match_all
+                internal["match_all"] = True
+                toml_row["match_all"] = True
+
+            applies_to = r.get("applies_to") or []
+            if applies_to:
+                if not isinstance(applies_to, list):
+                    errors.append(f"rule[{i}] ({src}): applies_to must be a list")
+                    continue
+                filtered = [s for s in applies_to if isinstance(s, str) and s in valid_sources]
+                if filtered:
+                    internal["applies_to"] = filtered
+                    toml_row["applies_to"] = filtered
+            cleaned_internal.append(internal)
+            cleaned_toml.append(toml_row)
+
+        if errors:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(("\n".join(errors)).encode()); return
+
+        # Update TOML on disk first; if that fails we don't touch in-memory.
+        TOML_CONFIG["inhibitions"] = cleaned_toml
+        try:
+            _save_toml_config(TOML_CONFIG)
+        except Exception as e:
+            log.error("inhibition rules save failed: %s", e)
+            self.send_response(500); self.end_headers()
+            self.wfile.write(str(e).encode()); return
+
+        # Swap in-memory rules + invalidate active suppressions (rule_idx-keyed).
+        INHIBITION_RULES = cleaned_internal
+        with _supp_lock:
+            cleared = len(_suppressions)
+            _suppressions[:] = []
+        log.info("inhibition rules updated: %d rule(s), cleared %d active suppression(s)",
+                 len(cleaned_internal), cleared)
+        self._send_json({"ok": True, "count": len(cleaned_internal),
+                         "cleared_suppressions": cleared})
 
     def _handle_cascade_config_update(self):
         global TOML_CONFIG
