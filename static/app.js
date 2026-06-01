@@ -81,11 +81,31 @@ async function loadStatus() {
     setCh("ch-smtp", s.channels.smtp, s.smtp_host ? `${s.smtp_host}` : "(not configured)");
     $("#cas-default").textContent = s.cascade_enabled_default;
     $("#cas-runtime").textContent = s.cascade_enabled_runtime;
-  } catch (e) { console.warn("status fetch:", e); }
+  } catch (e) { fetchError("status", e); }
   loadStatusActivity();
 }
 
+// Update the small count chip next to a tab label.
+// kind: '' (neutral) | 'warn' (yellow) | 'crit' (red). count=0 hides the badge.
+function setTabBadge(tabId, count, kind = "") {
+  const tab = document.querySelector(`.tab[data-tab="${tabId}"]`);
+  if (!tab) return;
+  let badge = tab.querySelector(".tab-badge");
+  if (!count || count <= 0) {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement("span");
+    badge.className = "tab-badge";
+    tab.appendChild(badge);
+  }
+  badge.className = "tab-badge" + (kind ? " " + kind : "");
+  badge.textContent = count > 99 ? "99+" : String(count);
+}
+
 // Aggregate 24h activity from existing endpoints (no new backend needed).
+// Also updates the tab badges (deliveries24h / suppressions / dedup-pending).
 async function loadStatusActivity() {
   // Deliveries: fetch ring buffer + count last 24h
   try {
@@ -103,6 +123,7 @@ async function loadStatusActivity() {
     $("#stat-deliv-breakdown").innerHTML = parts.length
       ? "by source: " + parts.map(p => `<code>${escapeHtml(p)}</code>`).join(" · ")
       : "by source: <span class='muted'>(no activity)</span>";
+    setTabBadge("deliveries", recent.length);
   } catch (e) {
     $("#stat-deliv-total").textContent = "?";
     $("#stat-deliv-breakdown").textContent = "deliveries unreachable";
@@ -110,7 +131,9 @@ async function loadStatusActivity() {
   // Active suppressions count
   try {
     const inhib = await J("/api/inhibitions");
-    $("#stat-suppr-count").textContent = (inhib || []).length;
+    const n = (inhib || []).length;
+    $("#stat-suppr-count").textContent = n;
+    setTabBadge("inhibitions", n, n > 0 ? "warn" : "");
   } catch (e) { $("#stat-suppr-count").textContent = "?"; }
   // Dedup pending count (sum across all sources)
   try {
@@ -118,6 +141,7 @@ async function loadStatusActivity() {
     const pc = d.pending_counts || {};
     const total = Object.values(pc).reduce((a, b) => a + (b || 0), 0);
     $("#stat-dedup-count").textContent = total;
+    setTabBadge("grouping", total, total > 0 ? "warn" : "");
   } catch (e) { $("#stat-dedup-count").textContent = "?"; }
 }
 
@@ -139,7 +163,7 @@ async function loadInhib() {
       tr.querySelector("[data-clear-suppression]").addEventListener("click", () => clearSuppression(r.source, r.anchor));
       tb.appendChild(tr);
     }
-  } catch (e) { console.warn("inhib fetch:", e); }
+  } catch (e) { fetchError("inhibitions", e); }
 }
 
 async function clearSuppression(source, anchor) {
@@ -437,7 +461,7 @@ async function loadInhibRules() {
     const tb = $("#t-inhib-rules tbody"); tb.innerHTML = "";
     for (const r of (data.rules || [])) tb.appendChild(_renderInhibRuleRow(r));
     $("#inhib-save-status").textContent = "";
-  } catch (e) { console.warn("inhib-rules fetch:", e); }
+  } catch (e) { fetchError("inhibition-rules", e); }
 }
 
 function _collectInhibRules() {
@@ -488,6 +512,7 @@ async function saveInhibRules() {
     const r = await res.json();
     status.textContent = `✓ Saved ${r.count} rule(s). Cleared ${r.cleared_suppressions} active suppression(s).`;
     status.style.color = "#81c784";
+    _markTabDirty("inhibitions", false);
     await loadInhibRules();
     await loadInhib();
   } catch (e) {
@@ -523,7 +548,7 @@ async function loadDeliv() {
   try {
     _delivCache = await J("/api/deliveries");
   } catch (e) {
-    console.warn("deliv fetch:", e);
+    fetchError("deliveries", e);
     _delivCache = [];
   }
   renderDeliv();
@@ -573,7 +598,7 @@ async function loadRC() {
     rcData = j.component_dashboards;
     renderRCTable();
     populateTestComponentSelect();
-  } catch (e) { console.warn("rc fetch:", e); }
+  } catch (e) { fetchError("render-config", e); }
 }
 
 function populateTestComponentSelect() {
@@ -624,6 +649,7 @@ $("#btn-rc-save").addEventListener("click", async () => {
     const r = await J("/api/render-config", { method: "POST", body: JSON.stringify({component_dashboards: out}), headers: {"Content-Type": "application/json"} });
     $("#rc-status").textContent = `Saved (${r.count} mappings) ✓`;
     setTimeout(() => $("#rc-status").textContent = "", 3000);
+    _markTabDirty("render", false);
     rcData = out;
     populateTestComponentSelect();
   } catch (e) { $("#rc-status").textContent = "Error: " + e.message; }
@@ -734,7 +760,7 @@ async function loadNtfyTopics() {
     $("#ntfy-topics-summary").innerHTML = `<small>${(j.topics || []).length} topic(s) · severities routed: ${sevStr}</small>`;
     $("#ntfy-topics-note").textContent = j.note || "";
   } catch (e) {
-    console.warn("loadNtfyTopics:", e);
+    fetchError("ntfy-topics", e);
   }
 }
 
@@ -807,6 +833,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
     const j = await r.json();
     $("#ntfy-topics-status").style.color = "#2c8a47";
     $("#ntfy-topics-status").textContent = `Saved ✓ (${j.topics.length} topic(s), severities: ${(j.known_severities || []).filter(s => s !== "resolved").join(", ")})`;
+    _markTabDirty("routing", false);
     // Reload to refresh badges
     setTimeout(() => loadNtfyTopics(), 500);
   } catch (e) {
@@ -834,7 +861,7 @@ async function loadRouting() {
     $("#r-smtp-to").value = c.smtp.to_addr || "";
     $("#r-smtp-status").innerHTML = `user: ${badge(c.smtp.user_configured)} password: ${badge(c.smtp.password_configured)}` +
       (c.smtp.host_from_env ? " · <em>host overridden by env</em>" : "");
-  } catch (e) { console.warn("routing fetch:", e); }
+  } catch (e) { fetchError("routing", e); }
 }
 
 const badge = ok => ok ? "<span style='color:var(--green)'>✓ configured</span>" : "<span style='color:var(--red)'>✗ missing</span>";
@@ -855,6 +882,7 @@ $("#btn-routing-save").addEventListener("click", async () => {
     await J("/api/channel-config", { method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" } });
     $("#routing-msg").textContent = "Saved ✓ (env vars still take precedence if set)";
     setTimeout(() => $("#routing-msg").textContent = "", 4000);
+    _markTabDirty("routing", false);
     loadStatus();
   } catch (e) { $("#routing-msg").textContent = "Error: " + e.message; }
 });
@@ -869,7 +897,7 @@ async function loadCascade() {
     casData = await J("/api/cascade-config");
     renderCascadeTable();
     $("#cas-default").checked = !!casData.default_enabled_for_webhook;
-  } catch (e) { console.warn("cas fetch:", e); }
+  } catch (e) { fetchError("cascade", e); }
 }
 
 function renderCascadeTable() {
@@ -925,6 +953,7 @@ $("#btn-cas-save").addEventListener("click", async () => {
     });
     $("#cas-status").textContent = `Saved (${tiers.length} tiers) ✓`;
     setTimeout(() => $("#cas-status").textContent = "", 3000);
+    _markTabDirty("cascade", false);
     loadStatus();
   } catch (e) { $("#cas-status").textContent = "Error: " + e.message; }
 });
@@ -940,7 +969,7 @@ async function loadDelivery() {
     renderDeliveryDefault();
     renderPoliciesTable();
     renderRulesTable();
-  } catch (e) { console.warn("delivery fetch:", e); }
+  } catch (e) { fetchError("delivery", e); }
 }
 
 function policyNames() {
@@ -1048,6 +1077,7 @@ $("#btn-delivery-save").addEventListener("click", async () => {
     });
     $("#delivery-status").textContent = `Saved (${policies.length} policies, ${rules.length} rules) ✓`;
     setTimeout(() => $("#delivery-status").textContent = "", 4000);
+    _markTabDirty("delivery", false);
   } catch (e) { $("#delivery-status").textContent = "Error: " + e.message; }
 });
 
@@ -1139,6 +1169,7 @@ $("#dedup-save")?.addEventListener("click", async () => {
       dedupData.settings = r.settings;
       $("#dedup-status").textContent = "Saved ✓";
       setTimeout(() => { $("#dedup-status").textContent = ""; }, 3000);
+      _markTabDirty("grouping", false);
     } else {
       $("#dedup-status").textContent = "Error: " + (r.error || "unknown");
     }
@@ -1264,6 +1295,7 @@ $("#auth-save")?.addEventListener("click", async () => {
     });
     if (r.ok) {
       $("#auth-status").textContent = `Saved ✓ (mode=${r.settings.mode}). Reload page to apply.`;
+      _markTabDirty("auth", false);
       authData.settings = r.settings;
       _showSubcard(r.settings.mode);
     } else {
@@ -1604,4 +1636,183 @@ async function refreshAll() {
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
+
+
+// ---- Toast notifications (non-blocking error / info banner) ----
+// Replaces the silent console.warn pattern in load* functions. Toasts stack
+// in the top-right and auto-dismiss after 10s; click X to dismiss manually.
+function showToast(msg, kind = "error", durationMs = 10000) {
+  let container = document.getElementById("toast-container");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "toast-container";
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement("div");
+  toast.className = "toast toast-" + kind;
+  toast.innerHTML = `<span class="toast-msg"></span><button class="toast-close" title="Dismiss">✕</button>`;
+  toast.querySelector(".toast-msg").textContent = msg;
+  toast.querySelector(".toast-close").addEventListener("click", () => toast.remove());
+  container.appendChild(toast);
+  setTimeout(() => { if (toast.isConnected) toast.remove(); }, durationMs);
+  return toast;
+}
+
+// Per-key dedup so polling loops don't flood the screen with the same error
+// every 10s. The first failure shows a toast; subsequent failures with the
+// same key within DEDUP_MS are silent (logged to console only).
+const _TOAST_DEDUP_MS = 60000;
+const _toastErrLast = new Map();
+function fetchError(key, e) {
+  console.warn(key + ":", e);
+  const now = Date.now();
+  const last = _toastErrLast.get(key) || 0;
+  if (now - last < _TOAST_DEDUP_MS) return;
+  _toastErrLast.set(key, now);
+  showToast(`${key}: ${e.message || e}`, "error");
+}
+function fetchOk(key) { _toastErrLast.delete(key); }
+
+// ---- Dirty-state tracking (unsaved changes warning) ----
+// Track which tab panes have unsaved edits. A pane becomes dirty when any
+// input/select/textarea inside it changes; cleared when load*/save* runs.
+const _dirtyTabs = new Set();
+
+function _markTabDirty(tabId, dirty = true) {
+  if (dirty) _dirtyTabs.add(tabId); else _dirtyTabs.delete(tabId);
+  const tab = document.querySelector(`.tab[data-tab="${tabId}"]`);
+  if (!tab) return;
+  let dot = tab.querySelector(".tab-dirty");
+  if (dirty && !dot) {
+    dot = document.createElement("span");
+    dot.className = "tab-dirty";
+    dot.title = "Unsaved changes";
+    tab.appendChild(dot);
+  } else if (!dirty && dot) {
+    dot.remove();
+  }
+}
+
+// Bind change/input listeners to every form field inside each tabpane so
+// edits flip the dirty flag. Excludes search/filter inputs (they're not
+// "edits" the user expects to persist).
+function _wireDirtyTracking() {
+  document.querySelectorAll(".tabpane").forEach(pane => {
+    const tabId = pane.id.replace(/^tab-/, "");
+    if (!tabId) return;
+    pane.addEventListener("input", e => {
+      const t = e.target;
+      if (!t || ["BUTTON"].includes(t.tagName)) return;
+      // Skip search/filter fields — those aren't edits
+      if (t.type === "search" || t.id === "deliv-filter" || t.id === "inhib-test-labels") return;
+      _markTabDirty(tabId, true);
+    });
+    pane.addEventListener("change", e => {
+      const t = e.target;
+      if (!t || ["BUTTON"].includes(t.tagName)) return;
+      if (t.id === "deliv-show-suppressed" || t.id === "inhib-test-source") return;
+      _markTabDirty(tabId, true);
+    });
+  });
+}
+
+// Warn on page unload if any tab is dirty
+window.addEventListener("beforeunload", e => {
+  if (_dirtyTabs.size === 0) return;
+  e.preventDefault();
+  e.returnValue = "";
+  return "";
+});
+
+// Wrap activateTab so we warn on tab switch when the current tab is dirty.
+// The user gets a chance to abort or proceed; proceed clears dirty for the
+// active tab (since we assume they're abandoning the edit).
+const _origActivateTab = window.activateTab || activateTab;
+function activateTabWithDirtyGuard(tabId) {
+  const active = document.querySelector(".tabpane.active");
+  const activeId = active ? active.id.replace(/^tab-/, "") : null;
+  if (activeId && _dirtyTabs.has(activeId) && activeId !== tabId) {
+    if (!confirm(`Tab "${activeId}" has unsaved changes. Discard and switch to "${tabId}"?`)) return false;
+    _markTabDirty(activeId, false);
+  }
+  return _origActivateTab(tabId);
+}
+window.activateTab = activateTabWithDirtyGuard;
+
+document.addEventListener("DOMContentLoaded", _wireDirtyTracking);
+
+// ---- Keyboard shortcuts ----
+// Cmd/Ctrl+S → click primary save button on the active tab
+// Esc        → blur active input; if it was a search input, clear it too
+// ?          → toggle the shortcut overlay (when not typing in an input)
+const _SHORTCUT_HELP = [
+  ["Ctrl/Cmd + S", "Save the active tab (clicks its primary Save button)"],
+  ["Esc",          "Blur the focused input; clears search filters"],
+  ["?",            "Show this help overlay"],
+  ["1..9 / 0",     "Jump to tab by position (when no input is focused)"],
+];
+
+function _activeTabPane() {
+  return document.querySelector(".tabpane.active");
+}
+
+function _clickPrimarySaveOnActiveTab() {
+  const pane = _activeTabPane();
+  if (!pane) return false;
+  // Find the most likely "save" button — class=primary takes precedence,
+  // then look for any button whose text starts with "Save".
+  const primary = pane.querySelector("button.primary");
+  if (primary) { primary.click(); return true; }
+  for (const b of pane.querySelectorAll("button")) {
+    if ((b.textContent || "").trim().toLowerCase().startsWith("save")) {
+      b.click(); return true;
+    }
+  }
+  return false;
+}
+
+function _showShortcutHelp() {
+  let box = document.getElementById("shortcut-help");
+  if (box) { box.remove(); return; }
+  box = document.createElement("div");
+  box.id = "shortcut-help";
+  box.innerHTML = `
+    <div class="shortcut-help-inner">
+      <h3 style="margin-top:0; text-transform:none; color:var(--text); letter-spacing:0; font-size:1.1em">Keyboard shortcuts</h3>
+      <table style="border:none">
+        ${_SHORTCUT_HELP.map(([k, d]) => `<tr><td style="border:none;padding:4px 12px 4px 0"><code>${escapeHtml(k)}</code></td><td style="border:none;padding:4px 0">${escapeHtml(d)}</td></tr>`).join("")}
+      </table>
+      <p class="muted" style="margin-top:1em; font-size:11px">Press <code>?</code> or click outside to close.</p>
+    </div>`;
+  box.addEventListener("click", e => { if (e.target === box) box.remove(); });
+  document.body.appendChild(box);
+}
+
+document.addEventListener("keydown", e => {
+  // Cmd/Ctrl + S
+  if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+    e.preventDefault();
+    _clickPrimarySaveOnActiveTab();
+    return;
+  }
+  // Don't intercept other shortcuts while typing
+  const inInput = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+  if (e.key === "Escape") {
+    if (inInput) {
+      const a = document.activeElement;
+      if (a.type === "search" || a.id === "deliv-filter") { a.value = ""; a.dispatchEvent(new Event("input")); }
+      a.blur();
+    }
+    const help = document.getElementById("shortcut-help"); if (help) help.remove();
+    return;
+  }
+  if (inInput) return;  // remaining shortcuts only when not typing
+  if (e.key === "?") { e.preventDefault(); _showShortcutHelp(); return; }
+  // Number keys 1..9, 0 → tab by position
+  if (/^[0-9]$/.test(e.key)) {
+    const idx = e.key === "0" ? 9 : parseInt(e.key, 10) - 1;
+    const tabs = document.querySelectorAll(".tab");
+    if (tabs[idx]) tabs[idx].click();
+  }
+});
 
