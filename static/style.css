@@ -250,24 +250,37 @@ a:hover { text-decoration: underline; }
 .hidden { display: none !important; }
 
 /* ============================================================================
- * Flow tab — animated arrows + pulse on recent activity
- * ============================================================================ */
-#flow-diagram.animate .edgePath path.flowchart-link,
-#flow-diagram.animate .edgePath path {
-  stroke-dasharray: 8, 4;
+ * Flow tab — animated arrows + pulse on recent activity (Mermaid v11)
+ * ============================================================================
+ * Mermaid v11 puts edges under <g class="edges"> with each edge as
+ * <g class="edge ..."><path class="flowchart-link ..."/></g>. Older
+ * versions used .edgePath which no longer exists. We target both for
+ * safety, plus the marker-end attribute (always present on arrows). */
+#flow-diagram.animate svg .edges path,
+#flow-diagram.animate svg .edge path,
+#flow-diagram.animate svg path.flowchart-link,
+#flow-diagram.animate svg path[marker-end] {
+  stroke-dasharray: 8 4;
   animation: flow-dash 1.5s linear infinite;
 }
-#flow-diagram.animate .edgePath:has(path[stroke-dasharray]) path {
-  /* Dashed (fallback) edges — make dashes bigger and slower for distinction */
-  stroke-dasharray: 5, 5;
+/* Cascade-fallback edges are emitted by Mermaid with -.- syntax → end up
+ * with class containing 'dotted' or attribute stroke-dasharray pre-set.
+ * Distinguish them with a slower, reversed animation. */
+#flow-diagram.animate svg .edges .edge.edge-pattern-dashed path,
+#flow-diagram.animate svg .edges .edge.edge-pattern-dotted path,
+#flow-diagram.animate svg path.flowchart-link[stroke-dasharray] {
+  stroke-dasharray: 5 5;
   animation: flow-dash 3s linear infinite reverse;
 }
 @keyframes flow-dash {
   to { stroke-dashoffset: -24; }
 }
-/* Pulse node when recently active */
+/* Pulse node when recently active. v11 nodes are <g class="node ..."> with
+ * inner <rect> (regular) or <polygon> (rhombus/diamond shapes). */
 #flow-diagram .node.recent-activity rect,
-#flow-diagram .node.recent-activity polygon {
+#flow-diagram .node.recent-activity polygon,
+#flow-diagram .node.recent-activity ellipse,
+#flow-diagram .node.recent-activity circle {
   animation: flow-pulse 1.5s ease-in-out infinite;
 }
 @keyframes flow-pulse {
