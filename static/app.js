@@ -923,16 +923,26 @@ function buildMermaidDiagram(cfgs, stats) {
   lines.push("  classDef sink fill:#22543d,color:#fff,stroke:#48bb78");
   lines.push("  classDef disabled fill:#444,color:#999,stroke:#666");
 
-  lines.push(`  subgraph SRC["Emitters (auth: ${authMode})"]`);
-  lines.push(`    AM["Grafana → /webhook/sev${srcStat("grafana")}${dedupStat("grafana")}"]`);
-  lines.push(`    BSZ["Beszel → /beszel/sev${srcStat("beszel")}${dedupStat("beszel")}"]`);
-  lines.push(`    HC["Healthchecks → /healthchecks/sev${srcStat("healthchecks")}${dedupStat("healthchecks")}"]`);
-  lines.push(`    WUD["WUD → /wud/sev${srcStat("wud")}${dedupStat("wud")}"]`);
+  // Upstream sources — what feeds the actual emitters.
+  // Grafana → Alertmanager (which then POSTs to klaxond /webhook/).
+  lines.push(`  subgraph UPS["Upstream"]`);
+  lines.push(`    GRA["Grafana<br/><small>alert rules</small>"]`);
+  lines.push("  end");
+  lines.push("  class GRA src");
+
+  lines.push(`  subgraph SRC["Emitters → klaxond HTTP (auth: ${authMode})"]`);
+  lines.push(`    AM["Alertmanager<br/>POST /webhook/sev<br/><small>group + inhibit + repeat</small>${srcStat("grafana")}${dedupStat("grafana")}"]`);
+  lines.push(`    BSZ["Beszel<br/>POST /beszel/sev${srcStat("beszel")}${dedupStat("beszel")}"]`);
+  lines.push(`    HC["Healthchecks<br/>POST /healthchecks/sev${srcStat("healthchecks")}${dedupStat("healthchecks")}"]`);
+  lines.push(`    WUD["WUD<br/>POST /wud/sev${srcStat("wud")}${dedupStat("wud")}"]`);
+  lines.push(`    AKN["Authentik<br/>POST /authentik/sev${srcStat("authentik")}${dedupStat("authentik")}"]`);
   lines.push("  end");
 
-  lines.push("  class AM,BSZ,HC,WUD src");
+  lines.push("  class AM,BSZ,HC,WUD,AKN src");
 
-  // Inhibition only applies to grafana
+  lines.push("  GRA --> AM");
+
+  // Inhibition only applies to grafana (via Alertmanager)
   lines.push("  INH{\"Inhibition rules<br/>(grafana only)\"}");
   lines.push("  DROP[\"suppress\"]");
   lines.push("  RND[\"Render<br/>title/body/tags/actions\"]");
@@ -945,6 +955,7 @@ function buildMermaidDiagram(cfgs, stats) {
   lines.push("  BSZ --> RND");
   lines.push("  HC --> RND");
   lines.push("  WUD --> RND");
+  lines.push("  AKN --> RND");
 
   lines.push("  RND --> CAS");
 
@@ -976,10 +987,13 @@ function buildMermaidDiagram(cfgs, stats) {
   }
 
   // Click-to-edit handlers
+  // GRA (Grafana upstream) → open external Grafana UI (not a klaxond tab)
+  lines.push(`  click GRA "https://grafana.luigibarretta.com/alerting/list" _blank`);
   lines.push(`  click AM call flowGotoTab("inhibitions") "Inhibitions tab"`);
   lines.push(`  click BSZ call flowGotoTab("grouping") "Grouping (dedup) tab"`);
   lines.push(`  click HC call flowGotoTab("grouping") "Grouping (dedup) tab"`);
   lines.push(`  click WUD call flowGotoTab("grouping") "Grouping (dedup) tab"`);
+  lines.push(`  click AKN call flowGotoTab("grouping") "Grouping (dedup) tab"`);
   lines.push(`  click INH call flowGotoTab("inhibitions") "Inhibitions tab"`);
   lines.push(`  click RND call flowGotoTab("render") "Render config tab"`);
   lines.push(`  click CAS call flowGotoTab("cascade") "Cascade tab"`);
@@ -1036,7 +1050,7 @@ async function loadFlow() {
 }
 
 // Map source name → mermaid node id (matches buildMermaidDiagram)
-const _NODE_FOR_SOURCE = { grafana: "AM", beszel: "BSZ", healthchecks: "HC", wud: "WUD" };
+const _NODE_FOR_SOURCE = { grafana: "AM", beszel: "BSZ", healthchecks: "HC", wud: "WUD", authentik: "AKN" };
 const _NODE_FOR_CHANNEL = { ntfy: "NTFY", telegram: "TG", smtp: "SMTP" };
 
 function _pulseRecentActivityNodes(stats) {
