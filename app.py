@@ -654,7 +654,7 @@ class AuthManager:
     """
     PUBLIC_PATH_PREFIXES = (
         "/webhook/", "/beszel/", "/healthchecks/", "/wud/", "/authentik/",
-        "/healthz",
+        "/healthz", "/metrics",  # Prometheus scrape — no auth (LAN-only firewalled)
         "/auth/login", "/auth/callback", "/auth/logout",
         "/static/", "/favicon.ico",  # login page assets
     )
@@ -1322,6 +1322,91 @@ import collections
 
 _DELIVERY_LOG_MAX = 50
 _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
+
+# ----------------------------------------------------------------------------
+# Prometheus-style counters (0.9.17+). Plain dict-of-counters, escape labels
+# via _esc_label(), exposition via /metrics (no external client lib). Counters
+# survive container lifetime; reset on restart (acceptable — Loki audit log
+# is the durable archive).
+# ----------------------------------------------------------------------------
+_KLAXOND_VERSION = "0.9.17"
+_metrics_lock = threading.Lock()
+_METRICS_START_TS = time_mod.time()
+_metric_counters: dict[str, int] = {}
+_metric_gauges: dict[str, float] = {}
+
+def _esc_label(v: str) -> str:
+    # Escape per Prometheus exposition: backslash, double-quote, newline
+    return str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+def _metric_inc(name: str, labels: dict | None = None, by: int = 1) -> None:
+    key = name + "|" + (",".join(f"{k}={_esc_label(v)}" for k, v in sorted((labels or {}).items())) if labels else "")
+    with _metrics_lock:
+        _metric_counters[key] = _metric_counters.get(key, 0) + by
+
+def _metric_set_gauge(name: str, value: float, labels: dict | None = None) -> None:
+    key = name + "|" + (",".join(f"{k}={_esc_label(v)}" for k, v in sorted((labels or {}).items())) if labels else "")
+    with _metrics_lock:
+        _metric_gauges[key] = value
+
+def _render_metrics_exposition() -> str:
+    """Build a Prometheus 0.0.4 text-exposition response body."""
+    lines = []
+    lines.append("# HELP klaxond_info Static info (version, etc).")
+    lines.append("# TYPE klaxond_info gauge")
+    lines.append(f'klaxond_info{{version="{_esc_label(_KLAXOND_VERSION)}"}} 1')
+    lines.append("# HELP klaxond_uptime_seconds Seconds since klaxond started.")
+    lines.append("# TYPE klaxond_uptime_seconds counter")
+    lines.append(f"klaxond_uptime_seconds {int(time_mod.time() - _METRICS_START_TS)}")
+
+    # Refresh derived gauges from live state right before emitting
+    try:
+        _metric_set_gauge("klaxond_suppressions_active", len(_suppressions))
+    except Exception:
+        pass
+    try:
+        for src in DEDUP_SOURCES:
+            try:
+                with DEDUP_BUFFER.lock:
+                    pending = len(DEDUP_BUFFER.queues.get(src, []))
+                _metric_set_gauge("klaxond_dedup_pending", pending, {"source": src})
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # Group counters/gauges by metric name for HELP/TYPE headers
+    with _metrics_lock:
+        snapshot_counters = dict(_metric_counters)
+        snapshot_gauges = dict(_metric_gauges)
+
+    def _emit(samples: dict, kind: str, helps: dict[str, str]):
+        by_name: dict[str, list[tuple[str, float]]] = {}
+        for key, val in samples.items():
+            name, _, label_str = key.partition("|")
+            by_name.setdefault(name, []).append((label_str, val))
+        for name, rows in sorted(by_name.items()):
+            lines.append(f"# HELP {name} {helps.get(name, '(no description)')}")
+            lines.append(f"# TYPE {name} {kind}")
+            for label_str, val in rows:
+                label_render = "{" + ",".join(
+                    f'{k}="{v}"' for k, v in (kv.split("=", 1) for kv in label_str.split(",") if "=" in kv)
+                ) + "}" if label_str else ""
+                lines.append(f"{name}{label_render} {val}")
+
+    _emit(snapshot_counters, "counter", {
+        "klaxond_deliveries_total":   "Cumulative deliveries (or attempts) per source/severity/channel/ok.",
+        "klaxond_suppressions_armed_total": "Inhibition source-alerts that armed a suppression.",
+        "klaxond_render_errors_total": "Render-time exceptions per source.",
+        "klaxond_dedup_buffered_total": "Events queued in the dedup buffer per source.",
+        "klaxond_dedup_flushed_total": "Events flushed from the dedup buffer per source.",
+    })
+    _emit(snapshot_gauges, "gauge", {
+        "klaxond_suppressions_active": "Currently-armed in-memory suppressions.",
+        "klaxond_dedup_pending":       "Events pending in the dedup buffer per source.",
+    })
+
+    return "\n".join(lines) + "\n"
 _log_lock = threading.Lock()
 
 # Runtime override for CASCADE_ENABLED — flipped via /api/cascade/toggle
@@ -1471,6 +1556,8 @@ def _register_suppression(rule_idx: int, labels: dict, resolved: bool) -> None:
             _suppressions.append({"rule_idx": rule_idx, "anchor": anchor, "expiry": expiry})
             log.info("inhibition armed: rule=%s anchor=%s ttl=%ds",
                      rule["source"], anchor or "*", rule["ttl_seconds"])
+            try: _metric_inc("klaxond_suppressions_armed_total", {"rule": rule["source"]})
+            except Exception: pass
         else:
             log.info("inhibition cleared: rule=%s anchor=%s",
                      rule["source"], anchor or "*")
@@ -2153,6 +2240,14 @@ def audit_log_delivery(severity: str, parts: dict, labels: dict, source: str,
         log.info("AUDIT %s", json.dumps(record, separators=(",", ":"), default=str))
     except Exception as e:  # never let audit break delivery
         log.warning("audit_log_delivery failed: %s", e)
+    # Prometheus counter — one inc per delivery attempt outcome
+    try:
+        _metric_inc("klaxond_deliveries_total", {
+            "source": source, "severity": severity,
+            "channel": channel, "ok": "1" if ok else "0",
+        })
+    except Exception:
+        pass
 
 
 def deliver(severity: str, parts: dict, with_cascade: bool, labels: dict = None, source: str = "unknown") -> tuple[bool, str]:
@@ -2260,6 +2355,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if self.path == "/healthz":
             self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+        elif self.path == "/metrics":
+            body = _render_metrics_exposition().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
         elif self.path in ("/", "/ui", "/ui/"):
             self.send_response(302); self.send_header("Location", "/ui/index.html"); self.end_headers()
         elif self.path.startswith("/ui/"):
