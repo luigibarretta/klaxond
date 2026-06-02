@@ -345,10 +345,16 @@ function _renderInhibRuleRow(r) {
     inRegex.style.display = (v === "match_label") ? "" : "none";
     mvHint.style.display  = (v === "match_all") ? "" : "none";
     inLabel.placeholder = v === "match_label" ? "job" : "host";
-    _markRowValidity(tr);
+    // NB: do NOT call _markRowValidity here on the initial render — the
+    // ttl/applies_to/actions cells aren't appended yet so the validator's
+    // tr.querySelector('[data-k="ttl_seconds"]') would be null and crash
+    // with "Cannot read properties of null (reading 'value')". The final
+    // _markRowValidity at the end of _renderInhibRuleRow handles the
+    // first-pass validation; user-driven `change` events from the select
+    // call this again later, when the row IS complete.
   }
   _applyMatchType(mt);
-  sel.addEventListener("change", () => _applyMatchType(sel.value));
+  sel.addEventListener("change", () => { _applyMatchType(sel.value); _markRowValidity(tr); });
 
   // --- Applies to (checkboxes) ---
   const tdAp = document.createElement("td");
