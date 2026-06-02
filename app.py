@@ -1443,7 +1443,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.9.20"
+_KLAXOND_VERSION = "0.9.21"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}
@@ -2126,7 +2126,11 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
     host      = common_labels.get("host") or common_labels.get("instance") or ""
 
     state_emoji = ICONS["resolved"] if status == "resolved" else ICONS.get(severity, ICONS["info"])
-    title = f"{state_emoji} {alertname}"
+    # Source prefix for consistency with Beszel/HC/WUD/Authentik titles
+    # (each says "Beszel:" / "HC X:" / "WUD:" — Grafana didn't, audit-fixed
+    # in 0.9.21 so the user can identify the source at a glance in mixed
+    # notification queues).
+    title = f"{state_emoji} Grafana: {alertname}"
     if host:
         title += f" — {host}"
 
@@ -2149,13 +2153,16 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
         body_parts.append(f"Affected: {', '.join(affected)}")
     body = "\n".join(body_parts) or "(no body)"
 
+    # Always include an explicit "grafana" source tag (0.9.21+ uniformity
+    # audit fix) — Beszel/HC/WUD/Authentik already do this; previously only
+    # the variable `component` label was used.
     # When resolved, drop the severity literal from tag list — ntfy auto-renders
     # 'warning'/'critical'/'info' as Unicode emoji, which would conflict with
     # the ✅ resolved emoji in the title and confuse the user.
     if status == "resolved":
-        tags = [TAG_PREFIXES.get("resolved", "white_check_mark"), component or "homelab"]
+        tags = [TAG_PREFIXES.get("resolved", "white_check_mark"), "grafana", component or "homelab"]
     else:
-        tags = [TAG_PREFIXES.get(severity, "bell"), severity, component or "homelab"]
+        tags = [TAG_PREFIXES.get(severity, "bell"), severity, "grafana", component or "homelab"]
 
     actions = []
     # 1st button: runbook (if the alert rule sets annotations.runbook_url)
@@ -2249,10 +2256,15 @@ def parse_healthchecks_payload(payload: dict, severity: str) -> dict:
 
     is_resolved = status in ("up", "ok", "resolved")
     state_emoji = ICONS["resolved"] if is_resolved else ICONS.get(severity, ICONS["info"])
-    state_word = "UP" if is_resolved else "DOWN"
-    title = f"{state_emoji} HC {state_word}: {check}"
+    # Title preserves HC's own terminology (UP/DOWN) since that matches the
+    # HC UI users navigate when investigating. Body normalises to RESOLVED
+    # so it lines up with Grafana/Beszel in mixed notification streams
+    # (0.9.21 uniformity audit fix).
+    state_word_title = "UP" if is_resolved else "DOWN"
+    state_word_body  = "RESOLVED" if is_resolved else "DOWN"
+    title = f"{state_emoji} HC {state_word_title}: {check}"
 
-    body_parts = [f"Status: {state_word}"]
+    body_parts = [f"Status: {state_word_body}"]
     if last_ping:
         body_parts.append(f"Last ping: {last_ping}")
     if code:
@@ -2358,7 +2370,12 @@ def parse_wud_payload(payload, severity: str) -> dict:
     title = f"{state_emoji} WUD: {title_raw}"
     body = body_raw
 
-    tags = [TAG_PREFIXES.get(severity, "package"), "wud", "container-update"]
+    # First tag = severity emoji (matches Beszel/HC pattern for uniform
+    # severity-at-a-glance). 'package' kept as second tag so ntfy still
+    # renders the 📦 alongside the severity. Pre-0.9.21 had 'package' as
+    # the leading tag which made WUD pushes visually distinct from other
+    # info-level notifications.
+    tags = [TAG_PREFIXES.get(severity, "bell"), severity, "package", "wud", "container-update"]
 
     actions = []
     rb = payload_extras.get("runbook_url") or FALLBACK_RUNBOOKS.get("wud") or ""
@@ -2403,10 +2420,11 @@ def parse_authentik_payload(payload: dict, severity: str) -> dict:
     body_raw  = str(payload.get("message") or "")
 
     # Klaxond convention: emoji + source-tag prefix in title (mirrors other sources).
-    # Authentik mapping already includes a leading icon (🔐/🚨), so we just add a
-    # severity emoji prefix and keep its title intact.
+    # Authentik mapping already includes a leading icon (🔐/🚨), so we add a
+    # severity emoji prefix + "Authentik:" source prefix (0.9.21 uniformity
+    # audit fix) and keep the mapping's title intact afterwards.
     state_emoji = ICONS.get(severity, ICONS["info"])
-    title = f"{state_emoji} {title_raw}"
+    title = f"{state_emoji} Authentik: {title_raw}"
 
     # Tags: keep what the mapping produced + add severity prefix (for ntfy display)
     tags = list(payload.get("tags") or [])
