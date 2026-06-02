@@ -1086,7 +1086,64 @@ def _save_toml_config(cfg: dict) -> None:
     tmp = KLAXON_CONFIG + ".tmp"
     with open(tmp, "w") as f:
         f.write("\n".join(lines))
+    # Auto-backup before replacing — keeps last N copies of klaxon.toml
+    # under /data/backups/. Cheap insurance against bad edits.
+    try:
+        _config_auto_backup()
+    except Exception as e:
+        log.warning("config auto-backup failed (continuing save anyway): %s", e)
     os.replace(tmp, KLAXON_CONFIG)
+
+
+KLAXON_BACKUP_DIR = os.environ.get("KLAXON_BACKUP_DIR", "/data/backups")
+KLAXON_BACKUP_KEEP = 10
+
+def _config_auto_backup() -> str | None:
+    """Copy current klaxon.toml to /data/backups/klaxon-YYYYMMDD-HHMMSS.toml.
+    Prunes to KLAXON_BACKUP_KEEP newest. Returns the backup path, or None
+    if the source doesn't exist yet (first boot, before bootstrap)."""
+    if not os.path.exists(KLAXON_CONFIG):
+        return None
+    os.makedirs(KLAXON_BACKUP_DIR, exist_ok=True)
+    import shutil, datetime
+    stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    dest = os.path.join(KLAXON_BACKUP_DIR, f"klaxon-{stamp}.toml")
+    shutil.copy2(KLAXON_CONFIG, dest)
+    # Prune oldest beyond KLAXON_BACKUP_KEEP
+    try:
+        files = sorted(
+            (f for f in os.listdir(KLAXON_BACKUP_DIR)
+             if f.startswith("klaxon-") and f.endswith(".toml")),
+            reverse=True
+        )
+        for stale in files[KLAXON_BACKUP_KEEP:]:
+            os.unlink(os.path.join(KLAXON_BACKUP_DIR, stale))
+    except Exception as e:
+        log.warning("backup prune failed: %s", e)
+    return dest
+
+
+def _list_config_backups() -> list:
+    """Return [{name, size, mtime_iso}, …] sorted newest-first."""
+    out = []
+    if not os.path.isdir(KLAXON_BACKUP_DIR):
+        return out
+    import datetime
+    for n in os.listdir(KLAXON_BACKUP_DIR):
+        if not (n.startswith("klaxon-") and n.endswith(".toml")):
+            continue
+        p = os.path.join(KLAXON_BACKUP_DIR, n)
+        try:
+            st = os.stat(p)
+            out.append({
+                "name": n,
+                "size": st.st_size,
+                "mtime_iso": datetime.datetime.utcfromtimestamp(st.st_mtime).isoformat() + "Z",
+            })
+        except Exception:
+            continue
+    out.sort(key=lambda r: r["mtime_iso"], reverse=True)
+    return out
 
 
 # Loaded at startup; refreshed on /api/config POST.
@@ -2209,6 +2266,27 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_static(self.path[len("/ui/"):])
         elif self.path == "/inhibitions" or self.path == "/api/inhibitions":
             self._send_json(inhibition_status())
+        elif self.path == "/api/config/backup":
+            # Stream the current klaxon.toml as attachment for manual backup.
+            try:
+                with open(KLAXON_CONFIG, "rb") as f: body = f.read()
+                import datetime
+                stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/toml")
+                self.send_header("Content-Disposition", f'attachment; filename="klaxon-{stamp}.toml"')
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers(); self.wfile.write(body)
+            except FileNotFoundError:
+                self.send_response(404); self.end_headers()
+                self.wfile.write(b"klaxon.toml not found")
+        elif self.path == "/api/config/backups":
+            # List existing on-disk auto-backups (sorted newest-first).
+            self._send_json({
+                "backups": _list_config_backups(),
+                "keep_max": KLAXON_BACKUP_KEEP,
+                "dir": KLAXON_BACKUP_DIR,
+            })
         elif self.path == "/api/inhibition-rules":
             # Flat shape for UI consumption: match_label_regex tuple → flat
             # match_label + match_regex keys (mirrors TOML on-disk shape).
@@ -2396,6 +2474,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_ntfy_topics_update()
         if self.path == "/api/inhibition-rules":
             return self._handle_inhibition_rules_update()
+        if self.path == "/api/config/restore":
+            return self._handle_config_restore()
         if self.path == "/api/inhibitions/clear":
             return self._handle_inhibition_clear()
         if self.path == "/api/inhibition-rules/test":
@@ -3052,6 +3132,60 @@ class Handler(BaseHTTPRequestHandler):
             "would_arm_suppression": would_arm,
             "considered_rules": considered,
         })
+
+    def _handle_config_restore(self):
+        """Accept a full klaxon.toml body and atomically replace the current one.
+        Validation: parseable as TOML + must contain at least a [cascade] or
+        [delivery] section (sanity check — empty configs aren't useful).
+        Auto-backup of the current file happens BEFORE write via the regular
+        _save_toml_config path? No — restore writes raw bytes, so we backup
+        explicitly here.
+        Side effect: rebuilds in-memory TOML_CONFIG and re-applies overrides.
+        """
+        global TOML_CONFIG
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > 1_000_000:  # 1 MB cap
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"empty or oversized body"); return
+        raw = self.rfile.read(length)
+        # Parse to validate
+        if tomllib is None:
+            self.send_response(500); self.end_headers()
+            self.wfile.write(b"tomllib unavailable in runtime"); return
+        try:
+            parsed = tomllib.loads(raw.decode("utf-8"))
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"invalid TOML: {e}".encode()); return
+        # Sanity check: at minimum cascade or delivery or render section
+        if not any(k in parsed for k in ("cascade", "delivery", "render", "ntfy", "auth")):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"no recognised top-level sections; refusing as likely empty"); return
+        # Backup current + atomic replace
+        try:
+            backup = _config_auto_backup()
+        except Exception as e:
+            log.warning("pre-restore backup failed (continuing anyway): %s", e)
+            backup = None
+        tmp = KLAXON_CONFIG + ".restore.tmp"
+        try:
+            with open(tmp, "wb") as f: f.write(raw)
+            os.replace(tmp, KLAXON_CONFIG)
+        except Exception as e:
+            if os.path.exists(tmp):
+                try: os.unlink(tmp)
+                except Exception: pass
+            self.send_response(500); self.end_headers()
+            self.wfile.write(f"write failed: {e}".encode()); return
+        # Reload in-memory state
+        try:
+            TOML_CONFIG = _load_toml_config()
+            _apply_toml_overrides()
+            _apply_channel_config()
+        except Exception as e:
+            log.error("post-restore reload failed: %s — config on disk is the new one but in-memory is stale; restart the container", e)
+        log.info("config restored from upload (%d bytes), pre-restore backup at %s", length, backup or "<none>")
+        self._send_json({"ok": True, "bytes_written": length, "pre_restore_backup": backup})
 
     def _handle_cascade_config_update(self):
         global TOML_CONFIG

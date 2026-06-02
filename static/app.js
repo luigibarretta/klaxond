@@ -143,11 +143,67 @@ async function loadStatusActivity() {
     $("#stat-dedup-count").textContent = total;
     setTabBadge("grouping", total, total > 0 ? "warn" : "");
   } catch (e) { $("#stat-dedup-count").textContent = "?"; }
+  // Refresh config backup list (also belongs to the Status pane)
+  if (typeof loadConfigBackups === "function") loadConfigBackups();
 }
 
 $("#btn-cascade-toggle").addEventListener("click", async () => {
   await J("/api/cascade/toggle", { method: "POST", body: "{}" });
   loadStatus();
+});
+
+
+// ---- Config backup / restore ----
+async function loadConfigBackups() {
+  const ul = $("#cfg-backup-list"); if (!ul) return;
+  try {
+    const r = await J("/api/config/backups");
+    if (r.dir) $("#cfg-backup-dir").textContent = r.dir;
+    if (r.keep_max) $("#cfg-backup-keep").textContent = r.keep_max;
+    const items = r.backups || [];
+    if (!items.length) { ul.innerHTML = "<li>(no backups yet — saved on next config change)</li>"; return; }
+    ul.innerHTML = items.slice(0, 10).map(b => {
+      const kb = Math.round(b.size / 1024);
+      return `<li><code>${escapeHtml(b.name)}</code> · ${kb} KB · ${escapeHtml(b.mtime_iso)}</li>`;
+    }).join("");
+  } catch (e) { ul.innerHTML = `<li class='muted'>backups list unavailable: ${escapeHtml(e.message)}</li>`; }
+}
+
+// Download is a plain anchor href — the browser handles content-disposition.
+document.addEventListener("DOMContentLoaded", () => {
+  const dl = document.getElementById("cfg-backup-download");
+  if (dl) dl.href = "/api/config/backup";
+
+  const fileInput = document.getElementById("cfg-restore-file");
+  if (fileInput) fileInput.addEventListener("change", async e => {
+    const f = e.target.files[0]; if (!f) return;
+    const status = $("#cfg-restore-status");
+    if (!confirm(`Restore klaxond config from "${f.name}" (${f.size} bytes)?\n\nThe current config will be auto-backed-up first. After upload, in-memory state reloads. Continue?`)) {
+      e.target.value = ""; return;
+    }
+    status.textContent = "Uploading…"; status.style.color = "";
+    try {
+      const raw = await f.text();
+      const res = await fetch("/api/config/restore", {
+        method: "POST", headers: {"Content-Type": "application/toml"}, body: raw,
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        status.textContent = `❌ ${res.status} ${txt.slice(0, 200)}`;
+        status.style.color = "var(--red)"; return;
+      }
+      const j = await res.json();
+      status.textContent = `✓ Restored ${j.bytes_written} bytes. Pre-restore backup: ${j.pre_restore_backup || '(none)'}`;
+      status.style.color = "var(--green)";
+      showToast("Config restored — reload page to see all UI state refresh", "success", 6000);
+      loadConfigBackups();
+    } catch (err) {
+      status.textContent = "❌ " + err.message;
+      status.style.color = "var(--red)";
+    } finally {
+      e.target.value = "";
+    }
+  });
 });
 
 // ---- Inhibitions (active suppressions) ----
