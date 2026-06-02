@@ -32,7 +32,7 @@ function _onTabActivated(tabId) {
     switch (tabId) {
       case "flow":        if (typeof loadFlow === "function")       { loadFlow(); if (typeof _setupFlowAutorefresh === "function") _setupFlowAutorefresh(); } break;
       case "auth":        if (typeof loadAuth === "function")        loadAuth(); break;
-      case "routing":     if (typeof loadNtfyTopics === "function")  loadNtfyTopics(); break;
+      case "routing":     if (typeof loadNtfyTopics === "function") loadNtfyTopics(); if (typeof loadIngestAuth === "function") loadIngestAuth(); break;
       case "grouping":    if (typeof loadDedup === "function")       loadDedup(); break;
       case "inhibitions": if (typeof loadInhibRules === "function")  loadInhibRules(); break;
     }
@@ -1090,6 +1090,80 @@ $("#btn-routing-save").addEventListener("click", async () => {
 });
 
 
+// ---- Ingest auth (per-source webhook secret, 0.9.18+) ----
+async function loadIngestAuth() {
+  const tb = $("#t-ingest-auth tbody"); if (!tb) return;
+  try {
+    const data = await J("/api/ingest-auth");
+    const srcs = data.sources || {};
+    tb.innerHTML = "";
+    for (const src of Object.keys(srcs).sort()) {
+      const info = srcs[src];
+      const tr = document.createElement("tr");
+      const status = info.configured
+        ? `<span style='color:var(--green)'>✓ secret set</span>`
+        : `<span style='color:var(--muted)'>(permissive — no secret)</span>`;
+      const from = info.from === "env" ? `<code>env</code> (read-only, set <code>KLAXOND_INGEST_SECRET_${src.toUpperCase()}</code>)`
+                  : info.from === "toml" ? `<code>klaxon.toml</code>`
+                  : "—";
+      const isEnv = info.from === "env";
+      tr.innerHTML = `
+        <td><code>${escapeHtml(src)}</code></td>
+        <td>${status}</td>
+        <td><small>${from}</small></td>
+        <td>
+          <button class="btn primary" data-act="generate" data-src="${escapeHtml(src)}" ${isEnv ? "disabled title='env override active'" : ""}>Generate</button>
+          <button class="btn" data-act="set" data-src="${escapeHtml(src)}" ${isEnv ? "disabled" : ""}>Set custom…</button>
+          <button class="btn" data-act="clear" data-src="${escapeHtml(src)}" ${(!info.configured || isEnv) ? "disabled" : ""} style="color:var(--red)">Clear</button>
+        </td>`;
+      tb.appendChild(tr);
+    }
+    // Wire button handlers
+    tb.querySelectorAll("button[data-act]").forEach(btn => {
+      btn.addEventListener("click", () => _ingestAuthAction(btn.dataset.src, btn.dataset.act));
+    });
+  } catch (e) { console.warn("ingest-auth fetch:", e); }
+}
+
+async function _ingestAuthAction(src, action) {
+  let body = { source: src, action };
+  if (action === "set") {
+    const sec = prompt(`Paste the secret to use for source "${src}":\n\n(min 16 chars; will be shown to emitter ONCE here)`);
+    if (!sec) return;
+    if (sec.length < 16) { showToast("Secret must be ≥16 chars", "error"); return; }
+    body.secret = sec;
+  }
+  if (action === "clear") {
+    if (!confirm(`Clear webhook secret for "${src}"?\n\nSource will return to permissive mode (any caller accepted). Confirm?`)) return;
+  }
+  try {
+    const res = await fetch("/api/ingest-auth", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      showToast(`Ingest-auth ${action} failed: ${res.status} ${txt.slice(0, 200)}`, "error");
+      return;
+    }
+    const r = await res.json();
+    if (r.secret) {
+      // Show generated secret in a copy-friendly prompt
+      window.prompt(
+        `✓ Secret generated for source "${src}".\n\nCopy it now and paste it into the emitter configuration — it WON'T be shown again. (klaxond stores only this value; once you close this dialog you can't retrieve it from the UI.)`,
+        r.secret
+      );
+    } else {
+      showToast(`✓ Ingest-auth ${action} OK for ${src}`, "success", 4000);
+    }
+    loadIngestAuth();
+  } catch (e) {
+    showToast(`Ingest-auth ${action} error: ${e.message}`, "error");
+  }
+}
+
+
 // ---- Cascade tiers ----
 const TIER_OPTS = ["ntfy", "telegram", "smtp"];
 let casData = { tiers: [], default_enabled_for_webhook: false };
@@ -1838,7 +1912,7 @@ document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
 
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth()]);
+  await Promise.all([loadStatus(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);

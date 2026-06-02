@@ -1083,6 +1083,13 @@ def _save_toml_config(cfg: dict) -> None:
             lines.append(f'applies_to = [{quoted}]')
         lines.append(f'ttl_seconds = {int(inh.get("ttl_seconds", 900))}')
         lines.append("")
+    ingest_secrets = ((cfg.get("ingest") or {}).get("secrets") or {})
+    if ingest_secrets:
+        lines.append("[ingest.secrets]")
+        for k, v in ingest_secrets.items():
+            if v:
+                lines.append(f'{k} = "{v}"')
+        lines.append("")
     tmp = KLAXON_CONFIG + ".tmp"
     with open(tmp, "w") as f:
         f.write("\n".join(lines))
@@ -1093,6 +1100,73 @@ def _save_toml_config(cfg: dict) -> None:
     except Exception as e:
         log.warning("config auto-backup failed (continuing save anyway): %s", e)
     os.replace(tmp, KLAXON_CONFIG)
+
+
+# ----------------------------------------------------------------------------
+# Inbound webhook authentication (0.9.18+) — per-source shared secret.
+#
+# Pragmatic design: real-world emitters (Grafana Alertmanager, Beszel,
+# Healthchecks, WUD, Authentik) DON'T natively support HMAC body signing.
+# But all of them either support an Authorization header or a query
+# parameter. So we accept the shared secret three ways, picking the first
+# that matches:
+#   1) Authorization: Bearer <secret>          (Grafana Alertmanager,
+#                                                ntfy, custom curl)
+#   2) X-Klaxond-Token: <secret>               (any header-customising client)
+#   3) ?token=<secret>                          (last-resort query param)
+#
+# Secret resolution per source, env wins over TOML so vault overrides
+# configurable defaults:
+#   - env KLAXOND_INGEST_SECRET_GRAFANA (uppercased source)
+#   - TOML [ingest.secrets].<source>
+#
+# Backward compat: if no secret configured for a source, the legacy
+# permissive mode applies (accept all — same as 0.9.17 and earlier).
+# ----------------------------------------------------------------------------
+def _ingest_secret_for(source: str) -> str:
+    env_key = f"KLAXOND_INGEST_SECRET_{source.upper()}"
+    env_val = os.environ.get(env_key, "").strip()
+    if env_val:
+        return env_val
+    secrets = (TOML_CONFIG.get("ingest", {}) or {}).get("secrets", {}) or {}
+    return str(secrets.get(source, "")).strip()
+
+
+def _ingest_secret_status() -> dict:
+    """Return {source: {configured, source_of_secret}} for the UI."""
+    out = {}
+    for src in DEDUP_SOURCES:
+        env_val = os.environ.get(f"KLAXOND_INGEST_SECRET_{src.upper()}", "").strip()
+        toml_val = str(((TOML_CONFIG.get("ingest", {}) or {}).get("secrets", {}) or {}).get(src, "")).strip()
+        if env_val:
+            out[src] = {"configured": True, "from": "env"}
+        elif toml_val:
+            out[src] = {"configured": True, "from": "toml"}
+        else:
+            out[src] = {"configured": False, "from": ""}
+    return out
+
+
+def _verify_ingest_auth(source: str, headers: dict, query: dict) -> tuple[bool, str]:
+    """Return (ok, reason). If no secret configured → (True, 'no-secret') = legacy."""
+    secret = _ingest_secret_for(source)
+    if not secret:
+        return True, "no-secret"
+    # 1) Authorization: Bearer <secret>
+    auth = headers.get("Authorization", "") or headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        token = auth[7:].strip()
+        if hmac.compare_digest(token, secret):
+            return True, "bearer"
+    # 2) X-Klaxond-Token
+    xkt = headers.get("X-Klaxond-Token", "") or headers.get("x-klaxond-token", "")
+    if xkt and hmac.compare_digest(xkt.strip(), secret):
+        return True, "x-klaxond-token"
+    # 3) ?token=<secret>
+    qtok = (query.get("token") or [""])[0]
+    if qtok and hmac.compare_digest(qtok, secret):
+        return True, "query"
+    return False, "secret-required-but-missing-or-mismatch"
 
 
 KLAXON_BACKUP_DIR = os.environ.get("KLAXON_BACKUP_DIR", "/data/backups")
@@ -1329,7 +1403,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.9.17"
+_KLAXOND_VERSION = "0.9.18"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}
@@ -2388,6 +2462,18 @@ class Handler(BaseHTTPRequestHandler):
                 "keep_max": KLAXON_BACKUP_KEEP,
                 "dir": KLAXON_BACKUP_DIR,
             })
+        elif self.path == "/api/ingest-auth":
+            # Per-source secret status (configured / unset / from env-or-toml).
+            # Values themselves never returned — only presence.
+            self._send_json({
+                "sources": _ingest_secret_status(),
+                "auth_methods_accepted": [
+                    "Authorization: Bearer <secret>",
+                    "X-Klaxond-Token: <secret>",
+                    "?token=<secret> query param",
+                ],
+                "note": "Legacy permissive mode (no auth required) is in effect when a source has no secret configured.",
+            })
         elif self.path == "/api/inhibition-rules":
             # Flat shape for UI consumption: match_label_regex tuple → flat
             # match_label + match_regex keys (mirrors TOML on-disk shape).
@@ -2577,6 +2663,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_inhibition_rules_update()
         if self.path == "/api/config/restore":
             return self._handle_config_restore()
+        if self.path == "/api/ingest-auth":
+            return self._handle_ingest_auth_update()
         if self.path == "/api/inhibitions/clear":
             return self._handle_inhibition_clear()
         if self.path == "/api/inhibition-rules/test":
@@ -2609,6 +2697,15 @@ class Handler(BaseHTTPRequestHandler):
         if severity not in _all_known_severities():
             self.send_response(400); self.end_headers()
             self.wfile.write(f"unknown severity {severity} (no topic handles it)".encode()); return
+
+        # Webhook auth (0.9.18+) — per-source shared secret if configured.
+        # No-op for sources without a configured secret (legacy permissive).
+        auth_ok, auth_reason = _verify_ingest_auth(source, dict(self.headers), qs)
+        if not auth_ok:
+            log.warning("[%s/%s] webhook auth rejected: %s (from %s)",
+                        source, severity, auth_reason, self.client_address[0] if self.client_address else "?")
+            self.send_response(401); self.end_headers()
+            self.wfile.write(b"unauthorized (per-source secret required)"); return
 
         length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(length)
@@ -3233,6 +3330,62 @@ class Handler(BaseHTTPRequestHandler):
             "would_arm_suppression": would_arm,
             "considered_rules": considered,
         })
+
+    def _handle_ingest_auth_update(self):
+        """Set/clear per-source ingest secret.
+
+        Body: {"source": "<grafana|beszel|…>", "action": "set|generate|clear", "secret": "<optional>"}
+          - set     → requires `secret` in body (the literal string)
+          - generate → server picks a random 32-byte hex; returns it ONCE
+          - clear   → removes secret (returns to legacy permissive mode for that source)
+
+        Persisted to klaxon.toml [ingest.secrets]. Env-set secrets are
+        unaffected (env wins; the UI shows the source as 'env').
+        """
+        global TOML_CONFIG
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        src = str(body.get("source", "")).strip().lower()
+        action = str(body.get("action", "")).strip().lower()
+        if src not in DEDUP_SOURCES:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"source must be one of {list(DEDUP_SOURCES)}".encode()); return
+        if action not in ("set", "generate", "clear"):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"action must be one of: set, generate, clear"); return
+
+        TOML_CONFIG.setdefault("ingest", {}).setdefault("secrets", {})
+        new_secret = None
+        if action == "clear":
+            TOML_CONFIG["ingest"]["secrets"].pop(src, None)
+        elif action == "generate":
+            import secrets as _sec
+            new_secret = _sec.token_hex(32)
+            TOML_CONFIG["ingest"]["secrets"][src] = new_secret
+        else:  # set
+            sec = str(body.get("secret", "")).strip()
+            if not sec or len(sec) < 16:
+                self.send_response(400); self.end_headers()
+                self.wfile.write(b"secret missing or shorter than 16 chars"); return
+            TOML_CONFIG["ingest"]["secrets"][src] = sec
+            new_secret = sec
+        try:
+            _save_toml_config(TOML_CONFIG)
+        except Exception as e:
+            log.error("ingest-auth save failed: %s", e)
+            self.send_response(500); self.end_headers()
+            self.wfile.write(str(e).encode()); return
+        log.info("ingest-auth %s for source=%s (env override: %s)",
+                 action, src, "yes" if os.environ.get(f"KLAXOND_INGEST_SECRET_{src.upper()}") else "no")
+        # Only return the secret value on `set`/`generate`. Never echo on clear.
+        resp = {"ok": True, "source": src, "action": action}
+        if new_secret and action == "generate":
+            resp["secret"] = new_secret  # shown to user ONCE; UI must capture
+        self._send_json(resp)
 
     def _handle_config_restore(self):
         """Accept a full klaxon.toml body and atomically replace the current one.

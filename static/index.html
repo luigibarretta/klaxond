@@ -333,6 +333,22 @@
     <button id="btn-routing-save" class="primary">Save routing</button>
     <span id="routing-msg" class="muted"></span>
   </div>
+
+  <h2 style="margin-top:2em;">Inbound webhook auth <small class="muted">(0.9.18+, per-source shared secret)</small></h2>
+  <div class="card">
+    <p class="muted">
+      Optional shared secret per ingest source. When configured, the emitter MUST present the secret via one of:
+      <br/>1. <code>Authorization: Bearer &lt;secret&gt;</code> header (Grafana Alertmanager, ntfy, custom)
+      <br/>2. <code>X-Klaxond-Token: &lt;secret&gt;</code> header
+      <br/>3. <code>?token=&lt;secret&gt;</code> query parameter
+      <br/>Sources with no configured secret remain in <b>legacy permissive mode</b> (accept all — same as ≤ 0.9.17). Env <code>KLAXOND_INGEST_SECRET_&lt;SOURCE&gt;</code> overrides TOML.
+    </p>
+    <table id="t-ingest-auth">
+      <thead><tr><th>Source</th><th>Status</th><th>Source of secret</th><th>Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <p class="muted" style="margin-top:0.8em"><small>"Generate" creates a 64-char hex secret server-side; the value is shown <b>once</b> in a toast — copy it into the emitter immediately. "Clear" removes the secret (source returns to permissive mode).</small></p>
+  </div>
 </section>
 
 <section id="tab-cascade" class="tabpane">
@@ -542,7 +558,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.9.17</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.9.18</span></small>
 </footer>
 
 <!--
