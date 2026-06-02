@@ -206,6 +206,33 @@
     <button id="inhib-clear-all" class="btn">Clear all suppressions</button>
     <span id="inhib-clear-status" class="muted"></span>
   </div>
+
+  <h2 style="margin-top: 2em;">Maintenance windows <small class="muted">(scheduled silences, 0.9.19+)</small></h2>
+  <p class="muted">
+    Cron-driven silences. When an alert arrives during a window AND its labels match the rule's <b>match</b> dict (subset-equality), the alert is suppressed with channel <code>scheduled-mute</code> and the schedule name as <code>suppressed_by</code>. Use for backup windows, planned maintenance, recurring noise sources.
+    <br/>Cron is standard 5-field (<code>min hour dom month dow</code>). Duration in minutes from cron-tick. Applies-to empty = all sources.
+  </p>
+  <div class="table-scroll">
+    <table id="t-schedules">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Cron (5-field)</th>
+          <th>Duration (min)</th>
+          <th>Match (label=value, one per line)</th>
+          <th>Applies to</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div style="margin: 0.8em 0; display: flex; gap: 0.6em; align-items: center;">
+    <button id="sched-add" class="btn">+ Add window</button>
+    <button id="sched-save" class="btn primary">Save</button>
+    <span id="sched-save-status" class="muted"></span>
+  </div>
 </section>
 
 <section id="tab-deliveries" class="tabpane">
@@ -558,7 +585,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.9.18</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.9.19</span></small>
 </footer>
 
 <!--

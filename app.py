@@ -1090,6 +1090,22 @@ def _save_toml_config(cfg: dict) -> None:
             if v:
                 lines.append(f'{k} = "{v}"')
         lines.append("")
+    for s in cfg.get("schedules", []) or []:
+        if not isinstance(s, dict): continue
+        lines.append("[[schedules]]")
+        lines.append(f'name = "{s.get("name","")}"')
+        lines.append(f'cron = "{s.get("cron","")}"')
+        lines.append(f'duration_minutes = {int(s.get("duration_minutes", 30))}')
+        if s.get("applies_to"):
+            quoted = ", ".join(f'"{x}"' for x in s["applies_to"])
+            lines.append(f'applies_to = [{quoted}]')
+        m = s.get("match") or {}
+        if m:
+            # Dotted-key form keeps the match dict nested inside this
+            # [[schedules]] item without needing a separate table header.
+            for k, v in m.items():
+                lines.append(f'match.{k} = "{v}"')
+        lines.append("")
     tmp = KLAXON_CONFIG + ".tmp"
     with open(tmp, "w") as f:
         f.write("\n".join(lines))
@@ -1245,7 +1261,7 @@ log.info("auth mode = %s", AUTH_CONFIG.get("mode"))
 # Apply TOML config overrides (if klaxon.toml provided non-empty sections)
 # ============================================================================
 def _apply_toml_overrides():
-    global PRIORITIES, ICONS, TAG_PREFIXES, COMPONENT_DASHBOARDS, INHIBITION_RULES, GRAFANA_BASE, FALLBACK_RUNBOOKS
+    global PRIORITIES, ICONS, TAG_PREFIXES, COMPONENT_DASHBOARDS, INHIBITION_RULES, GRAFANA_BASE, FALLBACK_RUNBOOKS, SCHEDULES
     render = TOML_CONFIG.get("render", {})
     if render.get("severity_priority"):
         PRIORITIES = dict(render["severity_priority"])
@@ -1275,6 +1291,28 @@ def _apply_toml_overrides():
                 entry["applies_to"] = [str(s) for s in r["applies_to"] if isinstance(s, str)]
             rebuilt.append(entry)
         INHIBITION_RULES = rebuilt
+    # Schedules (0.9.19+) — list of {name, cron, duration_minutes, match, applies_to}
+    scheds = TOML_CONFIG.get("schedules", []) or []
+    rebuilt_s = []
+    for s in scheds:
+        if not isinstance(s, dict): continue
+        name = str(s.get("name", "")).strip()
+        cron = str(s.get("cron", "")).strip()
+        if not name or not cron: continue
+        try:
+            duration = max(1, int(s.get("duration_minutes", 30)))
+        except Exception:
+            duration = 30
+        match = s.get("match") or {}
+        if not isinstance(match, dict): match = {}
+        applies = s.get("applies_to") or []
+        if not isinstance(applies, list): applies = []
+        rebuilt_s.append({
+            "name": name, "cron": cron, "duration_minutes": duration,
+            "match": {str(k): str(v) for k, v in match.items()},
+            "applies_to": [str(x) for x in applies if isinstance(x, str)],
+        })
+    SCHEDULES = rebuilt_s
 
 
 def _apply_channel_config():
@@ -1369,8 +1407,9 @@ def _apply_channel_config():
 
 
 _apply_toml_overrides()
-
-
+# Scheduler thread spawn is moved to the bottom of the file (after
+# _scheduler_thread is defined). See "Spawn the maintenance-window
+# scheduler" near the signal handler setup.
 
 
 
@@ -1403,7 +1442,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.9.18"
+_KLAXOND_VERSION = "0.9.19"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}
@@ -1752,6 +1791,166 @@ def _is_suppressed(labels: dict, source: str) -> str | None:
     return None
 
 
+# ============================================================================
+# Maintenance windows / scheduled silences (0.9.19+)
+# ----------------------------------------------------------------------------
+# Per-rule cron + duration: while inside the window AND the alert's labels
+# match the rule's match-dict, the alert is suppressed with channel
+# "scheduled-mute" in the deliveries ring buffer for visibility. Cron parsing
+# is stdlib-only (minimal 5-field), no external deps.
+#
+# Use cases:
+#   - Sunday 04:30, duration 30min, match {component=storage}: silence the
+#     storage alerts during the weekly backup window.
+#   - Daily 22:00-06:00, match {severity=info}: night-mute info-level alerts.
+# ============================================================================
+
+def _cron_field_matches(field: str, value: int, lo: int, hi: int) -> bool:
+    """Evaluate a single cron field against an integer value.
+    Supports: '*', '*/N', 'a-b', 'a,b,c', single value, and a-b/N steps."""
+    if field == "*" or field == "":
+        return True
+    for token in field.split(","):
+        token = token.strip()
+        step = 1
+        if "/" in token:
+            base, step_s = token.split("/", 1)
+            try: step = int(step_s)
+            except Exception: return False
+            token = base
+        if token == "*":
+            rng = range(lo, hi + 1, step)
+        elif "-" in token:
+            try:
+                a, b = token.split("-", 1)
+                a, b = int(a), int(b)
+            except Exception: return False
+            rng = range(a, b + 1, step)
+        else:
+            try: v = int(token)
+            except Exception: return False
+            if value == v: return True
+            continue
+        if value in rng: return True
+    return False
+
+
+def _cron_matches(cron: str, now_dt) -> bool:
+    """5-field cron: minute hour dom month dow.
+    Returns True if `now_dt` (a datetime) matches all 5 fields.
+
+    Cron-style DOW vs DOM: per POSIX, if BOTH are restricted (neither '*'),
+    the trigger fires when EITHER matches. We implement the common case
+    (most rules use either DOM or DOW restricted, not both); we OR them.
+    """
+    parts = cron.strip().split()
+    if len(parts) != 5:
+        return False
+    minute, hour, dom, month, dow = parts
+    if not _cron_field_matches(minute, now_dt.minute, 0, 59): return False
+    if not _cron_field_matches(hour,   now_dt.hour,   0, 23): return False
+    if not _cron_field_matches(month,  now_dt.month,  1, 12): return False
+    # dom uses 1-31; dow uses 0=Sunday .. 6=Saturday (Python weekday() is
+    # 0=Monday .. 6=Sunday → adjust)
+    py_weekday = now_dt.weekday()
+    cron_dow = (py_weekday + 1) % 7    # Mon=0 → 1, Sun=6 → 0
+    dom_restricted = dom != "*"
+    dow_restricted = dow != "*"
+    if dom_restricted and dow_restricted:
+        return _cron_field_matches(dom, now_dt.day, 1, 31) or \
+               _cron_field_matches(dow, cron_dow, 0, 7)  # allow 7 too (Sun alias)
+    if dom_restricted:
+        return _cron_field_matches(dom, now_dt.day, 1, 31)
+    if dow_restricted:
+        return _cron_field_matches(dow, cron_dow, 0, 7)
+    return True  # both '*' → fire every minute
+
+
+# In-memory schedule list (rebuilt on TOML reload).
+SCHEDULES: list = []          # list of {name, cron, duration_minutes, match: {label: val}, applies_to: [src]}
+_active_mutes: dict = {}      # name → expiry_ts (set when a window is entered)
+_sched_lock = threading.Lock()
+
+
+def _scheduler_tick():
+    """Called every ~60s. For each schedule whose cron matches NOW, set its
+    expiry to now+duration. Prune expired entries from _active_mutes."""
+    import datetime as _dt
+    now = _dt.datetime.now()
+    now_ts = time_mod.time()
+    with _sched_lock:
+        # 1) Prune expired
+        for name, expiry in list(_active_mutes.items()):
+            if expiry <= now_ts:
+                del _active_mutes[name]
+                log.info("schedule '%s' expired", name)
+        # 2) Activate matching cron windows
+        for s in SCHEDULES:
+            name = s.get("name") or "?"
+            cron = s.get("cron") or ""
+            try:
+                if _cron_matches(cron, now):
+                    duration = int(s.get("duration_minutes", 30))
+                    new_expiry = now_ts + duration * 60
+                    cur = _active_mutes.get(name, 0)
+                    if new_expiry > cur:
+                        _active_mutes[name] = new_expiry
+                        if cur == 0:
+                            log.info("schedule '%s' ARMED (cron=%s duration=%dm)",
+                                     name, cron, duration)
+            except Exception as e:
+                log.warning("scheduler tick failed for '%s': %s", name, e)
+
+
+def _scheduler_thread():
+    """Background thread: tick the scheduler once per minute, aligned to
+    the start of each clock-minute (so a cron with minute=30 fires roughly
+    at HH:30:00 give or take a second)."""
+    import time as _t
+    while True:
+        try:
+            _scheduler_tick()
+        except Exception as e:
+            log.error("scheduler_thread tick crashed: %s", e)
+        # Sleep until ~5s after the next minute boundary
+        now = _t.time()
+        sleep_s = 60 - (now % 60) + 5
+        _t.sleep(sleep_s)
+
+
+def _scheduled_mute_match(labels: dict, source: str) -> str | None:
+    """Return the schedule name if labels match an active mute window."""
+    if not _active_mutes:
+        return None
+    with _sched_lock:
+        active_names = set(_active_mutes.keys())
+    for s in SCHEDULES:
+        if s.get("name") not in active_names:
+            continue
+        applies = s.get("applies_to") or []
+        if applies and source not in applies:
+            continue
+        m = s.get("match") or {}
+        ok = True
+        for k, v in m.items():
+            if labels.get(k, "") != v:
+                ok = False; break
+        if ok:
+            return s["name"]
+    return None
+
+
+def scheduler_status() -> dict:
+    """Snapshot for /api/schedules — list of all schedules + active windows."""
+    now_ts = time_mod.time()
+    with _sched_lock:
+        active = {n: int(e - now_ts) for n, e in _active_mutes.items() if e > now_ts}
+    return {
+        "schedules": [dict(s) for s in SCHEDULES],
+        "active_mutes": active,   # name → seconds remaining
+    }
+
+
 def apply_inhibition(source: str, labels: dict, *, dry_run: bool = False) -> tuple[bool, str]:
     """Source-agnostic inhibition. Takes normalized labels (see
     _normalize_labels) plus the originating source name.
@@ -1773,6 +1972,13 @@ def apply_inhibition(source: str, labels: dict, *, dry_run: bool = False) -> tup
             if not dry_run:
                 _register_suppression(source_idx, labels, resolved=(labels.get("status") == "resolved"))
             return True, "source"
+
+    # Scheduled mute (maintenance window) — checked BEFORE inhibition rules
+    # so the reason in the deliveries log clearly identifies maintenance vs.
+    # source-anchored suppression.
+    sched = _scheduled_mute_match(labels, source)
+    if sched:
+        return False, f"scheduled-mute-{sched}"
 
     suppressed_by = _is_suppressed(labels, source)
     if suppressed_by:
@@ -2474,6 +2680,8 @@ class Handler(BaseHTTPRequestHandler):
                 ],
                 "note": "Legacy permissive mode (no auth required) is in effect when a source has no secret configured.",
             })
+        elif self.path == "/api/schedules":
+            self._send_json(scheduler_status())
         elif self.path == "/api/inhibition-rules":
             # Flat shape for UI consumption: match_label_regex tuple → flat
             # match_label + match_regex keys (mirrors TOML on-disk shape).
@@ -2665,6 +2873,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_config_restore()
         if self.path == "/api/ingest-auth":
             return self._handle_ingest_auth_update()
+        if self.path == "/api/schedules":
+            return self._handle_schedules_update()
         if self.path == "/api/inhibitions/clear":
             return self._handle_inhibition_clear()
         if self.path == "/api/inhibition-rules/test":
@@ -2732,8 +2942,17 @@ class Handler(BaseHTTPRequestHandler):
             title = norm_labels.get("alertname") or norm_labels.get("host") or "alert"
             log.info("[%s/%s%s] SUPPRESSED: %s (%s)", source, severity,
                      " DRY-RUN" if dry_run else "", title, reason)
-            suppressed_by = reason.replace("inhibited-by-", "") if reason.startswith("inhibited-by-") else reason
-            ch = "dry-run-suppressed" if dry_run else "suppressed"
+            # Distinguish scheduled-mute from regular inhibition suppression
+            # in the channel field — gives the deliveries UI a clear visual cue.
+            if reason.startswith("scheduled-mute-"):
+                suppressed_by = reason[len("scheduled-mute-"):]
+                ch = "dry-run-scheduled-mute" if dry_run else "scheduled-mute"
+            elif reason.startswith("inhibited-by-"):
+                suppressed_by = reason[len("inhibited-by-"):]
+                ch = "dry-run-suppressed" if dry_run else "suppressed"
+            else:
+                suppressed_by = reason
+                ch = "dry-run-suppressed" if dry_run else "suppressed"
             _log_delivery(source, severity, title, channel=ch, suppressed_by=suppressed_by)
             if dry_run:
                 return self._send_json({
@@ -3387,6 +3606,78 @@ class Handler(BaseHTTPRequestHandler):
             resp["secret"] = new_secret  # shown to user ONCE; UI must capture
         self._send_json(resp)
 
+    def _handle_schedules_update(self):
+        """Replace SCHEDULES wholesale. Body: {"schedules": [<sched>, …]}
+        Each sched: {name, cron, duration_minutes, match: {label:val}, applies_to: [src]}
+        Cron validated by attempting _cron_matches against now (parse only,
+        not match result).
+        """
+        global TOML_CONFIG, SCHEDULES
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        in_list = body.get("schedules", [])
+        if not isinstance(in_list, list):
+            self.send_response(400); self.end_headers()
+            self.wfile.write(b"schedules must be a list"); return
+        errors = []
+        cleaned_internal = []
+        cleaned_toml = []
+        valid_sources = set(DEDUP_SOURCES)
+        import datetime as _dt
+        now = _dt.datetime.now()
+        for i, s in enumerate(in_list):
+            if not isinstance(s, dict):
+                errors.append(f"schedule[{i}]: not an object"); continue
+            name = str(s.get("name", "")).strip()
+            if not name:
+                errors.append(f"schedule[{i}]: name required"); continue
+            cron = str(s.get("cron", "")).strip()
+            if len(cron.split()) != 5:
+                errors.append(f"schedule[{i}] ({name}): cron must have 5 fields"); continue
+            try:
+                _cron_matches(cron, now)  # parse-validate (result irrelevant)
+            except Exception as e:
+                errors.append(f"schedule[{i}] ({name}): cron invalid: {e}"); continue
+            try:
+                duration = int(s.get("duration_minutes", 30))
+            except Exception:
+                duration = 30
+            if duration < 1 or duration > 24*60:
+                errors.append(f"schedule[{i}] ({name}): duration_minutes must be 1..1440"); continue
+            applies = s.get("applies_to") or []
+            applies = [x for x in applies if isinstance(x, str) and x in valid_sources]
+            match = s.get("match") or {}
+            if not isinstance(match, dict):
+                errors.append(f"schedule[{i}] ({name}): match must be a dict"); continue
+            match_clean = {str(k): str(v) for k, v in match.items() if v}
+            entry = {"name": name, "cron": cron, "duration_minutes": duration,
+                     "match": match_clean, "applies_to": applies}
+            cleaned_internal.append(entry)
+            cleaned_toml.append(entry)
+        if errors:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(("\n".join(errors)).encode()); return
+        TOML_CONFIG["schedules"] = cleaned_toml
+        try:
+            _save_toml_config(TOML_CONFIG)
+        except Exception as e:
+            log.error("schedules save failed: %s", e)
+            self.send_response(500); self.end_headers()
+            self.wfile.write(str(e).encode()); return
+        with _sched_lock:
+            SCHEDULES = cleaned_internal
+            # Drop _active_mutes for schedules that no longer exist
+            names = {s["name"] for s in cleaned_internal}
+            for n in list(_active_mutes.keys()):
+                if n not in names:
+                    del _active_mutes[n]
+        log.info("schedules updated: %d schedule(s)", len(cleaned_internal))
+        self._send_json({"ok": True, "count": len(cleaned_internal)})
+
     def _handle_config_restore(self):
         """Accept a full klaxon.toml body and atomically replace the current one.
         Validation: parseable as TOML + must contain at least a [cascade] or
@@ -3632,6 +3923,12 @@ def _shutdown_handler(signum, frame):
 
 signal.signal(signal.SIGTERM, _shutdown_handler)
 signal.signal(signal.SIGINT, _shutdown_handler)
+
+
+# Spawn the maintenance-window scheduler (0.9.19+). One thread, ticks every
+# ~60s aligned to clock minute. Cron evaluation is cheap so this is fine.
+# Lives near the end of the module so _scheduler_thread is already defined.
+threading.Thread(target=_scheduler_thread, name="klaxond-scheduler", daemon=True).start()
 
 
 if __name__ == "__main__":
