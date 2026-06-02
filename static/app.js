@@ -1107,7 +1107,11 @@ $("#btn-cas-save").addEventListener("click", async () => {
 
 
 // ---- Delivery (policies + rules) ----
-let delivData = { default_policy: "legacy-cascade", policies: [], rules: [], available_tiers: [], legacy_cascade_tiers: [] };
+// The synthetic policy built from the global [cascade] block is exposed by
+// the backend with name="cascade" (see _legacy_cascade_policy in app.py —
+// the Python function name is historical, the returned dict says "cascade").
+// The UI matches that for consistency: no "legacy-cascade" string anywhere.
+let delivData = { default_policy: "cascade", policies: [], rules: [], available_tiers: [], legacy_cascade_tiers: [] };
 
 async function loadDelivery() {
   try {
@@ -1119,7 +1123,7 @@ async function loadDelivery() {
 }
 
 function policyNames() {
-  return ["legacy-cascade", ...delivData.policies.map(p => p.name)];
+  return ["cascade", ...delivData.policies.map(p => p.name)];
 }
 
 function renderDeliveryDefault() {
@@ -1172,7 +1176,7 @@ function renderRulesTable() {
   delivData.rules.forEach((r, i) => addRuleRow(r.match || {}, r.policy, i));
 }
 
-function addRuleRow(match = {}, policy = "legacy-cascade", idx = -1) {
+function addRuleRow(match = {}, policy = "cascade", idx = -1) {
   const tb = $("#t-rules tbody");
   const i = idx === -1 ? tb.children.length : idx;
   const tr = document.createElement("tr");

@@ -337,7 +337,7 @@
 
 <section id="tab-delivery" class="tabpane">
   <h2>Delivery — policies + rules</h2>
-  <p class="muted">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>legacy-cascade</code> is the global <code>[cascade]</code> tier list — picked here by name.</p>
+  <p class="muted">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>cascade</code> is the synthetic policy built from the global <code>[cascade]</code> tier list in <code>klaxon.toml</code> — picked here by name.</p>
 
   <h3 style="margin-top:18px">Default policy (no-match fallback)</h3>
   <div class="card">
@@ -527,7 +527,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.9.14</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.9.15</span></small>
 </footer>
 
 <!--
