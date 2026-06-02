@@ -207,6 +207,13 @@
     <span id="inhib-clear-status" class="muted"></span>
   </div>
 
+  <h2 style="margin-top: 2em;">Active ack-snoozes <small class="muted">(from ntfy push button, 0.9.20+)</small></h2>
+  <p class="muted">When you tap the <b>Snooze 1h</b> button on a ntfy notification, klaxond registers a transient suppression keyed on <code>alertname</code> for 1 hour. They auto-expire; force-clear via the ✕ button below.</p>
+  <table id="t-acks">
+    <thead><tr><th>Alertname</th><th>Expires in</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+
   <h2 style="margin-top: 2em;">Maintenance windows <small class="muted">(scheduled silences, 0.9.19+)</small></h2>
   <p class="muted">
     Cron-driven silences. When an alert arrives during a window AND its labels match the rule's <b>match</b> dict (subset-equality), the alert is suppressed with channel <code>scheduled-mute</code> and the schedule name as <code>suppressed_by</code>. Use for backup windows, planned maintenance, recurring noise sources.
@@ -585,7 +592,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.9.19</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.9.20</span></small>
 </footer>
 
 <!--

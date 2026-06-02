@@ -34,7 +34,7 @@ function _onTabActivated(tabId) {
       case "auth":        if (typeof loadAuth === "function")        loadAuth(); break;
       case "routing":     if (typeof loadNtfyTopics === "function") loadNtfyTopics(); if (typeof loadIngestAuth === "function") loadIngestAuth(); break;
       case "grouping":    if (typeof loadDedup === "function")       loadDedup(); break;
-      case "inhibitions": if (typeof loadInhibRules === "function") loadInhibRules(); if (typeof loadSchedules === "function") loadSchedules(); break;
+      case "inhibitions": if (typeof loadInhibRules === "function") loadInhibRules(); if (typeof loadSchedules === "function") loadSchedules(); if (typeof loadAcks === "function") loadAcks(); break;
     }
   } catch (e) { console.warn("tab init failed:", tabId, e); }
 }
@@ -296,6 +296,44 @@ async function testInhibitionRule() {
     status.style.color = "var(--red)";
   }
 }
+
+// ---- Ack-snoozes (active, 0.9.20+) ----
+async function loadAcks() {
+  const tb = $("#t-acks tbody"); if (!tb) return;
+  try {
+    const acks = await J("/api/acks");
+    tb.innerHTML = "";
+    if (!acks.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">No active ack-snoozes.</td></tr>'; return; }
+    for (const a of acks) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td><code>${escapeHtml(a.alertname)}</code></td><td>${fmtSecs(a.expires_in_seconds)}</td><td>
+        <button class="btn" data-clear-ack="${escapeHtml(a.alertname)}" title="Force-clear this ack" style="color:var(--red); padding:2px 8px">✕</button>
+      </td>`;
+      tr.querySelector("[data-clear-ack]").addEventListener("click", () => clearAck(a.alertname));
+      tb.appendChild(tr);
+    }
+  } catch (e) { console.warn("acks fetch:", e); }
+}
+
+async function clearAck(alertname) {
+  if (!confirm(`Force-clear ack-snooze for "${alertname}"?\n\nFuture alerts with this alertname will resume normal delivery.`)) return;
+  try {
+    const res = await fetch("/api/acks/clear", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({alertname}),
+    });
+    if (!res.ok) {
+      showToast(`Ack clear failed: ${res.status}`, "error"); return;
+    }
+    const r = await res.json();
+    showToast(`✓ Cleared ${r.cleared} ack-snooze${r.cleared === 1 ? "" : "s"}`, "success", 3000);
+    loadAcks();
+  } catch (e) {
+    showToast(`Ack clear error: ${e.message}`, "error");
+  }
+}
+
 
 // ---- Schedules (maintenance windows, 0.9.19+) ----
 let _schedAvailableSources = ["grafana", "beszel", "healthchecks", "wud", "authentik"];
@@ -2073,7 +2111,7 @@ document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
 
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules()]);
+  await Promise.all([loadStatus(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules(), loadAcks()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);

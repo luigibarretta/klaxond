@@ -655,6 +655,7 @@ class AuthManager:
     PUBLIC_PATH_PREFIXES = (
         "/webhook/", "/beszel/", "/healthchecks/", "/wud/", "/authentik/",
         "/healthz", "/metrics",  # Prometheus scrape — no auth (LAN-only firewalled)
+        "/api/ack/",             # ack/snooze from ntfy push — JWT-style token is the auth
         "/auth/login", "/auth/callback", "/auth/logout",
         "/static/", "/favicon.ico",  # login page assets
     )
@@ -1442,7 +1443,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.9.19"
+_KLAXOND_VERSION = "0.9.20"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}
@@ -1792,6 +1793,104 @@ def _is_suppressed(labels: dict, source: str) -> str | None:
 
 
 # ============================================================================
+# Ack / snooze from ntfy push (0.9.20+)
+# ----------------------------------------------------------------------------
+# Each ntfy notification gets an extra action button "Snooze 1h" pointing at
+# /api/ack/<token>. The token is a small HMAC-signed payload (no JWT lib —
+# stdlib base64 + hmac is sufficient for a short-lived single-purpose token).
+# Tapping the button → GET /api/ack/<token> → registers an ack-suppression
+# keyed on alertname for the requested TTL.
+#
+# Token format:  base64url(payload).sig
+#   payload = JSON {"a": alertname, "t": ttl_sec, "e": exp_unix}
+#   sig     = hmac_sha256(session_key, base64url_payload).hexdigest()
+# Token never holds a secret value — it's purely a binding "this user
+# tapped this button at time T for alertname A". Replay within validity
+# is acceptable (just re-extends the suppression).
+#
+# Ack suppressions are checked in apply_inhibition BEFORE the scheduled-mute
+# and inhibition-rules checks, so an explicit user ack takes precedence.
+# ============================================================================
+KLAXOND_PUBLIC_URL = os.environ.get("KLAXOND_PUBLIC_URL", "https://klaxond.luigibarretta.com")
+_ack_suppressions: dict[str, float] = {}   # alertname → expiry_ts
+_ack_lock = threading.Lock()
+ACK_DEFAULT_TTL = int(os.environ.get("ACK_DEFAULT_TTL_SECONDS", "3600"))  # 1h
+
+
+def _ack_sign(alertname: str, ttl_sec: int) -> str:
+    """Build a base64url(payload).sig token. payload includes expiry so
+    a stolen token can't outlive its window."""
+    import base64 as _b64
+    exp = int(time_mod.time() + ttl_sec)
+    payload = json.dumps({"a": alertname, "t": ttl_sec, "e": exp},
+                         separators=(",", ":"))
+    b = _b64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
+    key = AUTH_MANAGER.session_key if "AUTH_MANAGER" in globals() else b"klaxond-fallback-key"
+    sig = hmac.new(key, b.encode(), hashlib.sha256).hexdigest()
+    return f"{b}.{sig}"
+
+
+def _ack_verify(token: str) -> tuple[str | None, str]:
+    """Returns (alertname, reason). alertname is None if the token is invalid
+    or expired; reason is a human-readable string."""
+    import base64 as _b64
+    try:
+        b, sig = token.split(".", 1)
+    except Exception:
+        return None, "malformed"
+    key = AUTH_MANAGER.session_key if "AUTH_MANAGER" in globals() else b"klaxond-fallback-key"
+    expected = hmac.new(key, b.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None, "bad-signature"
+    try:
+        pad = "=" * (-len(b) % 4)
+        body = _b64.urlsafe_b64decode(b + pad).decode("utf-8")
+        payload = json.loads(body)
+    except Exception:
+        return None, "bad-payload"
+    if not isinstance(payload.get("e"), int) or payload["e"] < time_mod.time():
+        return None, "expired"
+    alertname = str(payload.get("a") or "").strip()
+    if not alertname:
+        return None, "no-alertname"
+    return alertname, "ok"
+
+
+def _register_ack_suppression(alertname: str, ttl_sec: int) -> None:
+    with _ack_lock:
+        _ack_suppressions[alertname] = time_mod.time() + ttl_sec
+    log.info("ack-suppression armed: alertname=%s ttl=%ds", alertname, ttl_sec)
+
+
+def _ack_match(labels: dict) -> str | None:
+    """If the alert's alertname is in an active ack-suppression, return it."""
+    name = labels.get("alertname", "")
+    if not name:
+        return None
+    now = time_mod.time()
+    with _ack_lock:
+        exp = _ack_suppressions.get(name)
+        if exp is not None and exp > now:
+            return name
+        if exp is not None:
+            del _ack_suppressions[name]  # expired
+    return None
+
+
+def ack_status_snapshot() -> list:
+    """For /api/acks display in the UI."""
+    out = []
+    now = time_mod.time()
+    with _ack_lock:
+        for name, exp in list(_ack_suppressions.items()):
+            if exp <= now:
+                continue
+            out.append({"alertname": name, "expires_in_seconds": int(exp - now)})
+    out.sort(key=lambda r: r["expires_in_seconds"])
+    return out
+
+
+# ============================================================================
 # Maintenance windows / scheduled silences (0.9.19+)
 # ----------------------------------------------------------------------------
 # Per-rule cron + duration: while inside the window AND the alert's labels
@@ -1973,7 +2072,13 @@ def apply_inhibition(source: str, labels: dict, *, dry_run: bool = False) -> tup
                 _register_suppression(source_idx, labels, resolved=(labels.get("status") == "resolved"))
             return True, "source"
 
-    # Scheduled mute (maintenance window) — checked BEFORE inhibition rules
+    # User ack-snooze — checked first because it's the most explicit signal
+    # ("I tapped Snooze on my phone" overrides rules + windows).
+    ack = _ack_match(labels)
+    if ack:
+        return False, f"ack-snoozed-{ack}"
+
+    # Scheduled mute (maintenance window) — checked before inhibition rules
     # so the reason in the deliveries log clearly identifies maintenance vs.
     # source-anchored suppression.
     sched = _scheduled_mute_match(labels, source)
@@ -2074,7 +2179,12 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
     if status == "resolved":
         priority = "low"
 
-    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority,
+            "_alertname": alertname,
+            # Resolved events don't need a snooze button — by definition the
+            # condition is gone, so suppressing future occurrences would just
+            # delay seeing it the next time it fires.
+            "_skip_snooze": (status == "resolved")}
 
 
 def parse_beszel_payload(payload: dict, severity: str) -> dict:
@@ -2119,7 +2229,8 @@ def parse_beszel_payload(payload: dict, severity: str) -> dict:
     if is_resolved:
         priority = "low"
 
-    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority,
+            "_alertname": alert, "_skip_snooze": is_resolved}
 
 
 def parse_healthchecks_payload(payload: dict, severity: str) -> dict:
@@ -2170,7 +2281,8 @@ def parse_healthchecks_payload(payload: dict, severity: str) -> dict:
     if is_resolved:
         priority = "low"
 
-    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority,
+            "_alertname": check, "_skip_snooze": is_resolved}
 
 
 
@@ -2257,7 +2369,11 @@ def parse_wud_payload(payload, severity: str) -> dict:
 
     priority = PRIORITIES.get(severity, "default")
 
-    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority}
+    return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority,
+            # WUD updates don't benefit from snooze — they fire once per
+            # detected update, not continuously, so suppressing wouldn't
+            # change the next batch's behaviour.
+            "_skip_snooze": True}
 
 
 def parse_authentik_payload(payload: dict, severity: str) -> dict:
@@ -2314,7 +2430,11 @@ def parse_authentik_payload(payload: dict, severity: str) -> dict:
     priority = PRIORITIES.get(severity, "default")
 
     return {"title": title, "body": body_raw, "tags": tags,
-            "actions": actions, "priority": priority}
+            "actions": actions, "priority": priority,
+            # Authentik events (login successes/failures, MFA enrol, etc.) are
+            # discrete identity events, not recurring alarms. A snooze button
+            # would be semantically odd.
+            "_skip_snooze": True}
 
 
 def _strip_non_ascii(text: str) -> str:
@@ -2334,10 +2454,28 @@ def post_to_ntfy(severity: str, parts: dict, timeout: int = 5) -> bool:
         return False
     title_b64 = base64.b64encode(parts["title"].encode("utf-8")).decode("ascii")
     encoded_title = f"=?UTF-8?B?{title_b64}?="
+    # Build the actions list. The renderer-supplied actions go first (max 2),
+    # then we append a "Snooze 1h" action automatically when there's a real
+    # alertname to suppress on (skip dry-runs, skip resolved). ntfy caps at 3.
+    actions = list(parts.get("actions") or [])[:2]
+    alertname = (parts.get("_alertname") or "").strip()
+    if not alertname:
+        # Fall back: derive from title — strip emoji, strip leading severity.
+        # Renderers should populate _alertname explicitly; this is best-effort.
+        t = parts.get("title", "")
+        if " — " in t:
+            t = t.split(" — ", 1)[0]
+        alertname = "".join(c for c in t if ord(c) > 0x7F or c.isalnum() or c in "-_./ ").strip()
+    if alertname and not parts.get("_skip_snooze"):
+        try:
+            tok = _ack_sign(alertname, ACK_DEFAULT_TTL)
+            actions.append(("view", "Snooze 1h", f"{KLAXOND_PUBLIC_URL}/api/ack/{tok}"))
+        except Exception as e:
+            log.warning("ntfy: ack-token sign failed (continuing without snooze button): %s", e)
     actions_header = None
-    if parts.get("actions"):
+    if actions:
         actions_header = "; ".join(
-            f"{kind}, {_strip_non_ascii(label)}, {target}" for kind, label, target in parts["actions"][:3]
+            f"{kind}, {_strip_non_ascii(label)}, {target}" for kind, label, target in actions[:3]
         )
     any_ok = False
     for t in topics:
@@ -2682,6 +2820,31 @@ class Handler(BaseHTTPRequestHandler):
             })
         elif self.path == "/api/schedules":
             self._send_json(scheduler_status())
+        elif self.path.startswith("/api/ack/"):
+            # Token-gated ack/snooze endpoint reached via ntfy push action.
+            # No OIDC required — the signed token IS the credential.
+            token = self.path[len("/api/ack/"):].split("?")[0].strip()
+            alertname, reason = _ack_verify(token)
+            if not alertname:
+                self.send_response(400)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(f"<html><body><h2>Ack rejected</h2><p>{reason}</p></body></html>".encode())
+                return
+            _register_ack_suppression(alertname, ACK_DEFAULT_TTL)
+            mins = ACK_DEFAULT_TTL // 60
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                f"<html><body style='font-family:system-ui,sans-serif;padding:2em;max-width:480px;margin:auto'>"
+                f"<h2 style='color:#22c55e'>✓ Snooze armed</h2>"
+                f"<p>Alerts with <code style='background:#eee;padding:0.1em 0.4em;border-radius:3px'>alertname={alertname}</code> are silenced for the next <b>{mins} minutes</b>.</p>"
+                f"<p style='color:#666;font-size:0.9em'>This page can be closed. The snooze auto-expires; you'll get the next occurrence when the condition recurs.</p>"
+                f"</body></html>".encode()
+            )
+        elif self.path == "/api/acks":
+            self._send_json(ack_status_snapshot())
         elif self.path == "/api/inhibition-rules":
             # Flat shape for UI consumption: match_label_regex tuple → flat
             # match_label + match_regex keys (mirrors TOML on-disk shape).
@@ -2875,6 +3038,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_ingest_auth_update()
         if self.path == "/api/schedules":
             return self._handle_schedules_update()
+        if self.path == "/api/acks/clear":
+            return self._handle_ack_clear()
         if self.path == "/api/inhibitions/clear":
             return self._handle_inhibition_clear()
         if self.path == "/api/inhibition-rules/test":
@@ -2942,9 +3107,11 @@ class Handler(BaseHTTPRequestHandler):
             title = norm_labels.get("alertname") or norm_labels.get("host") or "alert"
             log.info("[%s/%s%s] SUPPRESSED: %s (%s)", source, severity,
                      " DRY-RUN" if dry_run else "", title, reason)
-            # Distinguish scheduled-mute from regular inhibition suppression
-            # in the channel field — gives the deliveries UI a clear visual cue.
-            if reason.startswith("scheduled-mute-"):
+            # Distinguish ack/scheduled-mute/inhibition in the channel field.
+            if reason.startswith("ack-snoozed-"):
+                suppressed_by = reason[len("ack-snoozed-"):]
+                ch = "dry-run-ack-snoozed" if dry_run else "ack-snoozed"
+            elif reason.startswith("scheduled-mute-"):
                 suppressed_by = reason[len("scheduled-mute-"):]
                 ch = "dry-run-scheduled-mute" if dry_run else "scheduled-mute"
             elif reason.startswith("inhibited-by-"):
@@ -3605,6 +3772,26 @@ class Handler(BaseHTTPRequestHandler):
         if new_secret and action == "generate":
             resp["secret"] = new_secret  # shown to user ONCE; UI must capture
         self._send_json(resp)
+
+    def _handle_ack_clear(self):
+        """Force-clear ack-snoozes. Body: {} → clear all; {"alertname": X} → clear one."""
+        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except Exception as e:
+            self.send_response(400); self.end_headers()
+            self.wfile.write(f"bad json: {e}".encode()); return
+        target = str(body.get("alertname") or "").strip()
+        with _ack_lock:
+            before = len(_ack_suppressions)
+            if not target:
+                _ack_suppressions.clear()
+            else:
+                _ack_suppressions.pop(target, None)
+            after = len(_ack_suppressions)
+        cleared = before - after
+        log.info("ack-suppressions cleared via UI: %d (target=%s)", cleared, target or "*")
+        self._send_json({"ok": True, "cleared": cleared, "remaining": after})
 
     def _handle_schedules_update(self):
         """Replace SCHEDULES wholesale. Body: {"schedules": [<sched>, …]}
