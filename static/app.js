@@ -336,7 +336,7 @@ async function clearAck(alertname) {
 
 
 // ---- Schedules (maintenance windows, 0.9.19+) ----
-let _schedAvailableSources = ["grafana", "beszel", "healthchecks", "wud", "authentik"];
+let _schedAvailableSources = ["grafana", "beszel", "healthchecks", "wud", "authentik", "shelfmark", "prowlarr", "decypharr"];
 let _schedActiveMutes = {};   // name → seconds remaining
 
 function _renderSchedRow(s) {
@@ -1023,11 +1023,40 @@ const wudSample = {
   "body": "Container nginx (docker.io/library/nginx:1.27.0) can be updated to 1.27.1",
   "wud_url": "http://192.168.50.110:3033/"
 };
+const shelfmarkSample = {
+  "version": "1.0",
+  "title": "Download complete",
+  "message": "\"The Way of Kings\" by Brandon Sanderson downloaded successfully (EPUB)",
+  "type": "success",
+  "event": "download_complete"
+};
+const prowlarrSample = {
+  "eventType": "Health",
+  "instanceName": "Prowlarr",
+  "applicationUrl": "https://prowlarr.luigibarretta.com",
+  "health": {
+    "type": "warning",
+    "message": "Indexers unavailable due to failures: EZTV, 1337x",
+    "wikiUrl": "https://wiki.servarr.com/prowlarr/system#indexers-are-unavailable-due-to-failures"
+  }
+};
+const decypharrSample = {
+  "hash": "dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c",
+  "name": "Big Buck Bunny",
+  "status": "success",
+  "event": "download_complete",
+  "debrid": "realdebrid",
+  "content_path": "/downloads/Big Buck Bunny",
+  "message": "Download completed: Big Buck Bunny [] -> /downloads/Big Buck Bunny"
+};
 
 $("#btn-load-grafana-sample").addEventListener("click", () => $("#pv-input").value = JSON.stringify(grafanaSample, null, 2));
 $("#btn-load-beszel-sample").addEventListener("click", () => $("#pv-input").value = JSON.stringify(beszelSample, null, 2));
 const _hcBtn = $("#btn-load-healthchecks-sample"); if (_hcBtn) _hcBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(healthchecksSample, null, 2));
 const _wudBtn = $("#btn-load-wud-sample"); if (_wudBtn) _wudBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(wudSample, null, 2));
+const _shfBtn = $("#btn-load-shelfmark-sample"); if (_shfBtn) _shfBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(shelfmarkSample, null, 2));
+const _prwBtn = $("#btn-load-prowlarr-sample"); if (_prwBtn) _prwBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(prowlarrSample, null, 2));
+const _dcyBtn = $("#btn-load-decypharr-sample"); if (_dcyBtn) _dcyBtn.addEventListener("click", () => $("#pv-input").value = JSON.stringify(decypharrSample, null, 2));
 
 async function _runPreviewRender() {
   let payload;
@@ -1069,7 +1098,7 @@ $("#pv-input")?.addEventListener("input", _schedulePreview);
 $("#pv-sev")?.addEventListener("change", _schedulePreview);
 // Trigger after loading a sample (sample buttons set value via .value=…
 // which doesn't fire 'input', so we hook the loaders themselves).
-["#btn-load-grafana-sample", "#btn-load-beszel-sample", "#btn-load-healthchecks-sample", "#btn-load-wud-sample"].forEach(sel => {
+["#btn-load-grafana-sample", "#btn-load-beszel-sample", "#btn-load-healthchecks-sample", "#btn-load-wud-sample", "#btn-load-shelfmark-sample", "#btn-load-prowlarr-sample", "#btn-load-decypharr-sample"].forEach(sel => {
   $(sel)?.addEventListener("click", () => _schedulePreview());
 });
 
@@ -1303,7 +1332,7 @@ async function loadIngestAuth() {
         ? `<span style='color:var(--green)'>✓ secret set</span>`
         : `<span style='color:var(--muted)'>(permissive — no secret)</span>`;
       const from = info.from === "env" ? `<code>env</code> (read-only, set <code>KLAXOND_INGEST_SECRET_${src.toUpperCase()}</code>)`
-                  : info.from === "toml" ? `<code>klaxon.toml</code>`
+                  : info.from === "toml" ? `<code>klaxond.toml</code>`
                   : "—";
       const isEnv = info.from === "env";
       tr.innerHTML = `
@@ -1575,6 +1604,10 @@ const SOURCE_HELP = {
   grafana:      "Grafana alerts (via /webhook/*) — key=commonLabels.alertname",
   beszel:       "Beszel host/container metrics — key=container_name",
   healthchecks: "Healthchecks deadman — key=check name",
+  authentik:    "Authentik identity events — key=action:user (group login bursts)",
+  shelfmark:    "Shelfmark book events — key=event:title (download-complete/failed, request approve/reject)",
+  prowlarr:     "Prowlarr indexer/health events — key=eventType:message (Health, ApplicationUpdate, ecc.)",
+  decypharr:    "Decypharr Real-Debrid bridge events — key=event:hash (download-start/complete/fail per torrent)",
 };
 
 async function loadDedup() {
@@ -1591,7 +1624,7 @@ async function loadDedup() {
 function renderDedupCards() {
   const c = $("#dedup-cards");
   if (!c) return;
-  const sources = dedupData.sources || ["grafana", "beszel", "healthchecks", "wud"];
+  const sources = dedupData.sources || ["grafana", "beszel", "healthchecks", "wud", "authentik", "shelfmark", "prowlarr", "decypharr"];
   const settings = dedupData.settings || {};
   const pending = dedupData.pending_counts || {};
   let html = '<div class="grid2">';
@@ -1904,9 +1937,12 @@ function buildMermaidDiagram(cfgs, stats) {
   lines.push(`    HC["Healthchecks<br/>POST /healthchecks/sev${srcStat("healthchecks")}${dedupStat("healthchecks")}"]`);
   lines.push(`    WUD["WUD<br/>POST /wud/sev${srcStat("wud")}${dedupStat("wud")}"]`);
   lines.push(`    AKN["Authentik<br/>POST /authentik/sev${srcStat("authentik")}${dedupStat("authentik")}"]`);
+  lines.push(`    SHF["Shelfmark<br/>POST /shelfmark/sev${srcStat("shelfmark")}${dedupStat("shelfmark")}"]`);
+  lines.push(`    PRW["Prowlarr<br/>POST /prowlarr/sev${srcStat("prowlarr")}${dedupStat("prowlarr")}"]`);
+  lines.push(`    DCY["Decypharr<br/>POST /decypharr/sev${srcStat("decypharr")}${dedupStat("decypharr")}"]`);
   lines.push("  end");
 
-  lines.push("  class AM,BSZ,HC,WUD,AKN src");
+  lines.push("  class AM,BSZ,HC,WUD,AKN,SHF,PRW,DCY src");
 
   lines.push("  GRA --> AM");
 
@@ -1924,6 +1960,8 @@ function buildMermaidDiagram(cfgs, stats) {
   lines.push("  HC --> INH");
   lines.push("  WUD --> INH");
   lines.push("  AKN --> INH");
+  lines.push("  SHF --> INH");
+  lines.push("  PRW --> INH");
   lines.push("  INH -->|matched| DROP");
   lines.push("  INH -->|pass| RND");
 
@@ -1964,6 +2002,8 @@ function buildMermaidDiagram(cfgs, stats) {
   lines.push(`  click HC call flowGotoTab("grouping") "Grouping (dedup) tab"`);
   lines.push(`  click WUD call flowGotoTab("grouping") "Grouping (dedup) tab"`);
   lines.push(`  click AKN call flowGotoTab("grouping") "Grouping (dedup) tab"`);
+  lines.push(`  click SHF call flowGotoTab("grouping") "Grouping (dedup) tab"`);
+  lines.push(`  click PRW call flowGotoTab("grouping") "Grouping (dedup) tab"`);
   lines.push(`  click INH call flowGotoTab("inhibitions") "Inhibitions tab"`);
   lines.push(`  click RND call flowGotoTab("render") "Render config tab"`);
   lines.push(`  click CAS call flowGotoTab("cascade") "Cascade tab"`);
@@ -2033,7 +2073,7 @@ async function loadFlow() {
 }
 
 // Map source name → mermaid node id (matches buildMermaidDiagram)
-const _NODE_FOR_SOURCE = { grafana: "AM", beszel: "BSZ", healthchecks: "HC", wud: "WUD", authentik: "AKN" };
+const _NODE_FOR_SOURCE = { grafana: "AM", beszel: "BSZ", healthchecks: "HC", wud: "WUD", authentik: "AKN", shelfmark: "SHF", prowlarr: "PRW", decypharr: "DCY" };
 const _NODE_FOR_CHANNEL = { ntfy: "NTFY", telegram: "TG", smtp: "SMTP" };
 
 function _pulseRecentActivityNodes(stats) {

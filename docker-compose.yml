@@ -1,10 +1,10 @@
-# Standalone klaxon — no Ansible required.
+# Standalone klaxond — no Ansible required.
 # Pull the image (or build from this dir) and bring up:
 #   docker compose up -d
 #
 # Env vars: set in .env next to this file (see .env.example).
-# On first run the container bootstraps /data/klaxon.toml from
-# /app/klaxon.default.toml inside the image.
+# On first run the container bootstraps /data/klaxond.toml from
+# /app/klaxond.default.toml inside the image.
 
 services:
   klaxond:
@@ -37,4 +37,4 @@ services:
       - klaxond-data:/data
 
 volumes:
-  klaxon-data:
+  klaxond-data:

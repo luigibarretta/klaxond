@@ -1,36 +1,30 @@
-# Klaxon
+# Klaxond
 
 > Notification bridge for homelab alerting — turns Grafana Alertmanager and Beszel webhooks into clean ntfy pushes, with built-in cascade fallback (ntfy → Telegram → SMTP), declarative inhibition rules, and a single-page admin UI.
 
 ```
-┌──────────────┐   ┌────────┐                                 ┌──────────────────────────┐
-│ Alertmanager │ ──┤        ├──→  POST /webhook/<sev>      ──→│                          │
-└──────────────┘   │        │                                 │                          │
-┌──────────────┐   │        │                                 │                          │
-│   Beszel     │ ──┤ klaxon ├──→  POST /beszel/<sev>       ──→│   render → cascade tiers │
-└──────────────┘   │        │                                 │   1. ntfy       (5s)     │
-┌──────────────┐   │        │                                 │   2. Telegram   (8s)     │
-│ Healthchecks │ ──┤        ├──→  POST /healthchecks/<sev> ──→│   3. Gmail SMTP (10s)    │
-└──────────────┘   │        │                                 │                          │
-┌──────────────┐   │        │                                 │                          │
-│ WUD (What's  │ ──┤        ├──→  POST /wud/<sev>          ──→│                          │
-│ Up Docker)   │   └────────┘                                 │                          │
-└──────────────┘                                              └──────────────────────────┘
+┌──────────────┐   ┌────────┐                            ┌──────────────────────────┐
+│ Alertmanager │ ──┤        ├──→  POST /webhook/<sev> ──→│                          │
+└──────────────┘   │ klaxond │                            │   render → cascade tiers │
+┌──────────────┐   │        │                            │   1. ntfy       (5s)     │
+│   Beszel     │ ──┤        ├──→  POST /beszel/<sev>  ──→│   2. Telegram   (8s)     │
+└──────────────┘   └────────┘                            │   3. Gmail SMTP (10s)    │
+                                                         └──────────────────────────┘
 ```
 
 ## Why
 
-Grafana's webhook contact-point and Beszel's webhook channel both POST JSON that ntfy can't render legibly on its own. Klaxon parses both formats, builds a clean ntfy push with title/emoji/tags/priority/action-buttons, and — if ntfy is down — falls back to Telegram and then SMTP, so an alert never silently disappears.
+Grafana's webhook contact-point and Beszel's webhook channel both POST JSON that ntfy can't render legibly on its own. Klaxond parses both formats, builds a clean ntfy push with title/emoji/tags/priority/action-buttons, and — if ntfy is down — falls back to Telegram and then SMTP, so an alert never silently disappears.
 
 A small admin UI lets you watch deliveries in real time, edit channel routing without restarts, manage inhibition rules, and preview how an alert will look on the phone before you ship a new rule.
 
 ## Features
 
-- **Four webhook formats**: `/webhook/<sev>` (Grafana Alertmanager-shape), `/beszel/<sev>` (Beszel-shape), `/healthchecks/<sev>` (HC self-hosted JSON), `/wud/<sev>` (WUD HTTP trigger `{title, body}`).
+- **Two webhook formats**: `/webhook/<sev>` (Grafana Alertmanager-shape) and `/beszel/<sev>` (Beszel-shape).
 - **3-tier cascade fallback** — ntfy → Telegram → SMTP. Always on for Beszel, gated for Grafana.
 - **Rich ntfy push rendering**: severity emoji in title (RFC 2047 base64-encoded for non-ASCII), priority + tag mapping, up to 2 action buttons via `component` label → dashboard URL.
 - **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
-- **TOML bootstrap config** (`klaxon.toml`) — defines cascade tiers, render mappings, inhibition rules. Auto-bootstrapped on first run from the bundled default.
+- **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, render mappings, inhibition rules. Auto-bootstrapped on first run from the bundled default.
 - **Admin UI** (vanilla HTML+JS, zero build) at `/ui/`: channel health, active inhibitions, recent deliveries, render config CRUD with deep-link test, visual ntfy push preview, cascade tier editor, channel routing config.
 - **Python stdlib only** — no pip install needed. Runs in `python:3.13-alpine`.
 
@@ -52,10 +46,8 @@ Open `http://localhost:8181/ui/` to access the admin UI. Edit channel URLs/topic
 
 | Method | Path | Source |
 |---|---|---|
-| `POST` | `/webhook/<severity>` | Alertmanager / Grafana (commonLabels + alerts[] shape) |
-| `POST` | `/beszel/<severity>` | Beszel UI webhook channel (`{alert, system, value, threshold, status, url}`) |
-| `POST` | `/healthchecks/<severity>` | Healthchecks self-hosted webhook (`{check, status, code, last_ping, tags, url}`) |
-| `POST` | `/wud/<severity>` | WUD (What's Up Docker) HTTP trigger (`{title, body}` simple mode, cascade always on) |
+| `POST` | `/webhook/<severity>` | Alertmanager / Grafana |
+| `POST` | `/beszel/<severity>` | Beszel UI webhook channel |
 
 `<severity>` is one of `info`, `warning`, `critical`.
 
@@ -76,9 +68,9 @@ Open `http://localhost:8181/ui/` to access the admin UI. Edit channel URLs/topic
 | `GET` | `/api/render-config` | `component → [label, url]` mapping |
 | `POST` | `/api/render-config` | Replace mapping (persists to `/data/render-config.json`) |
 | `GET` | `/api/cascade-config` | Cascade tier list + default-enabled flag |
-| `POST` | `/api/cascade-config` | Update tiers (persists to `/data/klaxon.toml`) |
+| `POST` | `/api/cascade-config` | Update tiers (persists to `/data/klaxond.toml`) |
 | `GET` | `/api/channel-config` | ntfy URL + topics, Telegram chat_id, SMTP host/port/from/to. Secrets shown as configured/missing badges only. |
-| `POST` | `/api/channel-config` | Update non-secret channel fields (persists to `/data/klaxon.toml`) |
+| `POST` | `/api/channel-config` | Update non-secret channel fields (persists to `/data/klaxond.toml`) |
 | `POST` | `/api/render-preview` | Body `{severity, payload}` → returns ntfy headers + body without sending |
 | `POST` | `/api/test/<sev>` | Fire a synthetic alert through the cascade |
 | `POST` | `/api/cascade/toggle` | Body `{enabled: bool}` or empty (flip) — runtime override of CASCADE_ENABLED |
@@ -95,7 +87,7 @@ These are **never** written to the TOML file. Mount them via your secrets manage
 | `TELEGRAM_BOT_TOKEN` | Telegram tier (also requires chat_id from TOML or env) |
 | `SMTP_USER`, `SMTP_PASSWORD` | SMTP tier |
 
-### Routing + policy — `klaxon.toml`
+### Routing + policy — `klaxond.toml`
 
 Bootstrapped on first run from the bundled default. Editable on disk or from the admin UI (Routing / Cascade / Render config tabs).
 
@@ -114,11 +106,11 @@ chat_id = "your-chat-id"
 [smtp]
 host = "smtp.example.com"
 port = 587
-from_addr = "klaxon@example.com"
+from_addr = "klaxond@example.com"
 to_addr   = "oncall@example.com"
 
 [cascade]
-default_enabled_for_webhook = false   # /beszel/*, /healthchecks/*, /wud/* always use cascade
+default_enabled_for_webhook = false   # /beszel/* always uses cascade
 
 [[cascade.tiers]]
 name = "ntfy"
@@ -173,12 +165,12 @@ Anything in TOML can be overridden by an env var. Use this only as a migration a
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` / `SMTP_TO` | `[smtp].*` |
 | `GRAFANA_BASE` | `[render].grafana_base` |
 | `CASCADE_ENABLED` | `[cascade].default_enabled_for_webhook` |
-| `KLAXON_CONFIG` | path to klaxon.toml (default `/data/klaxon.toml`) |
+| `KLAXOND_CONFIG` | path to klaxond.toml (default `/data/klaxond.toml`) |
 | `PORT` | listen port (default `8181`) |
 
 ## Inhibition
 
-`klaxon.toml` defines inhibition rules — when a "source" alert is firing, derivative alerts are silently dropped until the source resolves or the TTL expires.
+`klaxond.toml` defines inhibition rules — when a "source" alert is firing, derivative alerts are silently dropped until the source resolves or the TTL expires.
 
 Recognise sources by the `inhibition_source` label on your Grafana alert rules:
 
@@ -186,7 +178,7 @@ Recognise sources by the `inhibition_source` label on your Grafana alert rules:
 # Grafana alert rule example
 labels:
   severity: critical
-  inhibition_source: node-down   # ← Klaxon picks up this label
+  inhibition_source: node-down   # ← Klaxond picks up this label
 ```
 
 Three match modes:
@@ -195,7 +187,98 @@ Three match modes:
 - `match_label + match_regex` — suppress when the target label matches the regex.
 - `match_all: true` — suppress everything except the source itself.
 
-Klaxon's inhibition is a safety net for direct posts. If you're using Alertmanager as the upstream router, configure inhibition rules there too — that's the canonical layer (declarative, UI silences, audit trail).
+Klaxond's inhibition is a safety net for direct posts. If you're using Alertmanager as the upstream router, configure inhibition rules there too — that's the canonical layer (declarative, UI silences, audit trail).
+
+## High availability (optional)
+
+Klaxond is single-process and stateless-ish — most data lives in two files under `/data`. That means HA is a deploy-time decision, not a code change.
+
+**TL;DR**: mount `/data` from shared storage (NFS, Ceph, etc.) and run two containers behind any TCP/HTTP load balancer with a `/healthz` health check.
+
+### Architecture
+
+```
+                  ┌────────────────────────────┐
+                  │ klaxond.example.com         │
+                  │ Traefik / nginx / haproxy  │
+                  │ healthCheck: GET /healthz  │
+                  └─────────┬──────────┬───────┘
+                            │          │
+                  ┌─────────▼──┐  ┌────▼────────┐
+                  │ klaxond #1 │  │ klaxond #2  │
+                  │ host A     │  │ host B      │
+                  └─────────┬──┘  └─┬───────────┘
+                            │       │
+                            └───┬───┘
+                                ▼
+                  ┌──────────────────────────┐
+                  │ shared /data (NFS/etc.)  │
+                  │  ├ klaxond.toml           │
+                  │  └ render-config.json    │
+                  └──────────────────────────┘
+```
+
+### What's safe to share between instances
+
+- **`/data/klaxond.toml`** — TOML config (channels, tiers, render rules, inhibitions). Read on startup + on POST `/api/*-config`. File-locked writes on save.
+- **`/data/render-config.json`** — render overrides edited via UI. Same pattern.
+
+Both files are written atomically (write-temp-then-rename). With NFS v4 sync mode the cross-instance read-after-write is consistent. Don't use SMB — locking semantics are too loose.
+
+### What's in-memory and NOT shared
+
+| State | Where | Impact of split between instances |
+|---|---|---|
+| Inhibition deque (recent alert hashes) | RAM, last ~256 entries per instance | Best-effort dedup. The canonical inhibition layer should be Alertmanager — this is a safety net for direct webhook posts. With 2 instances, occasional duplicate inhibition misses. |
+| Delivery history (UI "Recent deliveries") | RAM, last ~512 entries per instance | UI shows local history only. If you load-balance round-robin, each instance sees ~half the deliveries — neither has the full picture. Live in Loki/Prometheus for canonical history; klaxond's view is an immediate-debugging aid. |
+
+If you want global delivery history, scrape the klaxond logs into Loki (already free since both instances write to stdout) and query there.
+
+### Load balancer config — Traefik example
+
+```yaml
+http:
+  routers:
+    klaxond:
+      rule: "Host(`klaxond.example.com`)"
+      service: klaxond-ha
+      entryPoints: [websecure]
+
+  services:
+    klaxond-ha:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.1:8181"
+          - url: "http://10.0.0.2:8181"
+        healthCheck:
+          path: /healthz
+          interval: 10s
+          timeout: 3s
+          scheme: http
+```
+
+Same pattern with nginx `upstream` or haproxy `backend`. Any TCP/HTTP LB that supports active health checks works.
+
+### Recommended for a homelab: don't enable it
+
+Klaxond is small (~16MB RSS), starts in <1s, and crashes rarely. The realistic "klaxond down" window is upgrades (~10s). For most use cases, single-instance + a meta-alert that probes klaxond's own `/healthz` and posts to ntfy directly **on failure** is a better cost/benefit ratio than HA — see [Self-monitoring](#self-monitoring) below.
+
+### Self-monitoring (klaxond watching itself)
+
+Even with HA, you want a probe that warns when **both** instances are down. The pattern (in any cron/scheduler):
+
+```bash
+# /etc/cron.d/klaxond-self-watch — runs every 5 min
+*/5 * * * * root curl -fsS https://klaxond.example.com/healthz \
+  || curl -fsS -X POST \
+       -H "Authorization: Bearer $NTFY_TOKEN" \
+       -H "Title: klaxond DOWN — pipeline broken" \
+       -H "Priority: urgent" \
+       --data "klaxond /healthz failed at $(date)" \
+       https://ntfy.example.com/<your-topic>
+```
+
+This single push **bypasses klaxond** by design — it's the one alert that has to reach you when klaxond itself is the problem.
 
 ## Project layout
 
@@ -206,7 +289,7 @@ klaxond/
 │   ├── index.html          admin UI (single page)
 │   ├── style.css           dark theme, ~6KB
 │   └── app.js              vanilla JS, fetch + DOM (~400 lines)
-├── klaxon.default.toml     bundled defaults, copied to /data on first run
+├── klaxond.default.toml     bundled defaults, copied to /data on first run
 ├── Dockerfile              builds an image (~50 MB)
 ├── docker-compose.yml      reference standalone deploy
 ├── .env.example            secrets/site-specific env vars
@@ -230,3 +313,8 @@ curl -s -X POST http://127.0.0.1:8181/webhook/info \
 ## License
 
 Apache-2.0 — see [LICENSE](./LICENSE).
+
+---
+> **NB**: la source of truth di klaxond è `infra-ansible/files/klaxond/`
+> (deploy via `deploy-klaxond.yml`, build su mgmt-01). Questo repo è un
+> MIRROR sincronizzato manualmente — riallineato 2026-06-10 (0.9.21 → 0.9.34).

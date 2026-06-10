@@ -20,7 +20,7 @@ COPY app.py /app/app.py
 COPY static/ /app/static/
 COPY klaxond.default.toml /app/klaxond.default.toml
 
-# Persistent state lives here (klaxon.toml + render-config.json + future).
+# Persistent state lives here (klaxond.toml + render-config.json + future).
 VOLUME ["/data"]
 
 EXPOSE 8181

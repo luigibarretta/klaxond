@@ -1,4 +1,37 @@
-# Klaxon — CHANGELOG
+# Klaxond — CHANGELOG
+
+## 0.9.34 — 2026-06-10
+
+- Nuova sorgente `/pve/<severity>`: webhook del notification-system di
+  Proxmox VE (body JSON via helper `{{ json … }}`). Parser dedicato, dedup
+  per `type` (es. N errori vzdump → 1 gruppo), labels per inhibition
+  (host=node, alertname=pve-<type>), cascade sempre on.
+
+## 0.9.33 — 2026-06-07
+
+**Full rename `klaxon` → `klaxond` (product name + runtime identifiers).** Display name unified to "Klaxond" everywhere, plus the load-bearing identifiers:
+
+- Config file `/data/klaxon.toml` → `/data/klaxond.toml`; env var `KLAXON_CONFIG` → `KLAXOND_CONFIG`, `KLAXON_DEFAULT`/`KLAXON_BACKUP_DIR`/`KLAXON_BACKUP_KEEP` likewise.
+- Session cookie `klaxon_session` → `klaxond_session` (existing sessions are invalidated → silent re-login via the 0.9.32 self-healing OIDC callback).
+- Backup files `klaxon-*.toml` → `klaxond-*.toml`.
+- **Migration**: live `/data/klaxon.toml` + backups renamed on deploy. If you run this elsewhere, `mv /data/klaxon.toml /data/klaxond.toml` (and `backups/klaxon-*.toml`) before starting 0.9.33, else the daemon bootstraps a fresh empty config.
+- Fixed `alert-klaxond-down.yml`: recovery action referenced container `klaxon` (never existed; it's `klaxond`) → `docker start/restart/logs` now target `klaxond`.
+
+## 0.9.32 — 2026-06-07
+
+**OIDC callback self-healing.** A long-idle browser tab would land on `/auth/callback` and get a 400 "invalid or expired state" ("sessione scaduta"), dead-ending the user; reloading the root URL then worked. Cause: the session cookie (8h) expires while the tab is idle, and/or a klaxond restart (deploy / WUD auto-update) drops the in-memory `_OIDC_STATE_STORE` (10-min TTL) — so the returning `state` is unknown at callback time.
+
+- `oidc_callback`: unknown/expired `state` now 302-redirects to `/` instead of returning 400. This restarts the Authorization Code flow; with the upstream Authentik SSO session still alive the user is re-logged-in silently. No session is issued on this path, so there is no CSRF exposure in the redirect.
+- Missing `code`/`state` params still return 400 (malformed request ≠ expired flow).
+
+## 0.9.24 — 2026-06-03
+
+**Decypharr endpoint.** Add `/decypharr/` to ingest sources. Decypharr (cy01/blackhole, the qBit-emulation bridge to Real-Debrid) emits per-torrent webhooks (`download_start`, `download_complete`, `download_fail`) via Callback URL configured in Settings → Notifications. Klaxond parses these and routes via standard cascade.
+
+- `parse_decypharr_payload`: maps `status` ("success"/"failure"/"error") → severity (info/warning/critical), formats title with event verb + torrent name, body from payload `message` field (Decypharr pre-formats).
+- Dedup key: `decypharr:<event>:<hash>` — same torrent retry-burst dedupes; different events for same hash get through.
+- Frontend: new sample button in Preview tab, DCY node in Mermaid flow, dedup card with help text.
+- Dispatch: `/decypharr/<severity>` POST endpoint, body status overrides URL path severity (same pattern as Shelfmark Apprise `type` field).
 
 ## 0.9.6 — 2026-06-01
 

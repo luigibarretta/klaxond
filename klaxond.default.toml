@@ -1,5 +1,5 @@
-# klaxon.toml — bootstrap config for Klaxon notification bridge.
-# Loaded at container start from /data/klaxon.toml (or KLAXON_CONFIG path).
+# klaxond.toml — bootstrap config for Klaxond notification bridge.
+# Loaded at container start from /data/klaxond.toml (or KLAXOND_CONFIG path).
 # If the file is missing, the defaults below are written on first run.
 # Env vars (NTFY_TOKEN_*, TELEGRAM_BOT_TOKEN, SMTP_*) override the runtime
 # secrets — they are NOT stored in this file.

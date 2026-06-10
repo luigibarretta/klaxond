@@ -4,7 +4,7 @@ ntfy pushes with proper headers/actions, with optional cascade fallback
 (ntfy → Telegram → mail via Gmail SMTP) when the primary channel fails.
 
 Env:
-  NTFY_URL          base URL  (default empty — set via env or klaxon.toml)
+  NTFY_URL          base URL  (default empty — set via env or klaxond.toml)
   NTFY_TOKEN_INFO   bearer token used for the info topic
   NTFY_TOKEN_WARN   bearer token used for the warning topic
   NTFY_TOKEN_CRIT   bearer token used for the critical topic
@@ -26,6 +26,7 @@ Routes:
   GET  /healthz                  → 200 OK
   POST /webhook/<severity>       → Grafana Alertmanager-shape JSON
   POST /beszel/<severity>        → Beszel webhook JSON
+  POST /pve/<severity>           → Proxmox VE notification webhook JSON
 """
 import base64
 import json
@@ -108,7 +109,7 @@ GRAFANA_BASE = os.environ.get("GRAFANA_BASE", "https://grafana.example.com")
 RENDER_CONFIG_PATH = os.environ.get("RENDER_CONFIG_PATH", "/data/render-config.json")
 _DEFAULT_COMPONENT_DASHBOARDS = {
     # Generic placeholders. Edit via the admin UI (Render config tab) or
-    # in klaxon.toml. Paths starting with / are appended to GRAFANA_BASE.
+    # in klaxond.toml. Paths starting with / are appended to GRAFANA_BASE.
     "host":     ["Logs",         "/d/your-logs-dashboard"],
     "traefik":  ["Traefik",      "/d/your-traefik-dashboard"],
 }
@@ -118,7 +119,7 @@ def _load_render_config(toml_seed: dict = None) -> dict:
     """Read render-config.json from disk; bootstrap with TOML seed if available,
     or in-code defaults otherwise, on first boot.
 
-    `toml_seed` is the [render.component_dashboards] section of klaxon.toml.
+    `toml_seed` is the [render.component_dashboards] section of klaxond.toml.
     Order of bootstrap precedence on first boot (no render-config.json):
       1. TOML seed (if non-empty)         — operator's deploy-time choice
       2. _DEFAULT_COMPONENT_DASHBOARDS    — hard-coded fallback
@@ -183,7 +184,7 @@ COMPONENT_DASHBOARDS = {}  # populated below, right after TOML_CONFIG init
 DEDUP_CONFIG_PATH = os.environ.get("DEDUP_CONFIG_PATH", "/data/dedup-config.json")
 DEDUP_PENDING_DIR = os.environ.get("DEDUP_PENDING_DIR", "/data/dedup_pending")
 
-DEDUP_SOURCES = ("grafana", "beszel", "healthchecks", "wud", "authentik")
+DEDUP_SOURCES = ("grafana", "beszel", "healthchecks", "wud", "authentik", "shelfmark", "prowlarr", "decypharr")
 
 _DEFAULT_DEDUP_SETTINGS = {
     "grafana":      {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
@@ -191,6 +192,9 @@ _DEFAULT_DEDUP_SETTINGS = {
     "healthchecks": {"enabled": False, "window_s": 90, "strategy": "key", "override_critical": False},
     "wud":          {"enabled": True,  "window_s": 90, "strategy": "key", "override_critical": False},
     "authentik":    {"enabled": False, "window_s": 60, "strategy": "key", "override_critical": False},
+    "shelfmark":    {"enabled": True,  "window_s": 120, "strategy": "key", "override_critical": False},
+    "prowlarr":     {"enabled": True,  "window_s": 90,  "strategy": "key", "override_critical": False},
+    "decypharr":    {"enabled": True,  "window_s": 60,  "strategy": "key", "override_critical": False},
 }
 
 
@@ -269,6 +273,11 @@ def _dedup_key(source: str, payload, parts: dict, common_labels: dict) -> str:
                  or (payload.get("check", {}) or {}).get("name") if isinstance(payload, dict) else None
             if ck:
                 return f"hc:{ck}"
+        elif source == "pve":
+            if isinstance(payload, dict):
+                t = payload.get("type") or ""
+                if t:
+                    return f"pve:{t}"
         elif source == "authentik":
             # Group by (action, user) so a burst of logins from same user → 1 notif.
             # Mapping output: data.user + data.event (login/login_failed/...)
@@ -278,6 +287,34 @@ def _dedup_key(source: str, payload, parts: dict, common_labels: dict) -> str:
             action = data.get("event") or data.get("status") or ""
             if user or action:
                 return f"authentik:{action}:{user}"
+        elif source == "shelfmark":
+            # Apprise json:// payload — group by (event_type, book_title) so
+            # the same book retry-burst dedups to 1.
+            if isinstance(payload, dict):
+                t = (payload.get("title") or "").strip()
+                # Event type lives in either explicit field or the title prefix
+                evt = (payload.get("event") or payload.get("type") or "").strip()
+                if t or evt:
+                    return f"shelfmark:{evt}:{t}"
+        elif source == "prowlarr":
+            # Prowlarr webhook — group by eventType (Health, HealthRestored,
+            # ApplicationUpdate, Test) + first 60 chars del message: stesso
+            # health event triggers ripetuti = 1 notif.
+            if isinstance(payload, dict):
+                evt = (payload.get("eventType") or "").strip()
+                msg = ((payload.get("health") or {}).get("message") or
+                       payload.get("message") or "").strip()[:60]
+                if evt:
+                    return f"prowlarr:{evt}:{msg}"
+        elif source == "decypharr":
+            # Decypharr webhook — group by (event, hash). Stesso torrent che
+            # ricicla start/complete è 2 eventi distinti; ma start+start
+            # ripetuto sullo stesso hash (retry RD) = 1 notif.
+            if isinstance(payload, dict):
+                evt = (payload.get("event") or "").strip().lower()
+                h = (payload.get("hash") or "").strip().lower()
+                if evt or h:
+                    return f"decypharr:{evt}:{h}"
     except Exception:
         pass
     return f"{source}:{title_fallback}"
@@ -286,7 +323,13 @@ def _dedup_key(source: str, payload, parts: dict, common_labels: dict) -> str:
 def _render_batch(source: str, severity: str, items: list) -> dict:
     """Render a single aggregated notification from N buffered items."""
     state_emoji = ICONS.get(severity, ICONS["info"])
-    src_label = source.upper() if source == "wud" else source.capitalize()
+    src_label = (
+        source.upper() if source == "wud"
+        else "Shelfmark" if source == "shelfmark"
+        else "Prowlarr"  if source == "prowlarr"
+        else "Decypharr" if source == "decypharr"
+        else source.capitalize()
+    )
     n = len(items)
 
     # Group by key
@@ -514,7 +557,7 @@ except ImportError:
 
 AUTH_CONFIG_PATH = os.environ.get("AUTH_CONFIG_PATH", "/data/auth-config.json")
 AUTH_SESSION_KEY_PATH = os.environ.get("AUTH_SESSION_KEY_PATH", "/data/auth-session.key")
-AUTH_SESSION_COOKIE = "klaxon_session"
+AUTH_SESSION_COOKIE = "klaxond_session"
 
 _DEFAULT_AUTH = {
     "mode": "none",  # none | basic | oidc | trusted-proxy
@@ -653,7 +696,7 @@ class AuthManager:
     Webhook endpoints are always public regardless of mode.
     """
     PUBLIC_PATH_PREFIXES = (
-        "/webhook/", "/beszel/", "/healthchecks/", "/wud/", "/authentik/",
+        "/webhook/", "/beszel/", "/healthchecks/", "/wud/", "/authentik/", "/shelfmark/", "/prowlarr/", "/decypharr/", "/pve/",
         "/healthz", "/metrics",  # Prometheus scrape — no auth (LAN-only firewalled)
         "/api/ack/",             # ack/snooze from ntfy push — JWT-style token is the auth
         "/auth/login", "/auth/callback", "/auth/logout",
@@ -852,8 +895,16 @@ class AuthManager:
             handler.send_response(400); handler.end_headers()
             handler.wfile.write(b"missing code or state"); return
         if state not in _OIDC_STATE_STORE:
-            handler.send_response(400); handler.end_headers()
-            handler.wfile.write(b"invalid or expired state"); return
+            # Unknown/expired state: the login flow was interrupted — the
+            # session cookie expired while the tab sat idle, or klaxond
+            # restarted (deploy / WUD auto-update) and lost the in-memory
+            # _OIDC_STATE_STORE. Don't dead-end on a 400 ("session expired");
+            # restart the flow from /. With the Authentik SSO session still
+            # alive upstream this re-logs the user in silently. No session is
+            # issued at this point, so the redirect carries no CSRF exposure.
+            handler.send_response(302)
+            handler.send_header("Location", "/")
+            handler.end_headers(); return
         _, return_to = _OIDC_STATE_STORE.pop(state)
         try:
             d = _OIDC_CACHE.discovery(issuer)
@@ -945,27 +996,27 @@ AUTH_MANAGER = None  # type: AuthManager
 
 # ============================================================================
 # Bootstrap config (TOML) — cascading rules + render rules + inhibition rules.
-# Loaded from KLAXON_CONFIG (default /data/klaxon.toml). If missing on first
+# Loaded from KLAXOND_CONFIG (default /data/klaxond.toml). If missing on first
 # boot, bootstrapped from the bundled klaxond.default.toml shipped in the
 # image. After bootstrap, the file is read-write and can be edited via UI.
 # ============================================================================
-KLAXON_CONFIG = os.environ.get("KLAXON_CONFIG", "/data/klaxon.toml")
-KLAXON_DEFAULT = "/app/klaxond.default.toml"
+KLAXOND_CONFIG = os.environ.get("KLAXOND_CONFIG", "/data/klaxond.toml")
+KLAXOND_DEFAULT = "/app/klaxond.default.toml"
 
 
 def _bootstrap_config_if_missing():
-    if os.path.exists(KLAXON_CONFIG):
+    if os.path.exists(KLAXOND_CONFIG):
         return
     try:
-        os.makedirs(os.path.dirname(KLAXON_CONFIG), exist_ok=True)
+        os.makedirs(os.path.dirname(KLAXOND_CONFIG), exist_ok=True)
     except Exception:
         pass
-    if os.path.exists(KLAXON_DEFAULT):
+    if os.path.exists(KLAXOND_DEFAULT):
         import shutil
-        shutil.copy(KLAXON_DEFAULT, KLAXON_CONFIG)
-        log.info("klaxon.toml bootstrapped from %s", KLAXON_DEFAULT)
+        shutil.copy(KLAXOND_DEFAULT, KLAXOND_CONFIG)
+        log.info("klaxond.toml bootstrapped from %s", KLAXOND_DEFAULT)
     else:
-        log.warning("klaxon.toml missing and no default at %s — running with hard-coded defaults", KLAXON_DEFAULT)
+        log.warning("klaxond.toml missing and no default at %s — running with hard-coded defaults", KLAXOND_DEFAULT)
 
 
 def _load_toml_config() -> dict:
@@ -974,14 +1025,14 @@ def _load_toml_config() -> dict:
         return {}
     _bootstrap_config_if_missing()
     try:
-        with open(KLAXON_CONFIG, "rb") as f:
+        with open(KLAXOND_CONFIG, "rb") as f:
             cfg = tomllib.load(f)
-        log.info("loaded klaxon.toml from %s", KLAXON_CONFIG)
+        log.info("loaded klaxond.toml from %s", KLAXOND_CONFIG)
         return cfg
     except FileNotFoundError:
         return {}
     except Exception as e:
-        log.error("klaxon.toml parse failed: %s — using hard-coded defaults", e)
+        log.error("klaxond.toml parse failed: %s — using hard-coded defaults", e)
         return {}
 
 
@@ -1107,16 +1158,16 @@ def _save_toml_config(cfg: dict) -> None:
             for k, v in m.items():
                 lines.append(f'match.{k} = "{v}"')
         lines.append("")
-    tmp = KLAXON_CONFIG + ".tmp"
+    tmp = KLAXOND_CONFIG + ".tmp"
     with open(tmp, "w") as f:
         f.write("\n".join(lines))
-    # Auto-backup before replacing — keeps last N copies of klaxon.toml
+    # Auto-backup before replacing — keeps last N copies of klaxond.toml
     # under /data/backups/. Cheap insurance against bad edits.
     try:
         _config_auto_backup()
     except Exception as e:
         log.warning("config auto-backup failed (continuing save anyway): %s", e)
-    os.replace(tmp, KLAXON_CONFIG)
+    os.replace(tmp, KLAXOND_CONFIG)
 
 
 # ----------------------------------------------------------------------------
@@ -1186,29 +1237,29 @@ def _verify_ingest_auth(source: str, headers: dict, query: dict) -> tuple[bool, 
     return False, "secret-required-but-missing-or-mismatch"
 
 
-KLAXON_BACKUP_DIR = os.environ.get("KLAXON_BACKUP_DIR", "/data/backups")
-KLAXON_BACKUP_KEEP = 10
+KLAXOND_BACKUP_DIR = os.environ.get("KLAXOND_BACKUP_DIR", "/data/backups")
+KLAXOND_BACKUP_KEEP = 10
 
 def _config_auto_backup() -> str | None:
-    """Copy current klaxon.toml to /data/backups/klaxon-YYYYMMDD-HHMMSS.toml.
-    Prunes to KLAXON_BACKUP_KEEP newest. Returns the backup path, or None
+    """Copy current klaxond.toml to /data/backups/klaxond-YYYYMMDD-HHMMSS.toml.
+    Prunes to KLAXOND_BACKUP_KEEP newest. Returns the backup path, or None
     if the source doesn't exist yet (first boot, before bootstrap)."""
-    if not os.path.exists(KLAXON_CONFIG):
+    if not os.path.exists(KLAXOND_CONFIG):
         return None
-    os.makedirs(KLAXON_BACKUP_DIR, exist_ok=True)
+    os.makedirs(KLAXOND_BACKUP_DIR, exist_ok=True)
     import shutil, datetime
     stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
-    dest = os.path.join(KLAXON_BACKUP_DIR, f"klaxon-{stamp}.toml")
-    shutil.copy2(KLAXON_CONFIG, dest)
-    # Prune oldest beyond KLAXON_BACKUP_KEEP
+    dest = os.path.join(KLAXOND_BACKUP_DIR, f"klaxond-{stamp}.toml")
+    shutil.copy2(KLAXOND_CONFIG, dest)
+    # Prune oldest beyond KLAXOND_BACKUP_KEEP
     try:
         files = sorted(
-            (f for f in os.listdir(KLAXON_BACKUP_DIR)
-             if f.startswith("klaxon-") and f.endswith(".toml")),
+            (f for f in os.listdir(KLAXOND_BACKUP_DIR)
+             if f.startswith("klaxond-") and f.endswith(".toml")),
             reverse=True
         )
-        for stale in files[KLAXON_BACKUP_KEEP:]:
-            os.unlink(os.path.join(KLAXON_BACKUP_DIR, stale))
+        for stale in files[KLAXOND_BACKUP_KEEP:]:
+            os.unlink(os.path.join(KLAXOND_BACKUP_DIR, stale))
     except Exception as e:
         log.warning("backup prune failed: %s", e)
     return dest
@@ -1217,13 +1268,13 @@ def _config_auto_backup() -> str | None:
 def _list_config_backups() -> list:
     """Return [{name, size, mtime_iso}, …] sorted newest-first."""
     out = []
-    if not os.path.isdir(KLAXON_BACKUP_DIR):
+    if not os.path.isdir(KLAXOND_BACKUP_DIR):
         return out
     import datetime
-    for n in os.listdir(KLAXON_BACKUP_DIR):
-        if not (n.startswith("klaxon-") and n.endswith(".toml")):
+    for n in os.listdir(KLAXOND_BACKUP_DIR):
+        if not (n.startswith("klaxond-") and n.endswith(".toml")):
             continue
-        p = os.path.join(KLAXON_BACKUP_DIR, n)
+        p = os.path.join(KLAXOND_BACKUP_DIR, n)
         try:
             st = os.stat(p)
             out.append({
@@ -1241,7 +1292,7 @@ def _list_config_backups() -> list:
 TOML_CONFIG = _load_toml_config()
 
 # Now that TOML is loaded, bootstrap render-config from [render.component_dashboards]
-# of klaxon.toml on first boot (when /data/render-config.json doesn't exist).
+# of klaxond.toml on first boot (when /data/render-config.json doesn't exist).
 _render_seed = (TOML_CONFIG.get("render", {}) or {}).get("component_dashboards", {}) or {}
 COMPONENT_DASHBOARDS = _load_render_config(toml_seed=_render_seed)
 
@@ -1259,7 +1310,7 @@ AUTH_MANAGER = AuthManager()
 log.info("auth mode = %s", AUTH_CONFIG.get("mode"))
 
 # ============================================================================
-# Apply TOML config overrides (if klaxon.toml provided non-empty sections)
+# Apply TOML config overrides (if klaxond.toml provided non-empty sections)
 # ============================================================================
 def _apply_toml_overrides():
     global PRIORITIES, ICONS, TAG_PREFIXES, COMPONENT_DASHBOARDS, INHIBITION_RULES, GRAFANA_BASE, FALLBACK_RUNBOOKS, SCHEDULES
@@ -1443,7 +1494,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.9.21"
+_KLAXOND_VERSION = "0.9.34"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}
@@ -1754,6 +1805,43 @@ def _normalize_labels(source: str, payload) -> dict:
             host = data.get("host") or data.get("client_ip")
             if host: out["host"] = host
         out["job"] = "authentik"
+        return out
+
+    if source == "shelfmark":
+        if isinstance(payload, dict):
+            evt = payload.get("event") or payload.get("type") or ""
+            out["alertname"] = f"shelfmark-{evt}" if evt else "shelfmark"
+            # Apprise json:// puts requester/user in payload extra fields
+            user = payload.get("user") or (payload.get("data") or {}).get("user")
+            if user: out["host"] = str(user)
+        out["job"] = "shelfmark"
+        return out
+
+    if source == "prowlarr":
+        if isinstance(payload, dict):
+            evt = (payload.get("eventType") or "").strip()
+            out["alertname"] = f"prowlarr-{evt}" if evt else "prowlarr"
+            instance = payload.get("instanceName") or "prowlarr"
+            out["host"] = str(instance)
+        out["job"] = "prowlarr"
+        return out
+
+    if source == "decypharr":
+        if isinstance(payload, dict):
+            evt = (payload.get("event") or "").strip()
+            out["alertname"] = f"decypharr-{evt}" if evt else "decypharr"
+            debrid = payload.get("debrid") or "decypharr"
+            out["host"] = str(debrid)
+        out["job"] = "decypharr"
+        return out
+
+    if source == "pve":
+        if isinstance(payload, dict):
+            out["host"] = str(payload.get("node") or "pve")
+            ntype = str(payload.get("type") or "")
+            out["alertname"] = f"pve-{ntype}" if ntype else "pve-notification"
+            out["service"] = ntype
+        out["job"] = "pve"
         return out
 
     return out
@@ -2113,6 +2201,224 @@ def inhibition_status() -> list:
 
 
 
+# Beszel SQLite — mounted read-only at /beszel_data/data.db (deploy-klaxond.yml).
+# Used to enrich Grafana alert bodies with top container consumers on the
+# affected host (e.g., 'Swap > 80%' → top 3 by RAM).
+BESZEL_DB_PATH = os.environ.get("BESZEL_DB_PATH", "/beszel_data/data.db")
+
+# Regex patterns → enrichment kind. When alertname matches, klaxond queries
+# Beszel and appends top-3 to body. Keep patterns broad: alertname conventions
+# vary (swap-high-host, ram-pressure-host, memory-high, ...).
+# kind values:
+#   mem  → top container by RAM (Beszel container.m field, MB)
+#   cpu  → top container by CPU% (Beszel container.c field)
+#   net  → top container by net throughput (Beszel container.b = [tx,rx])
+#   disk → top filesystem by usage% (Beszel system.efs + main d/du/dp,
+#          host-level — Beszel non traccia disk per-container)
+ENRICHMENT_PATTERNS = [
+    (re.compile(r"(swap|ram|memory).*(high|pressure|exhausted|used|usage|above|averaged|\d+(\.\d+)?\s*%)", re.I), "mem"),
+    (re.compile(r"(cpu|load(avg)?|load[\s_-]aver)", re.I), "cpu"),
+    (re.compile(r"network.*(high|saturation|bandwidth|saturated|\d+(\.\d+)?\s*%)", re.I), "net"),
+    (re.compile(r"(disk|filesystem|fs|root|/pool|/dev/sd).*(full|high|low|usage|above|\d+(\.\d+)?\s*%)", re.I), "disk"),
+    # WAN/internet — culprit di solito su nas-01 (download) ma può essere
+    # chiunque saturi upstream → GLOBAL scan, no host-specific.
+    (re.compile(r"(internet|wan|icmp|blackbox).*(latency|slow|saturat|degrad|p\d+|loss)", re.I), "wan"),
+]
+
+
+def _beszel_open():
+    """Open Beszel DB read-only + immutable (no WAL/SHM access). Returns None if absent."""
+    if not os.path.exists(BESZEL_DB_PATH):
+        return None
+    try:
+        import sqlite3
+        return sqlite3.connect(f"file:{BESZEL_DB_PATH}?mode=ro&immutable=1", uri=True, timeout=2)
+    except Exception as e:
+        log.warning("beszel DB open failed: %s", e)
+        return None
+
+
+def _beszel_system_id(conn, host: str):
+    row = conn.execute(
+        "SELECT id FROM systems WHERE name = ? OR name LIKE ? LIMIT 1",
+        (host, f"%{host}%"),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _beszel_top_containers(host: str, by: str = "mem", n: int = 3):
+    """Top-N containers for given host. `by` ∈ {mem, cpu, net}.
+    Returns list of (name, value, unit). [] if unavailable."""
+    if not host:
+        return []
+    conn = _beszel_open()
+    if conn is None:
+        return []
+    try:
+        system_id = _beszel_system_id(conn, host)
+        if not system_id:
+            return []
+        row = conn.execute(
+            "SELECT stats FROM container_stats WHERE system = ? "
+            "ORDER BY created DESC LIMIT 1",
+            (system_id,),
+        ).fetchone()
+        if not row:
+            return []
+        stats = json.loads(row[0])
+        if by == "net":
+            # b = [tx_bytes_per_s, rx_bytes_per_s]; usiamo sum come throughput
+            def netval(s):
+                b = s.get("b") or [0, 0]
+                return (b[0] if len(b) > 0 else 0) + (b[1] if len(b) > 1 else 0)
+            ranked = sorted(stats, key=netval, reverse=True)[:n]
+            # Bytes/s → kB/s formatting
+            return [(s.get("n", "?"), netval(s) / 1024, "kB/s") for s in ranked]
+        else:
+            key = "m" if by == "mem" else "c"
+            unit = "MB" if by == "mem" else "%"
+            ranked = sorted(stats, key=lambda x: x.get(key, 0), reverse=True)[:n]
+            return [(s.get("n", "?"), s.get(key, 0), unit) for s in ranked]
+    except Exception as e:
+        log.warning("beszel container enrichment failed: %s", e)
+        return []
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+def _beszel_top_containers_global(by: str = "net", n: int = 5):
+    """Scan ALL Beszel-monitored systems, rank containers globally.
+    Used for WAN alerts where culprit can be on any host (typically the
+    big downloader, like nas-01 with Decypharr/RD streams).
+    Returns list of (host, name, value, unit)."""
+    conn = _beszel_open()
+    if conn is None:
+        return []
+    try:
+        systems = {r[0]: r[1] for r in conn.execute("SELECT id, name FROM systems").fetchall()}
+        if not systems:
+            return []
+        all_items = []
+        for sys_id, host_name in systems.items():
+            row = conn.execute(
+                "SELECT stats FROM container_stats WHERE system = ? "
+                "ORDER BY created DESC LIMIT 1",
+                (sys_id,),
+            ).fetchone()
+            if not row:
+                continue
+            stats = json.loads(row[0])
+            if by == "net":
+                def netval(s):
+                    b = s.get("b") or [0, 0]
+                    return (b[0] if len(b) > 0 else 0) + (b[1] if len(b) > 1 else 0)
+                for s in stats:
+                    all_items.append((host_name, s.get("n","?"), netval(s) / 1024, "kB/s"))
+            else:
+                key = "m" if by == "mem" else "c"
+                unit = "MB" if by == "mem" else "%"
+                for s in stats:
+                    all_items.append((host_name, s.get("n","?"), s.get(key, 0), unit))
+        all_items.sort(key=lambda x: x[2], reverse=True)
+        return all_items[:n]
+    except Exception as e:
+        log.warning("beszel global enrichment failed: %s", e)
+        return []
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+def _beszel_top_filesystems(host: str, n: int = 5):
+    """Top-N filesystems on host by usage%. Beszel non traccia disk
+    per-container, quindi mostriamo host-level fs breakdown.
+    Returns list of (mount_name, used_gb, total_gb, used_pct, '')."""
+    if not host:
+        return []
+    conn = _beszel_open()
+    if conn is None:
+        return []
+    try:
+        system_id = _beszel_system_id(conn, host)
+        if not system_id:
+            return []
+        row = conn.execute(
+            "SELECT stats FROM system_stats WHERE system = ? "
+            "ORDER BY created DESC LIMIT 1",
+            (system_id,),
+        ).fetchone()
+        if not row:
+            return []
+        stats = json.loads(row[0])
+        items = []
+        # Main disk (top-level d/du/dp)
+        if stats.get("d") and stats.get("du") is not None:
+            d, du = stats["d"], stats["du"]
+            dp = stats.get("dp") or (du / d * 100 if d > 0 else 0)
+            items.append(("root", du, d, dp))
+        # Extra filesystems
+        efs = stats.get("efs") or {}
+        for name, fs in efs.items():
+            d, du = fs.get("d", 0), fs.get("du", 0)
+            dp = (du / d * 100) if d > 0 else 0
+            items.append((name, du, d, dp))
+        # Sort by usage % desc
+        items.sort(key=lambda x: x[3], reverse=True)
+        return [(name, used, total, pct, "") for name, used, total, pct in items[:n]]
+    except Exception as e:
+        log.warning("beszel filesystem enrichment failed: %s", e)
+        return []
+    finally:
+        try: conn.close()
+        except Exception: pass
+
+
+def _enrich_grafana_body(alertname: str, host: str, body: str = "") -> str:
+    """Return extra body text to append to alert, or empty string.
+    Match attempt:
+      1. alertname against ENRICHMENT_PATTERNS
+      2. body text against same patterns (catches OMV/proxy alerts where
+         alertname è generico tipo "OMV system mail (nas-01)" e il vero
+         signal "CPU averaged 80%" è nel body)
+    """
+    haystack = (alertname or "") + " " + (body or "")
+    for pattern, kind in ENRICHMENT_PATTERNS:
+        if pattern.search(haystack):
+            if kind == "wan":
+                # WAN alert: scan global cluster, mostra top 5 culprits
+                items = _beszel_top_containers_global(by="net", n=5)
+                if not items:
+                    return ""
+                lines = ["\nTop network consumers (cluster-wide):"]
+                for h, name, val, unit in items:
+                    h_short = h.replace("it1-prd-", "")
+                    lines.append(f"  • {name:20s} @ {h_short:8s} {val:>7.1f}{unit}")
+                return "\n".join(lines)
+            # Other kinds need host
+            if not host:
+                return ""
+            if kind == "disk":
+                items = _beszel_top_filesystems(host, n=5)
+                if not items:
+                    return ""
+                lines = [f"\nFilesystem usage ({host}):"]
+                for name, used, total, pct, _ in items:
+                    lines.append(f"  • {name:15s} {used:>7.1f}G / {total:>7.1f}G  ({pct:>5.1f}%)")
+                return "\n".join(lines)
+            else:
+                top = _beszel_top_containers(host, by=kind, n=3)
+                if not top:
+                    return ""
+                labels = {"mem": "RAM", "cpu": "CPU", "net": "network"}
+                label = labels.get(kind, kind.upper())
+                lines = [f"\nTop {label} consumers ({host}):"]
+                for name, val, unit in top:
+                    lines.append(f"  • {name:25s} {val:>7.1f}{unit}")
+                return "\n".join(lines)
+    return ""
+
+
 def parse_grafana_payload(payload: dict, severity: str) -> dict:
     """Return {title, body, tags, actions, priority} from a Grafana
     Alertmanager-style webhook body."""
@@ -2124,6 +2430,17 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
     alertname = common_labels.get("alertname", "Grafana alert")
     component = common_labels.get("component", "")
     host      = common_labels.get("host") or common_labels.get("instance") or ""
+    # Fallback host extraction se labels mancanti (es. OMV proxy alerts):
+    # cerca pattern "nas-01" / "it1-prd-X" in component, alertname, summary.
+    if not host:
+        if re.match(r"^(it1-prd-)?[a-z]+-\d+$", component):
+            host = component if component.startswith("it1-prd-") else f"it1-prd-{component}"
+    if not host:
+        summary = (payload.get("commonAnnotations") or {}).get("summary") or ""
+        m = re.search(r"\b(it1-prd-[a-z]+-\d+|[a-z]+-\d+)\b", alertname + " " + summary)
+        if m:
+            h = m.group(1)
+            host = h if h.startswith("it1-prd-") else f"it1-prd-{h}"
 
     state_emoji = ICONS["resolved"] if status == "resolved" else ICONS.get(severity, ICONS["info"])
     # Source prefix for consistency with Beszel/HC/WUD/Authentik titles
@@ -2152,6 +2469,14 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
     if len(affected) > 1 or (affected and affected[0] != host):
         body_parts.append(f"Affected: {', '.join(affected)}")
     body = "\n".join(body_parts) or "(no body)"
+
+    # Enrichment: per alert mem/cpu/net/disk → query Beszel SQLite per top
+    # consumers su host. Match su alertname + body (cattura anche OMV
+    # system mail e altri proxied dove signal è nel body, non in alertname).
+    if status != "resolved":
+        enrichment = _enrich_grafana_body(alertname, host, body)
+        if enrichment:
+            body += enrichment
 
     # Always include an explicit "grafana" source tag (0.9.21+ uniformity
     # audit fix) — Beszel/HC/WUD/Authentik already do this; previously only
@@ -2296,6 +2621,51 @@ def parse_healthchecks_payload(payload: dict, severity: str) -> dict:
     return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority,
             "_alertname": check, "_skip_snooze": is_resolved}
 
+
+
+def parse_pve_payload(payload: dict, severity: str) -> dict:
+    """Proxmox VE notification-system webhook target (PVE 8.3+/9).
+
+    Il target webhook su pve POSTa un JSON minimale costruito col helper
+    handlebars {{ json … }} (escaping sicuro di quote/newline):
+       { "title": "...", "message": "...", "severity": "...",
+         "node": "...", "type": "vzdump" }
+    La severity nel body è quella pve (info|notice|warning|error|unknown);
+    quella che guida i topic klaxond è il path (/pve/<sev>) — il mapping lo
+    decidono i matcher su pve (warning→warning, error+unknown→critical).
+    """
+    if not isinstance(payload, dict):
+        payload = {}
+    title_raw = str(payload.get("title") or "Proxmox notification").strip()
+    message = str(payload.get("message") or "").strip()
+    node = str(payload.get("node") or "pve").strip() or "pve"
+    pve_sev = str(payload.get("severity") or "").lower()
+    ntype = str(payload.get("type") or "").strip()
+
+    emoji = ICONS.get(severity, ICONS["info"])
+    title = f"{emoji} PVE {node}: {title_raw}"
+
+    body_parts = []
+    if ntype:
+        body_parts.append(f"Type: {ntype}")
+    if pve_sev and pve_sev != severity:
+        body_parts.append(f"PVE severity: {pve_sev}")
+    if message:
+        # i messaggi vzdump di errore possono essere lunghi — tronca, il
+        # dettaglio completo sta nel task log di pve
+        body_parts.append(message if len(message) <= 1500 else message[:1500] + " …[troncato]")
+    body = "\n".join(body_parts) or title_raw
+
+    tags = [TAG_PREFIXES.get(severity, "bell"), severity, "pve"]
+    actions = []
+    rb = FALLBACK_RUNBOOKS.get("pve") or ""
+    if rb:
+        actions.append(("view", "📖 Runbook", rb))
+    actions.append(("view", "🖥 Open Proxmox", "https://proxmox.luigibarretta.com/"))
+
+    return {"title": title, "body": body, "tags": tags, "actions": actions,
+            "priority": PRIORITIES.get(severity, "default"),
+            "_alertname": f"pve-{ntype}" if ntype else "pve-notification"}
 
 
 def parse_wud_payload(payload, severity: str) -> dict:
@@ -2452,6 +2822,213 @@ def parse_authentik_payload(payload: dict, severity: str) -> dict:
             # Authentik events (login successes/failures, MFA enrol, etc.) are
             # discrete identity events, not recurring alarms. A snooze button
             # would be semantically odd.
+            "_skip_snooze": True}
+
+
+def parse_prowlarr_payload(payload: dict, severity: str) -> dict:
+    """Prowlarr webhook payload.
+
+    *arr family (Prowlarr/Sonarr/Radarr/Readarr) usano webhook format custom
+    Servarr. Eventi tipici:
+      - Test                  → {eventType:"Test", instanceName:"Prowlarr"}
+      - Health                → {eventType:"Health", health:{type, message, wikiUrl}}
+      - HealthRestored        → {eventType:"HealthRestored", health:{...}}
+      - ApplicationUpdate     → {eventType:"ApplicationUpdate", previousVersion, newVersion}
+
+    Severity mapping:
+      Test, HealthRestored, ApplicationUpdate → info
+      Health(type=warning)                    → warning
+      Health(type=error)                      → critical
+    URL path severity è il fallback se nessun match.
+    """
+    evt = (payload.get("eventType") or "Unknown").strip()
+    instance = payload.get("instanceName") or "Prowlarr"
+    app_url = payload.get("applicationUrl") or "https://prowlarr.luigibarretta.com"
+
+    # Prowlarr payload shape varia: a volte i Health field sono nested in
+    # `health: {type, message, wikiUrl}`, a volte direttamente top-level
+    # (`type`, `message`, `wikiUrl` su payload root). Cerchiamo entrambi.
+    health = payload.get("health") or {}
+    health_type = (
+        health.get("type") or payload.get("type") or payload.get("level") or ""
+    ).strip().lower()
+    health_message = health.get("message") or payload.get("message") or ""
+    health_wiki    = health.get("wikiUrl") or payload.get("wikiUrl") or ""
+
+    if evt == "Health":
+        if health_type == "warning":
+            severity = "warning"
+        elif health_type in ("error", "critical"):
+            severity = "critical"
+    elif evt in ("HealthRestored", "Test", "ApplicationUpdate"):
+        severity = "info"
+
+    # Build title and body based on event type
+    state_emoji = ICONS.get(severity, ICONS["info"])
+    if evt == "Health":
+        title_raw = "Health issue"
+        body_raw = health_message or "Unknown health issue"
+        wiki = health_wiki
+    elif evt == "HealthRestored":
+        title_raw = "Health restored"
+        body_raw = health_message or "All health issues resolved"
+        wiki = ""
+    elif evt == "ApplicationUpdate":
+        prev = payload.get("previousVersion") or "?"
+        new  = payload.get("newVersion") or "?"
+        title_raw = "Application updated"
+        body_raw  = f"{instance} {prev} → {new}"
+        wiki = ""
+    elif evt == "Test":
+        title_raw = "Test notification"
+        body_raw  = "Klaxond webhook test successful"
+        wiki = ""
+    else:
+        title_raw = evt
+        body_raw  = str(payload.get("message") or "")
+        wiki = ""
+
+    title = f"{state_emoji} Prowlarr: {title_raw}"
+
+    tags = [TAG_PREFIXES.get(severity, "bell"), severity, "prowlarr"]
+    if evt == "Health":          tags.append("health")
+    elif evt == "ApplicationUpdate": tags.append("update")
+    elif evt == "Test":          tags.append("test")
+
+    actions = [("view", "Open Prowlarr", app_url)]
+    if wiki:
+        actions.append(("view", "Wiki", wiki))
+
+    priority = PRIORITIES.get(severity, "default")
+
+    return {"title": title, "body": body_raw, "tags": tags,
+            "actions": actions, "priority": priority,
+            # Prowlarr events sono health/update discrete, no recurrence → no snooze
+            "_skip_snooze": True}
+
+
+def parse_shelfmark_payload(payload: dict, severity: str) -> dict:
+    """Shelfmark notification webhook payload (Apprise json:// shape).
+
+    Shelfmark uses Apprise for notifications. The json:// scheme sends:
+      {
+        "version": "1.0",
+        "title": "Subject line",
+        "message": "Body text",
+        "type": "info" | "success" | "warning" | "failure"
+      }
+    Optionally Shelfmark may add 'event', 'user', 'book_title' depending on
+    Custom Payload settings in UI.
+
+    Severity preference: body.type → URL path severity (last fallback).
+    Mapping:
+        info     → info
+        success  → info
+        warning  → warning
+        failure  → critical
+    """
+    # Severity override from Apprise 'type' field
+    body_type = (payload.get("type") if isinstance(payload, dict) else None)
+    if body_type:
+        type_to_sev = {"info": "info", "success": "info",
+                       "warning": "warning", "failure": "critical"}
+        mapped = type_to_sev.get(str(body_type).lower())
+        if mapped and mapped in _all_known_severities():
+            severity = mapped
+
+    title_raw = str(payload.get("title") or "Shelfmark notification")
+    body_raw  = str(payload.get("message") or "")
+
+    state_emoji = ICONS.get(severity, ICONS["info"])
+    title = f"{state_emoji} Shelfmark: {title_raw}"
+
+    # Tags
+    tags = [TAG_PREFIXES.get(severity, "bell"), severity, "shelfmark", "book"]
+    sev_tag = TAG_PREFIXES.get(severity)
+    if sev_tag and sev_tag not in tags:
+        tags.insert(0, sev_tag)
+
+    # Actions: deep-link a Shelfmark UI if possible
+    actions = [("view", "Open Shelfmark", "https://bookdl.luigibarretta.com")]
+
+    priority = PRIORITIES.get(severity, "default")
+
+    return {"title": title, "body": body_raw, "tags": tags,
+            "actions": actions, "priority": priority,
+            # Shelfmark events (download done/failed, request approved) are
+            # discrete file-level events — no ricorrenza periodica → no snooze.
+            "_skip_snooze": True}
+
+
+def parse_decypharr_payload(payload: dict, severity: str) -> dict:
+    """Decypharr (cy01/blackhole) webhook payload.
+
+    Schema osservato (Callback URL → JSON POST):
+      {
+        "hash": "<infohash>",
+        "name": "<torrent name>",
+        "status": "success" | "failure" | "error",
+        "event": "download_start" | "download_complete" | "download_fail",
+        "debrid": "realdebrid" | "alldebrid" | ...,
+        "content_path": "/downloads/...",
+        "message": "<human readable>"
+      }
+
+    Severity mapping (status field has priority over URL path):
+      success → info
+      failure → warning
+      error   → critical
+    """
+    if not isinstance(payload, dict):
+        payload = {}
+
+    status = str(payload.get("status") or "").strip().lower()
+    status_to_sev = {"success": "info", "failure": "warning", "error": "critical"}
+    mapped = status_to_sev.get(status)
+    if mapped and mapped in _all_known_severities():
+        severity = mapped
+
+    event = str(payload.get("event") or "").strip().lower()
+    name = str(payload.get("name") or "<unknown>").strip() or "<unknown>"
+    debrid = str(payload.get("debrid") or "").strip()
+    content_path = str(payload.get("content_path") or "").strip()
+    msg = str(payload.get("message") or "").strip()
+
+    event_human = {
+        "download_start":    "Download started",
+        "download_complete": "Download completed",
+        "download_fail":     "Download failed",
+        "download_failed":   "Download failed",
+        "download_error":    "Download error",
+    }.get(event, event.replace("_", " ").capitalize() if event else "Event")
+
+    state_emoji = ICONS.get(severity, ICONS["info"])
+    title_raw = f"{event_human}: {name}"
+    title = f"{state_emoji} Decypharr: {title_raw}"
+
+    if msg:
+        body = msg
+    else:
+        bp = [f"{event_human}: {name}"]
+        if content_path:
+            bp.append(f"-> {content_path}")
+        body = "\n".join(bp)
+    if debrid and debrid.lower() not in body.lower():
+        body = f"{body}\n[backend: {debrid}]"
+
+    tags = [TAG_PREFIXES.get(severity, "bell"), severity, "decypharr", "download"]
+    sev_tag = TAG_PREFIXES.get(severity)
+    if sev_tag and sev_tag not in tags:
+        tags.insert(0, sev_tag)
+
+    actions = [("view", "Open Decypharr", "https://decypharr.luigibarretta.com")]
+
+    priority = PRIORITIES.get(severity, "default")
+
+    return {"title": title, "body": body, "tags": tags,
+            "actions": actions, "priority": priority,
+            # Decypharr per-torrent events (start/complete/fail) sono discreti
+            # file-level — no ricorrenza periodica → no snooze.
             "_skip_snooze": True}
 
 
@@ -2804,25 +3381,25 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/inhibitions" or self.path == "/api/inhibitions":
             self._send_json(inhibition_status())
         elif self.path == "/api/config/backup":
-            # Stream the current klaxon.toml as attachment for manual backup.
+            # Stream the current klaxond.toml as attachment for manual backup.
             try:
-                with open(KLAXON_CONFIG, "rb") as f: body = f.read()
+                with open(KLAXOND_CONFIG, "rb") as f: body = f.read()
                 import datetime
                 stamp = datetime.datetime.utcnow().strftime("%Y%m%d-%H%M%S")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/toml")
-                self.send_header("Content-Disposition", f'attachment; filename="klaxon-{stamp}.toml"')
+                self.send_header("Content-Disposition", f'attachment; filename="klaxond-{stamp}.toml"')
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers(); self.wfile.write(body)
             except FileNotFoundError:
                 self.send_response(404); self.end_headers()
-                self.wfile.write(b"klaxon.toml not found")
+                self.wfile.write(b"klaxond.toml not found")
         elif self.path == "/api/config/backups":
             # List existing on-disk auto-backups (sorted newest-first).
             self._send_json({
                 "backups": _list_config_backups(),
-                "keep_max": KLAXON_BACKUP_KEEP,
-                "dir": KLAXON_BACKUP_DIR,
+                "keep_max": KLAXOND_BACKUP_KEEP,
+                "dir": KLAXOND_BACKUP_DIR,
             })
         elif self.path == "/api/ingest-auth":
             # Per-source secret status (configured / unset / from env-or-toml).
@@ -3083,6 +3660,14 @@ class Handler(BaseHTTPRequestHandler):
             source = "wud"
         elif url_path.startswith("/authentik/"):
             source = "authentik"
+        elif url_path.startswith("/shelfmark/"):
+            source = "shelfmark"
+        elif url_path.startswith("/prowlarr/"):
+            source = "prowlarr"
+        elif url_path.startswith("/decypharr/"):
+            source = "decypharr"
+        elif url_path.startswith("/pve/"):
+            source = "pve"
         else:
             self.send_response(404); self.end_headers(); return
 
@@ -3164,17 +3749,61 @@ class Handler(BaseHTTPRequestHandler):
             # so the missing-ping signal reaches us via tier-2/3 if ntfy
             # fails. (HC itself has retry but not multi-channel-with-fallback.)
             with_cascade = True
+        elif source == "pve":
+            parts = parse_pve_payload(payload, severity)
+            # Il notification-system di pve logga gli errori di consegna ma
+            # non ha fallback multi-canale → cascade sempre on.
+            with_cascade = True
         elif source == "wud":
             parts = parse_wud_payload(payload, severity)
             # WUD HTTP trigger has no retry/multi-channel native, cascade always on
             with_cascade = True
-        else:  # source == "authentik"
+        elif source == "authentik":
             parts = parse_authentik_payload(payload, severity)
             # parse_authentik_payload may override severity from body.data.severity
             # → recompute it so cascade + dedup see the corrected value
             body_sev = ((payload.get("data") or {}).get("severity") or "").strip().lower()
             if body_sev and body_sev in _all_known_severities():
                 severity = body_sev
+            with_cascade = True
+        elif source == "shelfmark":
+            parts = parse_shelfmark_payload(payload, severity)
+            # parse_shelfmark_payload may override severity from body.type
+            # (Apprise "type": success|info|warning|failure)
+            body_type = str(payload.get("type", "")).lower() if isinstance(payload, dict) else ""
+            type_to_sev = {"info": "info", "success": "info",
+                           "warning": "warning", "failure": "critical"}
+            mapped = type_to_sev.get(body_type)
+            if mapped and mapped in _all_known_severities():
+                severity = mapped
+            # Shelfmark sends webhook synchronously durante download/request
+            # processing — no native retry, cascade always on per consegna.
+            with_cascade = True
+        elif source == "prowlarr":
+            parts = parse_prowlarr_payload(payload, severity)
+            # parse_prowlarr_payload may override severity based on eventType
+            # (Health.type → warning/critical; Test/HealthRestored/AppUpdate → info)
+            evt = (payload.get("eventType") or "").strip() if isinstance(payload, dict) else ""
+            ht  = ((payload.get("health") or {}).get("type") or "").strip().lower() if isinstance(payload, dict) else ""
+            if evt == "Health":
+                if ht == "warning": severity = "warning"
+                elif ht in ("error","critical"): severity = "critical"
+            elif evt in ("HealthRestored","Test","ApplicationUpdate"):
+                severity = "info"
+            # Prowlarr webhook ha retry minimal nativo, cascade attiva per
+            # garantire consegna anche se ntfy giù.
+            with_cascade = True
+        else:  # source == "decypharr"
+            parts = parse_decypharr_payload(payload, severity)
+            # parse_decypharr_payload may override severity from body.status
+            # (success → info, failure → warning, error → critical)
+            body_status = str(payload.get("status", "")).lower() if isinstance(payload, dict) else ""
+            status_to_sev = {"success": "info", "failure": "warning", "error": "critical"}
+            mapped = status_to_sev.get(body_status)
+            if mapped and mapped in _all_known_severities():
+                severity = mapped
+            # Decypharr webhook is fire-and-forget, no native retry → cascade
+            # always on per garantire consegna anche se ntfy giù.
             with_cascade = True
 
         log.info("[%s/%s%s] %s", source, severity, " DRY-RUN" if dry_run else "", parts["title"])
@@ -3743,7 +4372,7 @@ class Handler(BaseHTTPRequestHandler):
           - generate → server picks a random 32-byte hex; returns it ONCE
           - clear   → removes secret (returns to legacy permissive mode for that source)
 
-        Persisted to klaxon.toml [ingest.secrets]. Env-set secrets are
+        Persisted to klaxond.toml [ingest.secrets]. Env-set secrets are
         unaffected (env wins; the UI shows the source as 'env').
         """
         global TOML_CONFIG
@@ -3884,7 +4513,7 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "count": len(cleaned_internal)})
 
     def _handle_config_restore(self):
-        """Accept a full klaxon.toml body and atomically replace the current one.
+        """Accept a full klaxond.toml body and atomically replace the current one.
         Validation: parseable as TOML + must contain at least a [cascade] or
         [delivery] section (sanity check — empty configs aren't useful).
         Auto-backup of the current file happens BEFORE write via the regular
@@ -3917,10 +4546,10 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             log.warning("pre-restore backup failed (continuing anyway): %s", e)
             backup = None
-        tmp = KLAXON_CONFIG + ".restore.tmp"
+        tmp = KLAXOND_CONFIG + ".restore.tmp"
         try:
             with open(tmp, "wb") as f: f.write(raw)
-            os.replace(tmp, KLAXON_CONFIG)
+            os.replace(tmp, KLAXOND_CONFIG)
         except Exception as e:
             if os.path.exists(tmp):
                 try: os.unlink(tmp)
@@ -4064,7 +4693,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(str(e).encode())
 
     def _handle_channel_config_update(self):
-        """Update non-secret channel fields in klaxon.toml. Tokens/passwords
+        """Update non-secret channel fields in klaxond.toml. Tokens/passwords
         are env-only and NOT touched here."""
         global TOML_CONFIG
         length = int(self.headers.get("Content-Length", "0"))

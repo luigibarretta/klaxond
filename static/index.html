@@ -89,7 +89,7 @@
     <button id="btn-cascade-toggle">Toggle runtime cascade</button>
   </div>
 
-  <h2>Config backup <small class="muted">(<code>klaxon.toml</code>)</small></h2>
+  <h2>Config backup <small class="muted">(<code>klaxond.toml</code>)</small></h2>
   <div class="card">
     <p class="muted">Download the current config or restore from a previous TOML. Klaxond also auto-saves a snapshot under <code id="cfg-backup-dir">/data/backups/</code> before every config write (keeps newest <code id="cfg-backup-keep">10</code>).</p>
     <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap;">
@@ -128,7 +128,7 @@
   <div class="card">
     <h3 style="margin-top:0">Legend</h3>
     <ul class="muted" style="margin:0; padding-left:1.5em; line-height:1.7">
-      <li><b style="color:#5b8def">Blue nodes</b> = emitters (POST /webhook/, /beszel/, /healthchecks/, /wud/)</li>
+      <li><b style="color:#5b8def">Blue nodes</b> = emitters (POST /webhook/, /beszel/, /healthchecks/, /wud/, /authentik/, /shelfmark/, /prowlarr/)</li>
       <li><b style="color:#9b6bff">Purple nodes</b> = klaxond internal stages (inhibition, dedup buffer, render, cascade)</li>
       <li><b style="color:#48bb78">Green nodes</b> = delivery channels (ntfy, telegram, smtp)</li>
       <li><b>Solid arrows</b> = primary path · <b>Dashed arrows</b> = fallback on failure</li>
@@ -138,7 +138,7 @@
 </section>
 
 <section id="tab-inhibitions" class="tabpane">
-  <h2>Inhibition rules <small class="muted">(persisted to <code>klaxon.toml</code>)</small></h2>
+  <h2>Inhibition rules <small class="muted">(persisted to <code>klaxond.toml</code>)</small></h2>
   <p class="muted">
     Source-agnostic (0.9.6+): rules apply to all 5 emitters by default. Restrict scope by selecting one or more sources under <b>Applies to</b> (empty = all). Match type is exclusive — pick one:
     <code>match_by</code> (equality on one label vs. source anchor),
@@ -183,6 +183,8 @@
           <option value="healthchecks">healthchecks</option>
           <option value="wud">wud</option>
           <option value="authentik">authentik</option>
+          <option value="shelfmark">shelfmark</option>
+          <option value="prowlarr">prowlarr</option>
         </select>
       </label>
       <label>Labels (one per line, <code>label=value</code>)
@@ -294,6 +296,9 @@
       <button id="btn-load-beszel-sample">Load Beszel sample</button>
       <button id="btn-load-healthchecks-sample">Load Healthchecks sample</button>
       <button id="btn-load-wud-sample">Load WUD sample</button>
+      <button id="btn-load-shelfmark-sample">Load Shelfmark sample</button>
+      <button id="btn-load-prowlarr-sample">Load Prowlarr sample</button>
+      <button id="btn-load-decypharr-sample">Load Decypharr sample</button>
     </div>
     <div>
       <label>Visual preview</label>
@@ -315,7 +320,7 @@
 
 <section id="tab-routing" class="tabpane">
   <h2>Channel routing</h2>
-  <p class="muted">Non-secret routing config (URLs, topic ids, host:port). Saved to <code>/data/klaxon.toml</code>. Secrets (Bearer tokens, bot tokens, SMTP password) stay in env vars from the Ansible vault and are NOT editable here.</p>
+  <p class="muted">Non-secret routing config (URLs, topic ids, host:port). Saved to <code>/data/klaxond.toml</code>. Secrets (Bearer tokens, bot tokens, SMTP password) stay in env vars from the Ansible vault and are NOT editable here.</p>
 
   <h3 style="margin-top:18px">ntfy</h3>
   <div class="card">
@@ -387,7 +392,7 @@
 
 <section id="tab-cascade" class="tabpane">
   <h2>Cascade tier chain</h2>
-  <p class="muted">Order matters: first tier is always tried; subsequent tiers are tried only if cascade is enabled (always on for <code>/beszel/*</code>, gated for <code>/webhook/*</code>). Drag rows to reorder, edit timeouts. Persisted to <code>/data/klaxon.toml</code>.</p>
+  <p class="muted">Order matters: first tier is always tried; subsequent tiers are tried only if cascade is enabled (always on for <code>/beszel/*</code>, gated for <code>/webhook/*</code>). Drag rows to reorder, edit timeouts. Persisted to <code>/data/klaxond.toml</code>.</p>
   <table id="t-cas">
     <thead><tr><th>#</th><th>Channel</th><th>Timeout (s)</th><th></th></tr></thead>
     <tbody></tbody>
@@ -402,7 +407,7 @@
 
 <section id="tab-delivery" class="tabpane">
   <h2>Delivery — policies + rules</h2>
-  <p class="muted">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>cascade</code> is the synthetic policy built from the global <code>[cascade]</code> tier list in <code>klaxon.toml</code> — picked here by name.</p>
+  <p class="muted">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>cascade</code> is the synthetic policy built from the global <code>[cascade]</code> tier list in <code>klaxond.toml</code> — picked here by name.</p>
 
   <h3 style="margin-top:18px">Default policy (no-match fallback)</h3>
   <div class="card">
