@@ -315,6 +315,9 @@ curl -s -X POST http://127.0.0.1:8181/webhook/info \
 Apache-2.0 — see [LICENSE](./LICENSE).
 
 ---
-> **NB**: la source of truth di klaxond è `infra-ansible/files/klaxond/`
-> (deploy via `deploy-klaxond.yml`, build su mgmt-01). Questo repo è un
-> MIRROR sincronizzato manualmente — riallineato 2026-06-10 (0.9.21 → 0.9.34).
+> **Questo repo È la source of truth di klaxond** (progetto personale,
+> 2026-06-10: invertito il modello — prima il sorgente viveva in
+> infra-ansible/files/klaxond). Il deploy (`infra-ansible/playbooks/deploy-klaxond.yml`)
+> clona QUESTO repo al tag pinnato e builda su mgmt-01.
+> Flusso release: commit qui → tag vX.Y.Z → bump `klaxon_image_tag` nel
+> playbook → deploy.
