@@ -46,6 +46,21 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+      # Release automatica (2026-06-12): sui TAG vX.Y.Z la CI lancia il deploy
+      # via Semaphore (template 101 = deploy-klaxond.yml di infra-ansible)
+      # passando il tag come extra-vars -> sovrascrive klaxond_image_tag in
+      # ENTRAMBI i play + compose (immagine templata). Niente piu' bump
+      # manuale per deployare; i default nel playbook restano per i run manuali.
+      - name: Auto-deploy release via Semaphore (tag only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.SEMAPHORE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"template_id\": 101, \"environment\": \"{\\\"klaxond_image_tag\\\": \\\"${VERSION}\\\"}\"}" \
+            http://192.168.50.150:4000/api/project/1/tasks
+
       - name: Image summary
         run: |
           echo "Built tags:"
