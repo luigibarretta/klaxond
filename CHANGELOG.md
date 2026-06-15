@@ -1,5 +1,17 @@
 # Klaxond — CHANGELOG
 
+## 0.10.0 — 2026-06-15
+
+- **Immagini dashboard negli alert**: quando il `component` dell'alert è mappato
+  in `[render.component_dashboards]`, klaxond rende quella dashboard a PNG via
+  l'API `/render` di Grafana (richiede il sidecar `grafana-image-renderer`),
+  la ospita su `/img/<token>.png` (path auth-free, token random) e la allega
+  alla push ntfy con l'header `Attach`. Render best-effort: se fallisce, la push
+  parte comunque (testo + bottoni). Nuove env: `GRAFANA_RENDER_BASE` (URL
+  interno Grafana, distinto da `GRAFANA_BASE` pubblico usato per il bottone),
+  `GRAFANA_RENDER_TOKEN` (service-account), `RENDER_IMAGE_TTL` (default 900s).
+  Il render usa `var-instance` dall'etichetta `instance` dell'alert.
+
 ## 0.9.34 — 2026-06-10
 
 - Nuova sorgente `/pve/<severity>`: webhook del notification-system di

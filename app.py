@@ -114,6 +114,58 @@ _DEFAULT_COMPONENT_DASHBOARDS = {
     "traefik":  ["Traefik",      "/d/your-traefik-dashboard"],
 }
 
+# ── Alert image rendering (grafana-image-renderer) ──────────────────────────
+# When an alert's `component` maps to a dashboard (COMPONENT_DASHBOARDS), klaxond
+# renders that dashboard to PNG via Grafana's /render API (requires the
+# grafana-image-renderer sidecar) and hosts it at /img/<token>.png so ntfy can
+# attach it (Attach header). The render base is INTERNAL (no Authentik) and is
+# distinct from GRAFANA_BASE (public, used for the deep-link button). Feature is
+# off unless GRAFANA_RENDER_BASE + GRAFANA_RENDER_TOKEN are set.
+GRAFANA_RENDER_BASE = os.environ.get("GRAFANA_RENDER_BASE", "").rstrip("/")
+GRAFANA_RENDER_TOKEN = os.environ.get("GRAFANA_RENDER_TOKEN", "")
+RENDER_IMAGE_TTL = int(os.environ.get("RENDER_IMAGE_TTL", "900"))
+_rendered_images = {}            # token -> (png_bytes, expiry_epoch)
+_rendered_images_lock = threading.Lock()
+
+
+def _prune_rendered_images():
+    now = time_mod.time()
+    with _rendered_images_lock:
+        for k in [k for k, (_, exp) in _rendered_images.items() if exp < now]:
+            _rendered_images.pop(k, None)
+
+
+def render_alert_image(slug: str, instance: str = "", timeout: int = 25):
+    """Render a Grafana dashboard (a COMPONENT_DASHBOARDS slug like /d/<uid>) to
+    PNG bytes via the image-renderer. Returns bytes on success else None.
+    Best-effort: never raises (image is an enhancement, not a hard requirement)."""
+    if not (GRAFANA_RENDER_BASE and GRAFANA_RENDER_TOKEN and slug and slug.startswith("/d/")):
+        return None
+    q = {"orgId": "1", "theme": "dark", "width": "1000", "height": "800",
+         "from": "now-3h", "to": "now"}
+    if instance:
+        q["var-instance"] = instance
+    url = f"{GRAFANA_RENDER_BASE}/render{slug}?{urllib.parse.urlencode(q)}"
+    try:
+        req = urllib.request.Request(url, headers={"Authorization": f"Bearer {GRAFANA_RENDER_TOKEN}"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = r.read()
+        if data[:8] == b"\x89PNG\r\n\x1a\n":
+            return data
+        log.warning("render: non-PNG response for %s (%d bytes)", slug, len(data))
+    except Exception as e:
+        log.warning("render: failed for %s: %s", slug, e)
+    return None
+
+
+def stash_alert_image(png: bytes) -> str:
+    """Store PNG under a random token (auto-expiring); return the token."""
+    _prune_rendered_images()
+    tok = secrets.token_urlsafe(12)
+    with _rendered_images_lock:
+        _rendered_images[tok] = (png, time_mod.time() + RENDER_IMAGE_TTL)
+    return tok
+
 
 def _load_render_config(toml_seed: dict = None) -> dict:
     """Read render-config.json from disk; bootstrap with TOML seed if available,
@@ -699,6 +751,7 @@ class AuthManager:
         "/webhook/", "/beszel/", "/healthchecks/", "/wud/", "/authentik/", "/shelfmark/", "/prowlarr/", "/decypharr/", "/pve/",
         "/healthz", "/metrics",  # Prometheus scrape — no auth (LAN-only firewalled)
         "/api/ack/",             # ack/snooze from ntfy push — JWT-style token is the auth
+        "/img/",                 # rendered alert images for ntfy Attach — random token is the auth
         "/auth/login", "/auth/callback", "/auth/logout",
         "/static/", "/favicon.ico",  # login page assets
     )
@@ -1494,7 +1547,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.9.34"
+_KLAXOND_VERSION = "0.10.0"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}
@@ -2513,6 +2566,12 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
 
     return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority,
             "_alertname": alertname,
+            # Image rendering hints (deliver() renders the mapped dashboard to PNG
+            # and attaches it to the push). slug = the component's dashboard;
+            # instance = the alert's instance label (→ var-instance on render).
+            "_render_slug": (COMPONENT_DASHBOARDS.get(component, (None, None))[1]
+                             if component in COMPONENT_DASHBOARDS else None),
+            "_render_instance": common_labels.get("instance", "") if isinstance(common_labels, dict) else "",
             # Resolved events don't need a snooze button — by definition the
             # condition is gone, so suppressing future occurrences would just
             # delay seeing it the next time it fires.
@@ -3087,6 +3146,9 @@ def post_to_ntfy(severity: str, parts: dict, timeout: int = 5) -> bool:
         }
         if actions_header:
             headers["Actions"] = actions_header
+        # Attach the rendered dashboard PNG (ntfy fetches the URL client-side).
+        if parts.get("_attach_url"):
+            headers["Attach"] = parts["_attach_url"]
         req = urllib.request.Request(url, data=parts["body"].encode("utf-8"),
                                      headers=headers, method="POST")
         try:
@@ -3278,6 +3340,16 @@ def deliver(severity: str, parts: dict, with_cascade: bool, labels: dict = None,
     mode = policy.get("mode", "cascade")
     log.info("policy picked: %s (mode=%s, %d tiers)", reason, mode, len(tiers))
 
+    # Render the mapped dashboard to PNG once (best-effort) and expose it at
+    # /img/<token>.png; tiers that support attachments (ntfy) will reference it.
+    if GRAFANA_RENDER_BASE and parts.get("_render_slug") and not parts.get("_attach_url"):
+        png = render_alert_image(parts["_render_slug"], parts.get("_render_instance", ""))
+        if png:
+            tok = stash_alert_image(png)
+            parts["_attach_url"] = f"{KLAXOND_PUBLIC_URL}/img/{tok}.png"
+            log.info("render: attached dashboard image (%d bytes) for %s → %s",
+                     len(png), parts.get("_render_slug"), parts["_attach_url"])
+
     import time as _time
     started_at = _time.time()
     tiers_attempted = []
@@ -3374,6 +3446,23 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers(); self.wfile.write(body)
+        elif self.path.startswith("/img/"):
+            # Rendered alert dashboard PNG, referenced by ntfy Attach. Random
+            # token = the auth (auth-free path); auto-expires from memory.
+            tok = self.path[len("/img/"):].split("?", 1)[0]
+            if tok.endswith(".png"):
+                tok = tok[:-4]
+            _prune_rendered_images()
+            with _rendered_images_lock:
+                entry = _rendered_images.get(tok)
+            if not entry:
+                self.send_response(404); self.end_headers(); return
+            png = entry[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(png)))
+            self.send_header("Cache-Control", "private, max-age=900")
+            self.end_headers(); self.wfile.write(png)
         elif self.path in ("/", "/ui", "/ui/"):
             self.send_response(302); self.send_header("Location", "/ui/index.html"); self.end_headers()
         elif self.path.startswith("/ui/"):
