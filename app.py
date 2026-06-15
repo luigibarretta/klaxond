@@ -135,17 +135,53 @@ def _prune_rendered_images():
             _rendered_images.pop(k, None)
 
 
+_dashboard_panel_cache = {}     # uid -> first-real-panel id (or None)
+
+
+def _first_render_panel(uid: str):
+    """First non-row/non-text panel id of a dashboard, for a clean d-solo render.
+    d-solo renders just the panel iframe (no app shell) — this is what dodges the
+    Grafana app-level announcement modals that obscure full-dashboard renders.
+    Cached per uid; returns None on any failure (caller falls back to full dash)."""
+    if uid in _dashboard_panel_cache:
+        return _dashboard_panel_cache[uid]
+    pid = None
+    try:
+        req = urllib.request.Request(f"{GRAFANA_RENDER_BASE}/api/dashboards/uid/{uid}",
+                                     headers={"Authorization": f"Bearer {GRAFANA_RENDER_TOKEN}"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            dash = json.loads(r.read()).get("dashboard", {})
+        skip = {"row", "text", "news", "dashlist", "alertlist"}
+        cands = [p for p in dash.get("panels", []) if p.get("type") not in skip and "id" in p]
+        if cands:
+            pid = sorted(cands, key=lambda p: p["id"])[0]["id"]
+    except Exception as e:
+        log.warning("render: panel lookup failed for %s: %s", uid, e)
+    _dashboard_panel_cache[uid] = pid
+    return pid
+
+
 def render_alert_image(slug: str, instance: str = "", timeout: int = 25):
-    """Render a Grafana dashboard (a COMPONENT_DASHBOARDS slug like /d/<uid>) to
-    PNG bytes via the image-renderer. Returns bytes on success else None.
-    Best-effort: never raises (image is an enhancement, not a hard requirement)."""
+    """Render a Grafana dashboard's first panel (d-solo — clean, no app-shell
+    announcement modals, and tighter for a mobile push) to PNG via the
+    image-renderer. Falls back to the full dashboard if panel lookup fails.
+    Returns bytes on success else None. Best-effort: never raises."""
     if not (GRAFANA_RENDER_BASE and GRAFANA_RENDER_TOKEN and slug and slug.startswith("/d/")):
         return None
-    q = {"orgId": "1", "theme": "dark", "width": "1000", "height": "800",
-         "from": "now-3h", "to": "now"}
-    if instance:
-        q["var-instance"] = instance
-    url = f"{GRAFANA_RENDER_BASE}/render{slug}?{urllib.parse.urlencode(q)}"
+    uid = slug[len("/d/"):].split("/", 1)[0].split("?", 1)[0]
+    pid = _first_render_panel(uid)
+    if pid is not None:
+        q = {"orgId": "1", "theme": "dark", "width": "1000", "height": "500",
+             "panelId": str(pid), "from": "now-3h", "to": "now"}
+        if instance:
+            q["var-instance"] = instance
+        url = f"{GRAFANA_RENDER_BASE}/render/d-solo/{uid}/x?{urllib.parse.urlencode(q)}"
+    else:
+        q = {"orgId": "1", "theme": "dark", "width": "1000", "height": "800",
+             "from": "now-3h", "to": "now"}
+        if instance:
+            q["var-instance"] = instance
+        url = f"{GRAFANA_RENDER_BASE}/render{slug}?{urllib.parse.urlencode(q)}"
     try:
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {GRAFANA_RENDER_TOKEN}"})
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -1547,7 +1583,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.10.0"
+_KLAXOND_VERSION = "0.10.1"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}

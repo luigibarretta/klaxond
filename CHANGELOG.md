@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.10.1 — 2026-06-15
+
+- Render dashboard images con **d-solo** (singolo pannello) invece della
+  dashboard intera: evita il modale d'annuncio "Grafana Assistant" di Grafana
+  13 che copriva il render full-dashboard (l'app-shell carica il popup a ogni
+  sessione headless), ed è più leggibile in una push mobile. Il pannello è
+  auto-rilevato via API Grafana (primo pannello non-row/text, cached per uid);
+  fallback alla dashboard intera se il lookup fallisce.
+
 ## 0.10.0 — 2026-06-15
 
 - **Immagini dashboard negli alert**: quando il `component` dell'alert è mappato
