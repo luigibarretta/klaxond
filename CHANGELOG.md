@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.10.2 — 2026-06-15
+
+- Override immagine per-componente: nuova sezione toml `[render.component_image]`
+  (`component = "dashboard_uid:panel_id"`) che decide QUALE pannello rendere per
+  l'immagine dell'alert, indipendentemente dalla dashboard del bottone. Default:
+  `host = "infra-cluster-overview:10"` → l'immagine degli alert host mostra il
+  pannello risorse (load1/RAM%/disk per host) invece del pannello logs Loki a cui
+  punta il bottone. Senza override, resta l'auto-detect del primo pannello.
+
 ## 0.10.1 — 2026-06-15
 
 - Render dashboard images con **d-solo** (singolo pannello) invece della

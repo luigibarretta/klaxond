@@ -73,6 +73,14 @@ clamav     = ["ClamAV logs",          "/d/loki-cluster-logs?var-container=clamd"
 zfs        = ["ZFS / nas-01 logs",    "/d/loki-cluster-logs?var-host=it1-prd-nas-01"]
 beszel     = ["Beszel UI",            "https://beszel.luigibarretta.com/"]
 
+# Per-component IMAGE override: "dashboard_uid:panel_id" (or just "dashboard_uid").
+# The PNG attached to the push uses THIS panel even if the button (above) points
+# elsewhere. Without an entry, the image is the first panel of the button
+# dashboard. `host` → cluster-overview resource panel (load1/RAM%/disk per host),
+# instead of the Loki logs panel its button points at.
+[render.component_image]
+host = "infra-cluster-overview:10"
+
 
 # ============================================================================
 # Inhibitions — in-memory safety net (Alertmanager owns the canonical layer).

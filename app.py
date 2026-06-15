@@ -161,15 +161,16 @@ def _first_render_panel(uid: str):
     return pid
 
 
-def render_alert_image(slug: str, instance: str = "", timeout: int = 25):
-    """Render a Grafana dashboard's first panel (d-solo — clean, no app-shell
-    announcement modals, and tighter for a mobile push) to PNG via the
-    image-renderer. Falls back to the full dashboard if panel lookup fails.
+def render_alert_image(slug: str, instance: str = "", panel=None, timeout: int = 25):
+    """Render a Grafana dashboard panel (d-solo — clean, no app-shell announcement
+    modals, and tighter for a mobile push) to PNG via the image-renderer. `panel`
+    forces a specific panel id (per-component override); otherwise the first real
+    panel is auto-detected. Falls back to the full dashboard if no panel resolves.
     Returns bytes on success else None. Best-effort: never raises."""
     if not (GRAFANA_RENDER_BASE and GRAFANA_RENDER_TOKEN and slug and slug.startswith("/d/")):
         return None
     uid = slug[len("/d/"):].split("/", 1)[0].split("?", 1)[0]
-    pid = _first_render_panel(uid)
+    pid = panel if panel is not None else _first_render_panel(uid)
     if pid is not None:
         q = {"orgId": "1", "theme": "dark", "width": "1000", "height": "500",
              "panelId": str(pid), "from": "now-3h", "to": "now"}
@@ -1385,6 +1386,28 @@ TOML_CONFIG = _load_toml_config()
 _render_seed = (TOML_CONFIG.get("render", {}) or {}).get("component_dashboards", {}) or {}
 COMPONENT_DASHBOARDS = _load_render_config(toml_seed=_render_seed)
 
+
+# Per-component IMAGE render override (toml [render.component_image]):
+#   component = "dashboard_uid:panel_id"   (or just "dashboard_uid")
+# Renders THIS panel for the alert image, even when the component's button
+# dashboard is different (e.g. host → cluster-overview CPU/RAM/disk panel for the
+# image, while the deep-link button still points at the Loki logs dashboard).
+# toml-only: edit /data/klaxond.toml + restart (not the render-config UI).
+def _load_component_image_overrides():
+    raw = (TOML_CONFIG.get("render", {}) or {}).get("component_image", {}) or {}
+    out = {}
+    for comp, spec in raw.items():
+        s = str(spec).strip()
+        uid, _, pid = s.rpartition(":")
+        if uid and pid.isdigit():
+            out[comp] = (uid, int(pid))
+        elif s:
+            out[comp] = (s, None)
+    return out
+
+
+COMPONENT_IMAGE_OVERRIDES = _load_component_image_overrides()
+
 # Same pattern for dedup settings: [dedup.<source>] in TOML seeds the JSON file
 # on first boot. Once /data/dedup-config.json exists, it's the source of truth.
 _dedup_seed = TOML_CONFIG.get("dedup", {}) or {}
@@ -1402,8 +1425,9 @@ log.info("auth mode = %s", AUTH_CONFIG.get("mode"))
 # Apply TOML config overrides (if klaxond.toml provided non-empty sections)
 # ============================================================================
 def _apply_toml_overrides():
-    global PRIORITIES, ICONS, TAG_PREFIXES, COMPONENT_DASHBOARDS, INHIBITION_RULES, GRAFANA_BASE, FALLBACK_RUNBOOKS, SCHEDULES
+    global PRIORITIES, ICONS, TAG_PREFIXES, COMPONENT_DASHBOARDS, INHIBITION_RULES, GRAFANA_BASE, FALLBACK_RUNBOOKS, SCHEDULES, COMPONENT_IMAGE_OVERRIDES
     render = TOML_CONFIG.get("render", {})
+    COMPONENT_IMAGE_OVERRIDES = _load_component_image_overrides()
     if render.get("severity_priority"):
         PRIORITIES = dict(render["severity_priority"])
     if render.get("severity_emoji"):
@@ -1583,7 +1607,7 @@ _delivery_log = collections.deque(maxlen=_DELIVERY_LOG_MAX)
 # survive container lifetime; reset on restart (acceptable — Loki audit log
 # is the durable archive).
 # ----------------------------------------------------------------------------
-_KLAXOND_VERSION = "0.10.1"
+_KLAXOND_VERSION = "0.10.2"
 _metrics_lock = threading.Lock()
 _METRICS_START_TS = time_mod.time()
 _metric_counters: dict[str, int] = {}
@@ -2602,11 +2626,13 @@ def parse_grafana_payload(payload: dict, severity: str) -> dict:
 
     return {"title": title, "body": body, "tags": tags, "actions": actions, "priority": priority,
             "_alertname": alertname,
-            # Image rendering hints (deliver() renders the mapped dashboard to PNG
-            # and attaches it to the push). slug = the component's dashboard;
-            # instance = the alert's instance label (→ var-instance on render).
-            "_render_slug": (COMPONENT_DASHBOARDS.get(component, (None, None))[1]
-                             if component in COMPONENT_DASHBOARDS else None),
+            # Image rendering hints (deliver() renders the dashboard to PNG and
+            # attaches it). Per-component image override (own dashboard + explicit
+            # panel) wins; otherwise the component's button dashboard (panel
+            # auto-detected). instance = the alert's instance label (→ var-instance).
+            "_render_slug": (("/d/" + COMPONENT_IMAGE_OVERRIDES[component][0]) if component in COMPONENT_IMAGE_OVERRIDES
+                             else (COMPONENT_DASHBOARDS[component][1] if component in COMPONENT_DASHBOARDS else None)),
+            "_render_panel": (COMPONENT_IMAGE_OVERRIDES[component][1] if component in COMPONENT_IMAGE_OVERRIDES else None),
             "_render_instance": common_labels.get("instance", "") if isinstance(common_labels, dict) else "",
             # Resolved events don't need a snooze button — by definition the
             # condition is gone, so suppressing future occurrences would just
@@ -3379,7 +3405,8 @@ def deliver(severity: str, parts: dict, with_cascade: bool, labels: dict = None,
     # Render the mapped dashboard to PNG once (best-effort) and expose it at
     # /img/<token>.png; tiers that support attachments (ntfy) will reference it.
     if GRAFANA_RENDER_BASE and parts.get("_render_slug") and not parts.get("_attach_url"):
-        png = render_alert_image(parts["_render_slug"], parts.get("_render_instance", ""))
+        png = render_alert_image(parts["_render_slug"], parts.get("_render_instance", ""),
+                                 panel=parts.get("_render_panel"))
         if png:
             tok = stash_alert_image(png)
             parts["_attach_url"] = f"{KLAXOND_PUBLIC_URL}/img/{tok}.png"
