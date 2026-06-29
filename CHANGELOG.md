@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.12.0 — 2026-06-29
+
+- Aggiunta UI bilingue inglese/italiano con preferenza persistita nel browser
+  (`klaxond.lang`) e fallback alla lingua del browser.
+- Aggiunto selettore tema `system` / `light` / `dark` con preferenza persistita
+  (`klaxond.themeMode`) e migrazione dal vecchio toggle binario.
+- Coperti i nuovi controlli con test E2E Playwright per lingua, persistenza e
+  theme mode.
+
 ## 0.11.2 — 2026-06-29
 
 - Corretto il probe `/api/status` per SMTP: ora risolve hostname DNS come

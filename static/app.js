@@ -9,6 +9,7 @@ const J = async (url, opts) => {
   const ct = r.headers.get("content-type") || "";
   return ct.includes("json") ? r.json() : r.text();
 };
+const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key, vars) : key;
 
 // ---- Tab switching (with URL hash routing) ----
 function activateTab(tabId) {
@@ -62,7 +63,7 @@ async function loadStatus() {
       const card = $("#" + id);
       const dot = card.querySelector(".dot");
       dot.className = "dot " + (up ? "up" : "down");
-      dot.title = up ? "Reachable" : "Unreachable";
+      dot.title = up ? tr("channel.reachable") : tr("channel.unreachable");
       // Add a textual status next to the dot (accessibility — color alone
       // isn't enough for colorblind users + screen readers).
       let statusText = card.querySelector(".ch-status-text");
@@ -72,13 +73,13 @@ async function loadStatus() {
         statusText.style.marginLeft = "6px";
         dot.insertAdjacentElement("afterend", statusText);
       }
-      statusText.textContent = up ? "✓ up" : "✗ down";
+      statusText.textContent = up ? tr("channel.up") : tr("channel.down");
       statusText.style.color = up ? "var(--green)" : "var(--red)";
       card.querySelector(".ch-url").textContent = url || "";
     };
     setCh("ch-ntfy", s.channels.ntfy, s.ntfy_url);
-    setCh("ch-telegram", s.channels.telegram, s.telegram_configured ? "bot configured" : "(not configured)");
-    setCh("ch-smtp", s.channels.smtp, s.smtp_host ? `${s.smtp_host}` : "(not configured)");
+    setCh("ch-telegram", s.channels.telegram, s.telegram_configured ? tr("channel.bot_configured") : tr("channel.not_configured"));
+    setCh("ch-smtp", s.channels.smtp, s.smtp_host ? `${s.smtp_host}` : tr("channel.not_configured"));
     const footerVersion = $("#footer-version");
     if (footerVersion && s.version) footerVersion.textContent = `v${s.version}`;
     $("#cas-default").textContent = s.cascade_enabled_default;
@@ -123,12 +124,12 @@ async function loadStatusActivity() {
     const parts = Object.entries(bySource).sort((a,b) => b[1]-a[1])
                   .map(([k,v]) => `${k}: ${v}`);
     $("#stat-deliv-breakdown").innerHTML = parts.length
-      ? "by source: " + parts.map(p => `<code>${escapeHtml(p)}</code>`).join(" · ")
-      : "by source: <span class='muted'>(no activity)</span>";
+      ? tr("status.by_source") + " " + parts.map(p => `<code>${escapeHtml(p)}</code>`).join(" · ")
+      : `${tr("status.by_source")} <span class='muted'>${escapeHtml(tr("status.no_activity"))}</span>`;
     setTabBadge("deliveries", recent.length);
   } catch (e) {
     $("#stat-deliv-total").textContent = "?";
-    $("#stat-deliv-breakdown").textContent = "deliveries unreachable";
+    $("#stat-deliv-breakdown").textContent = tr("status.deliveries_unreachable");
   }
   // Active suppressions count
   try {
@@ -163,12 +164,12 @@ async function loadConfigBackups() {
     if (r.dir) $("#cfg-backup-dir").textContent = r.dir;
     if (r.keep_max) $("#cfg-backup-keep").textContent = r.keep_max;
     const items = r.backups || [];
-    if (!items.length) { ul.innerHTML = "<li>(no backups yet — saved on next config change)</li>"; return; }
+    if (!items.length) { ul.innerHTML = `<li>${escapeHtml(tr("status.no_backups"))}</li>`; return; }
     ul.innerHTML = items.slice(0, 10).map(b => {
       const kb = Math.round(b.size / 1024);
       return `<li><code>${escapeHtml(b.name)}</code> · ${kb} KB · ${escapeHtml(b.mtime_iso)}</li>`;
     }).join("");
-  } catch (e) { ul.innerHTML = `<li class='muted'>backups list unavailable: ${escapeHtml(e.message)}</li>`; }
+  } catch (e) { ul.innerHTML = `<li class='muted'>${escapeHtml(tr("status.backups_unavailable", { message: e.message }))}</li>`; }
 }
 
 // Download is a plain anchor href — the browser handles content-disposition.
@@ -180,10 +181,10 @@ document.addEventListener("DOMContentLoaded", () => {
   if (fileInput) fileInput.addEventListener("change", async e => {
     const f = e.target.files[0]; if (!f) return;
     const status = $("#cfg-restore-status");
-    if (!confirm(`Restore klaxond config from "${f.name}" (${f.size} bytes)?\n\nThe current config will be auto-backed-up first. After upload, in-memory state reloads. Continue?`)) {
+    if (!confirm(tr("config.restore_confirm", { name: f.name, size: f.size }))) {
       e.target.value = ""; return;
     }
-    status.textContent = "Uploading…"; status.style.color = "";
+    status.textContent = tr("status.uploading"); status.style.color = "";
     try {
       const raw = await f.text();
       const res = await fetch("/api/config/restore", {
@@ -195,9 +196,9 @@ document.addEventListener("DOMContentLoaded", () => {
         status.style.color = "var(--red)"; return;
       }
       const j = await res.json();
-      status.textContent = `✓ Restored ${j.bytes_written} bytes. Pre-restore backup: ${j.pre_restore_backup || '(none)'}`;
+      status.textContent = tr("status.restored", { bytes: j.bytes_written, backup: j.pre_restore_backup || tr("status.none") });
       status.style.color = "var(--green)";
-      showToast("Config restored — reload page to see all UI state refresh", "success", 6000);
+      showToast(tr("config.restored_toast"), "success", 6000);
       loadConfigBackups();
     } catch (err) {
       status.textContent = "❌ " + err.message;
@@ -213,13 +214,13 @@ async function loadInhib() {
   try {
     const rows = await J("/api/inhibitions");
     const tb = $("#t-inhib tbody"); tb.innerHTML = "";
-    if (!rows.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">No active suppressions.</td></tr>'; return; }
+    if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("inhib.no_active"))}</td></tr>`; return; }
     for (const r of rows) {
-      const tr = document.createElement("tr");
+      const row = document.createElement("tr");
       const scope = Array.isArray(r.applies_to) ? r.applies_to.join(", ") : "*";
-      tr.innerHTML = `<td><code>${escapeHtml(r.source)}</code></td><td>${escapeHtml(r.anchor)}</td><td><code>${escapeHtml(scope)}</code></td><td>${fmtSecs(r.expires_in_seconds)}</td><td><button class="btn" data-clear-suppression title="Force-clear this suppression" style="color:var(--red); padding:2px 8px">✕</button></td>`;
-      tr.querySelector("[data-clear-suppression]").addEventListener("click", () => clearSuppression(r.source, r.anchor));
-      tb.appendChild(tr);
+      row.innerHTML = `<td><code>${escapeHtml(r.source)}</code></td><td>${escapeHtml(r.anchor)}</td><td><code>${escapeHtml(scope)}</code></td><td>${fmtSecs(r.expires_in_seconds)}</td><td><button class="btn" data-clear-suppression title="${escapeHtml(tr("inhib.clear_one_title"))}" style="color:var(--red); padding:2px 8px">✕</button></td>`;
+      row.querySelector("[data-clear-suppression]").addEventListener("click", () => clearSuppression(r.source, r.anchor));
+      tb.appendChild(row);
     }
   } catch (e) { fetchError("inhibitions", e); }
 }
@@ -237,7 +238,7 @@ async function clearSuppression(source, anchor) {
       status.style.color = "var(--red)"; return;
     }
     const r = await res.json();
-    status.textContent = `Cleared ${r.cleared} suppression(s) for ${source}`;
+    status.textContent = tr("inhib.cleared_for_source", { count: r.cleared, source });
     status.style.color = "var(--green)";
     setTimeout(() => { status.textContent = ""; }, 3000);
     await loadInhib();
@@ -284,14 +285,14 @@ async function testInhibitionRule() {
     const r = await res.json();
     status.textContent = "";
     const verdict = r.would_send
-      ? `<span style="color:var(--green)">✓ <b>Would be delivered</b></span> (reason: <code>${escapeHtml(r.reason)}</code>)`
-      : `<span style="color:var(--red)">✗ <b>Would be SUPPRESSED</b></span> by rule <code>${escapeHtml(r.matched_rule || "")}</code>`;
+      ? `<span style="color:var(--green)"><b>${escapeHtml(tr("inhib.would_deliver"))}</b></span> (${escapeHtml(tr("inhib.reason"))}: <code>${escapeHtml(r.reason)}</code>)`
+      : `<span style="color:var(--red)"><b>${escapeHtml(tr("inhib.would_suppress"))}</b></span> ${escapeHtml(tr("inhib.by_rule"))} <code>${escapeHtml(r.matched_rule || "")}</code>`;
     const arm = r.would_arm_suppression
-      ? '<br/><span style="color:var(--accent)">⚡ Source alert detected — would ARM a new suppression for this rule.</span>'
+      ? `<br/><span style="color:var(--accent)">${escapeHtml(tr("inhib.source_alert_arm"))}</span>`
       : "";
     const considered = (r.considered_rules || []).length
-      ? `<br/><small class="muted">Rules considered for source <code>${escapeHtml(source)}</code>: ${r.considered_rules.map(s => `<code>${escapeHtml(s)}</code>`).join(", ")}</small>`
-      : `<br/><small class="muted">No rules apply to source <code>${escapeHtml(source)}</code>.</small>`;
+      ? `<br/><small class="muted">${escapeHtml(tr("inhib.rules_considered"))} <code>${escapeHtml(source)}</code>: ${r.considered_rules.map(s => `<code>${escapeHtml(s)}</code>`).join(", ")}</small>`
+      : `<br/><small class="muted">${escapeHtml(tr("inhib.no_rules_apply"))} <code>${escapeHtml(source)}</code>.</small>`;
     result.innerHTML = verdict + arm + considered;
   } catch (e) {
     status.textContent = "❌ " + e.message;
@@ -305,14 +306,14 @@ async function loadAcks() {
   try {
     const acks = await J("/api/acks");
     tb.innerHTML = "";
-    if (!acks.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">No active ack-snoozes.</td></tr>'; return; }
+    if (!acks.length) { tb.innerHTML = `<tr><td colspan="3" class="muted">${escapeHtml(tr("inhib.no_acks"))}</td></tr>`; return; }
     for (const a of acks) {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td><code>${escapeHtml(a.alertname)}</code></td><td>${fmtSecs(a.expires_in_seconds)}</td><td>
-        <button class="btn" data-clear-ack="${escapeHtml(a.alertname)}" title="Force-clear this ack" style="color:var(--red); padding:2px 8px">✕</button>
+      const row = document.createElement("tr");
+      row.innerHTML = `<td><code>${escapeHtml(a.alertname)}</code></td><td>${fmtSecs(a.expires_in_seconds)}</td><td>
+        <button class="btn" data-clear-ack="${escapeHtml(a.alertname)}" title="${escapeHtml(tr("inhib.clear_ack_title"))}" style="color:var(--red); padding:2px 8px">✕</button>
       </td>`;
-      tr.querySelector("[data-clear-ack]").addEventListener("click", () => clearAck(a.alertname));
-      tb.appendChild(tr);
+      row.querySelector("[data-clear-ack]").addEventListener("click", () => clearAck(a.alertname));
+      tb.appendChild(row);
     }
   } catch (e) { console.warn("acks fetch:", e); }
 }
@@ -342,8 +343,8 @@ let _schedAvailableSources = ["grafana", "beszel", "healthchecks", "wud", "authe
 let _schedActiveMutes = {};   // name → seconds remaining
 
 function _renderSchedRow(s) {
-  const tr = document.createElement("tr");
-  tr.classList.add("sched-row");
+  const row = document.createElement("tr");
+  row.classList.add("sched-row");
 
   const td = (html) => { const x = document.createElement("td"); x.innerHTML = html; return x; };
 
@@ -351,21 +352,21 @@ function _renderSchedRow(s) {
   const inName = document.createElement("input");
   inName.type = "text"; inName.value = s.name || ""; inName.dataset.k = "name";
   inName.placeholder = "backup-window"; inName.style.width = "100%";
-  const tdN = document.createElement("td"); tdN.appendChild(inName); tr.appendChild(tdN);
+  const tdN = document.createElement("td"); tdN.appendChild(inName); row.appendChild(tdN);
 
   // Cron
   const inCron = document.createElement("input");
   inCron.type = "text"; inCron.value = s.cron || ""; inCron.dataset.k = "cron";
   inCron.placeholder = "30 4 * * 0"; inCron.style.width = "100%";
   inCron.style.fontFamily = "ui-monospace, monospace"; inCron.style.fontSize = "12px";
-  const tdC = document.createElement("td"); tdC.appendChild(inCron); tr.appendChild(tdC);
+  const tdC = document.createElement("td"); tdC.appendChild(inCron); row.appendChild(tdC);
 
   // Duration
   const inDur = document.createElement("input");
   inDur.type = "number"; inDur.min = "1"; inDur.max = "1440";
   inDur.value = s.duration_minutes || 30; inDur.dataset.k = "duration_minutes";
   inDur.style.width = "5em";
-  const tdD = document.createElement("td"); tdD.appendChild(inDur); tr.appendChild(tdD);
+  const tdD = document.createElement("td"); tdD.appendChild(inDur); row.appendChild(tdD);
 
   // Match (key=val per line)
   const matchObj = s.match || {};
@@ -374,7 +375,7 @@ function _renderSchedRow(s) {
   taMatch.dataset.k = "match"; taMatch.rows = 3; taMatch.value = matchTxt;
   taMatch.placeholder = "component=storage\nseverity=info";
   taMatch.style.fontFamily = "ui-monospace, monospace"; taMatch.style.fontSize = "12px";
-  const tdM = document.createElement("td"); tdM.appendChild(taMatch); tr.appendChild(tdM);
+  const tdM = document.createElement("td"); tdM.appendChild(taMatch); row.appendChild(tdM);
 
   // Applies to (checkbox cluster)
   const tdA = document.createElement("td");
@@ -389,7 +390,7 @@ function _renderSchedRow(s) {
     lbl.appendChild(cb); lbl.appendChild(document.createTextNode(" " + src));
     wrap.appendChild(lbl);
   }
-  tdA.appendChild(wrap); tr.appendChild(tdA);
+  tdA.appendChild(wrap); row.appendChild(tdA);
 
   // Status (active/idle)
   const tdS = td("");
@@ -398,24 +399,24 @@ function _renderSchedRow(s) {
     const remain = _schedActiveMutes[name];
     if (remain && remain > 0) {
       const m = Math.ceil(remain / 60);
-      tdS.innerHTML = `<span style="color:var(--yellow)">⚡ ACTIVE</span><br/><small>${m}m left</small>`;
+      tdS.innerHTML = `<span style="color:var(--yellow)">${escapeHtml(tr("sched.active"))}</span><br/><small>${escapeHtml(tr("sched.left_minutes", { minutes: m }))}</small>`;
     } else {
-      tdS.innerHTML = `<span class="muted">idle</span>`;
+      tdS.innerHTML = `<span class="muted">${escapeHtml(tr("sched.idle"))}</span>`;
     }
   };
   updStatus();
   inName.addEventListener("input", updStatus);
-  tr.appendChild(tdS);
+  row.appendChild(tdS);
 
   // Delete
   const tdDel = document.createElement("td");
   const del = document.createElement("button");
-  del.className = "btn"; del.textContent = "✕"; del.title = "Delete this schedule";
+  del.className = "btn"; del.textContent = "✕"; del.title = tr("sched.delete_title");
   del.style.color = "var(--red)"; del.style.padding = "2px 8px";
-  del.addEventListener("click", () => tr.remove());
-  tdDel.appendChild(del); tr.appendChild(tdDel);
+  del.addEventListener("click", () => row.remove());
+  tdDel.appendChild(del); row.appendChild(tdDel);
 
-  return tr;
+  return row;
 }
 
 async function loadSchedules() {
@@ -465,7 +466,7 @@ async function saveSchedules() {
   if (collected.error) {
     status.textContent = "❌ " + collected.error; status.style.color = "var(--red)"; return;
   }
-  status.textContent = "Saving…"; status.style.color = "";
+  status.textContent = tr("status.saving"); status.style.color = "";
   try {
     const res = await fetch("/api/schedules", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -477,7 +478,7 @@ async function saveSchedules() {
       status.style.color = "var(--red)"; return;
     }
     const r = await res.json();
-    status.textContent = `✓ Saved ${r.count} schedule(s).`;
+    status.textContent = tr("sched.saved", { count: r.count });
     status.style.color = "var(--green)";
     _markTabDirty("inhibitions", false);
     await loadSchedules();
@@ -513,7 +514,7 @@ async function clearAllSuppressions() {
       status.style.color = "var(--red)"; return;
     }
     const r = await res.json();
-    status.textContent = `Cleared ${r.cleared} suppression(s)`;
+    status.textContent = tr("inhib.cleared_all", { count: r.cleared });
     status.style.color = "var(--green)";
     setTimeout(() => { status.textContent = ""; }, 3000);
     await loadInhib();
@@ -538,8 +539,8 @@ function _matchTypeOf(r) {
 const _COMMON_LABEL_NAMES = ["host", "job", "alertname", "instance", "service", "component", "severity"];
 
 function _renderInhibRuleRow(r) {
-  const tr = document.createElement("tr");
-  tr.classList.add("inhib-rule-row");
+  const row = document.createElement("tr");
+  row.classList.add("inhib-rule-row");
   const mt = _matchTypeOf(r);
 
   // --- Source name ---
@@ -547,8 +548,8 @@ function _renderInhibRuleRow(r) {
   const inSrc = document.createElement("input");
   inSrc.type = "text"; inSrc.value = r.source || ""; inSrc.dataset.k = "source";
   inSrc.placeholder = "e.g. node-down"; inSrc.style.width = "100%";
-  inSrc.addEventListener("input", () => _markRowValidity(tr));
-  tdSrc.appendChild(inSrc); tr.appendChild(tdSrc);
+  inSrc.addEventListener("input", () => _markRowValidity(row));
+  tdSrc.appendChild(inSrc); row.appendChild(tdSrc);
 
   // --- Match type select ---
   const tdMt = document.createElement("td");
@@ -559,7 +560,7 @@ function _renderInhibRuleRow(r) {
     if (opt === mt) o.selected = true;
     sel.appendChild(o);
   }
-  tdMt.appendChild(sel); tr.appendChild(tdMt);
+  tdMt.appendChild(sel); row.appendChild(tdMt);
 
   // --- Match value cell ---
   // Two distinct inputs (label + regex), shown/hidden by match_type. For
@@ -574,7 +575,7 @@ function _renderInhibRuleRow(r) {
   inLabel.placeholder = "host"; inLabel.style.flex = "0 0 8em";
   inLabel.setAttribute("list", "inhib-label-suggestions");
   inLabel.value = r.match_by || r.match_label || "";
-  inLabel.addEventListener("input", () => _markRowValidity(tr));
+  inLabel.addEventListener("input", () => _markRowValidity(row));
 
   const eqSign = document.createElement("span");
   eqSign.textContent = "="; eqSign.style.color = "var(--muted)";
@@ -584,17 +585,17 @@ function _renderInhibRuleRow(r) {
   inRegex.placeholder = "^blackbox-.*"; inRegex.style.flex = "1 1 auto";
   inRegex.style.fontFamily = "ui-monospace, monospace"; inRegex.style.fontSize = "12px";
   inRegex.value = r.match_regex || "";
-  inRegex.addEventListener("input", () => _markRowValidity(tr));
+  inRegex.addEventListener("input", () => _markRowValidity(row));
 
   const mvHint = document.createElement("span");
   mvHint.style.color = "var(--muted)"; mvHint.style.fontSize = "12px";
-  mvHint.textContent = "(suppresses every alert)";
+  mvHint.textContent = tr("inhib.suppresses_all");
 
   mvWrap.appendChild(inLabel);
   mvWrap.appendChild(eqSign);
   mvWrap.appendChild(inRegex);
   mvWrap.appendChild(mvHint);
-  tdMv.appendChild(mvWrap); tr.appendChild(tdMv);
+  tdMv.appendChild(mvWrap); row.appendChild(tdMv);
 
   function _applyMatchType(v) {
     inLabel.style.display = (v === "match_all") ? "none" : "";
@@ -611,7 +612,7 @@ function _renderInhibRuleRow(r) {
     // call this again later, when the row IS complete.
   }
   _applyMatchType(mt);
-  sel.addEventListener("change", () => { _applyMatchType(sel.value); _markRowValidity(tr); });
+  sel.addEventListener("change", () => { _applyMatchType(sel.value); _markRowValidity(row); });
 
   // --- Applies to (checkboxes) ---
   const tdAp = document.createElement("td");
@@ -630,8 +631,8 @@ function _renderInhibRuleRow(r) {
   }
   const allHint = document.createElement("small");
   allHint.className = "muted"; allHint.style.fontSize = "11px";
-  allHint.textContent = "(empty = all sources)";
-  tdAp.appendChild(wrap); tdAp.appendChild(allHint); tr.appendChild(tdAp);
+  allHint.textContent = tr("inhib.empty_all_sources");
+  tdAp.appendChild(wrap); tdAp.appendChild(allHint); row.appendChild(tdAp);
 
   // --- TTL ---
   const tdTtl = document.createElement("td");
@@ -641,33 +642,33 @@ function _renderInhibRuleRow(r) {
   inTtl.type = "number"; inTtl.min = "30"; inTtl.max = "86400";
   inTtl.value = r.ttl_seconds || 900; inTtl.dataset.k = "ttl_seconds";
   inTtl.style.width = "5.5em";
-  inTtl.addEventListener("input", () => _markRowValidity(tr));
+  inTtl.addEventListener("input", () => _markRowValidity(row));
   ttlWrap.appendChild(inTtl);
   for (const [lbl, sec] of [["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600]]) {
     const btn = document.createElement("button");
     btn.type = "button"; btn.className = "btn"; btn.textContent = lbl;
     btn.style.padding = "2px 6px"; btn.style.fontSize = "11px";
     btn.title = `Set TTL to ${sec}s`;
-    btn.addEventListener("click", () => { inTtl.value = sec; _markRowValidity(tr); });
+    btn.addEventListener("click", () => { inTtl.value = sec; _markRowValidity(row); });
     ttlWrap.appendChild(btn);
   }
-  tdTtl.appendChild(ttlWrap); tr.appendChild(tdTtl);
+  tdTtl.appendChild(ttlWrap); row.appendChild(tdTtl);
 
   // --- Actions (duplicate + delete) ---
   const tdAct = document.createElement("td");
   tdAct.style.whiteSpace = "nowrap";
   const dup = document.createElement("button");
   dup.type = "button"; dup.className = "btn";
-  dup.textContent = "⎘"; dup.title = "Duplicate this rule";
+  dup.textContent = "⎘"; dup.title = tr("inhib.duplicate_title");
   dup.style.padding = "2px 8px"; dup.style.marginRight = "4px";
   dup.addEventListener("click", () => {
     // Snapshot current row state and append a clone below it.
-    const get = k => tr.querySelector(`[data-k="${k}"]`);
+    const get = k => row.querySelector(`[data-k="${k}"]`);
     const mt = get("match_type").value;
     const snapshot = {
       source: get("source").value.trim() + " (copy)",
       ttl_seconds: parseInt(get("ttl_seconds").value || "900", 10),
-      applies_to: Array.from(tr.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
+      applies_to: Array.from(row.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
                   .filter(cb => cb.checked).map(cb => cb.value),
     };
     if (mt === "match_by") snapshot.match_by = get("match_label").value.trim();
@@ -676,18 +677,18 @@ function _renderInhibRuleRow(r) {
       snapshot.match_regex = get("match_regex").value.trim();
     } else snapshot.match_all = true;
     const clone = _renderInhibRuleRow(snapshot);
-    tr.parentNode.insertBefore(clone, tr.nextSibling);
+    row.parentNode.insertBefore(clone, row.nextSibling);
   });
   const btn = document.createElement("button");
   btn.type = "button"; btn.className = "btn";
-  btn.textContent = "✕"; btn.title = "Delete this rule";
+  btn.textContent = "✕"; btn.title = tr("inhib.delete_rule_title");
   btn.style.color = "var(--red)"; btn.style.padding = "2px 8px";
-  btn.addEventListener("click", () => tr.remove());
+  btn.addEventListener("click", () => row.remove());
   tdAct.appendChild(dup); tdAct.appendChild(btn);
-  tr.appendChild(tdAct);
+  row.appendChild(tdAct);
 
-  _markRowValidity(tr);
-  return tr;
+  _markRowValidity(row);
+  return row;
 }
 
 // Validate a single rule row in-place and flash the bad cell.
@@ -760,7 +761,7 @@ async function saveInhibRules() {
   const collected = _collectInhibRules();
   const status = $("#inhib-save-status");
   if (collected.error) { status.textContent = "❌ " + collected.error; status.style.color = "#e57373"; return; }
-  status.textContent = "Saving…"; status.style.color = "";
+  status.textContent = tr("status.saving"); status.style.color = "";
   try {
     const res = await fetch("/api/inhibition-rules", {
       method: "POST",
@@ -773,7 +774,7 @@ async function saveInhibRules() {
       status.style.color = "#e57373"; return;
     }
     const r = await res.json();
-    status.textContent = `✓ Saved ${r.count} rule(s). Cleared ${r.cleared_suppressions} active suppression(s).`;
+    status.textContent = tr("inhib.rules_saved", { count: r.count, cleared: r.cleared_suppressions });
     status.style.color = "#81c784";
     _markTabDirty("inhibitions", false);
     await loadInhibRules();
@@ -831,27 +832,27 @@ function renderDeliv() {
       const hay = `${r.source} ${r.severity} ${r.title} ${r.channel} ${r.suppressed_by || ""}`.toLowerCase();
       if (!hay.includes(filter)) continue;
     }
-    const tr = document.createElement("tr");
-    tr.classList.add("deliv-row");
+    const row = document.createElement("tr");
+    row.classList.add("deliv-row");
     const t = new Date(r.ts * 1000).toLocaleTimeString();
     let chCell;
     if (r.channel === "suppressed") {
-      chCell = `<span class="ch-suppressed">suppressed by <code>${escapeHtml(r.suppressed_by || "?")}</code></span>`;
+      chCell = `<span class="ch-suppressed">${escapeHtml(tr("deliveries.suppressed_by"))} <code>${escapeHtml(r.suppressed_by || "?")}</code></span>`;
     } else if (r.channel === "dry-run") {
-      chCell = `<span class="ch-dry-run">dry-run</span>`;
+      chCell = `<span class="ch-dry-run">${escapeHtml(tr("deliveries.dry_run"))}</span>`;
     } else if (r.channel === "dry-run-suppressed") {
-      chCell = `<span class="ch-suppressed">dry-run (would suppress: <code>${escapeHtml(r.suppressed_by || "?")}</code>)</span>`;
+      chCell = `<span class="ch-suppressed">${escapeHtml(tr("deliveries.dry_run"))} (${escapeHtml(tr("deliveries.would_suppress"))}: <code>${escapeHtml(r.suppressed_by || "?")}</code>)</span>`;
     } else {
       chCell = `<span class="ch-${r.channel}">${escapeHtml(r.channel)}</span>`;
     }
-    tr.innerHTML = `<td>${t}</td><td>${escapeHtml(r.source)}</td><td class="sev-${r.severity}">${r.severity}</td><td>${escapeHtml(r.title)}</td><td>${chCell}</td>`;
-    tr.addEventListener("click", () => _toggleDelivExpand(tr, r));
-    tr.style.cursor = "pointer";
-    tb.appendChild(tr); shown++;
+    row.innerHTML = `<td>${t}</td><td>${escapeHtml(r.source)}</td><td class="sev-${r.severity}">${r.severity}</td><td>${escapeHtml(r.title)}</td><td>${chCell}</td>`;
+    row.addEventListener("click", () => _toggleDelivExpand(row, r));
+    row.style.cursor = "pointer";
+    tb.appendChild(row); shown++;
   }
   const cnt = $("#deliv-count");
-  if (cnt) cnt.textContent = total === shown ? `${total} event(s)` : `${shown} / ${total} event(s)`;
-  if (!shown) tb.innerHTML = `<tr><td colspan="5" class="muted">${total ? "No events match the filter." : "No deliveries yet."}</td></tr>`;
+  if (cnt) cnt.textContent = total === shown ? tr("deliveries.event_count", { count: total }) : tr("deliveries.event_count_filtered", { shown, total });
+  if (!shown) tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(total ? tr("deliveries.no_match") : tr("deliveries.no_deliveries"))}</td></tr>`;
 }
 
 function _toggleDelivExpand(tr, r) {
@@ -911,7 +912,7 @@ function _csvCell(v) {
 
 function exportDeliveriesCsv() {
   const rows = _filteredDelivRows();
-  if (!rows.length) { showToast("No rows to export", "warn", 4000); return; }
+  if (!rows.length) { showToast(tr("deliveries.no_rows_export"), "warn", 4000); return; }
   const header = ["timestamp_iso", "timestamp_epoch", "source", "severity", "title", "channel", "suppressed_by"];
   const lines = [header.join(",")];
   for (const r of rows) {
@@ -926,7 +927,7 @@ function exportDeliveriesCsv() {
   a.download = "klaxond-deliveries-" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
   a.click();
   URL.revokeObjectURL(url);
-  showToast(`Exported ${rows.length} row(s)`, "success", 3000);
+  showToast(tr("deliveries.exported", { count: rows.length }), "success", 3000);
 }
 
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -947,7 +948,7 @@ function populateTestComponentSelect() {
   const sel = $("#t-component");
   if (!sel) return;
   const cur = sel.value;
-  sel.innerHTML = `<option value="">(none — freeform, no button)</option>` +
+  sel.innerHTML = `<option value="">${escapeHtml(tr("render.none_freeform"))}</option>` +
     Object.keys(rcData).sort().map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)} → ${escapeHtml(rcData[k][0])}</option>`).join("");
   if (cur && rcData[cur]) sel.value = cur;
 }
@@ -959,23 +960,23 @@ function renderRCTable() {
 
 function addRCRow(component="", label="", url="") {
   const tb = $("#t-rc tbody");
-  const tr = document.createElement("tr");
-  tr.innerHTML = `
+  const row = document.createElement("tr");
+  row.innerHTML = `
     <td><input type="text" value="${escapeHtml(component)}" data-f="key"></td>
     <td><input type="text" value="${escapeHtml(label)}" data-f="label"></td>
     <td><input type="text" value="${escapeHtml(url)}" data-f="url"></td>
     <td>
-      <button data-test title="Open URL in new tab">↗</button>
+      <button data-test title="${escapeHtml(tr("render.open_title"))}">↗</button>
       <button class="danger" data-del>×</button>
     </td>`;
-  tr.querySelector("[data-del]").addEventListener("click", () => tr.remove());
-  tr.querySelector("[data-test]").addEventListener("click", () => {
-    const u = tr.querySelector('[data-f="url"]').value.trim();
+  row.querySelector("[data-del]").addEventListener("click", () => row.remove());
+  row.querySelector("[data-test]").addEventListener("click", () => {
+    const u = row.querySelector('[data-f="url"]').value.trim();
     if (!u) return;
     const full = u.startsWith("http") ? u : ($("#gbase").textContent.replace(/\/$/, "") + u);
     window.open(full, "_blank", "noopener");
   });
-  tb.appendChild(tr);
+  tb.appendChild(row);
 }
 
 $("#btn-rc-add").addEventListener("click", () => addRCRow());
@@ -989,12 +990,12 @@ $("#btn-rc-save").addEventListener("click", async () => {
   });
   try {
     const r = await J("/api/render-config", { method: "POST", body: JSON.stringify({component_dashboards: out}), headers: {"Content-Type": "application/json"} });
-    $("#rc-status").textContent = `Saved (${r.count} mappings) ✓`;
+    $("#rc-status").textContent = tr("render.saved_mappings", { count: r.count });
     setTimeout(() => $("#rc-status").textContent = "", 3000);
     _markTabDirty("render", false);
     rcData = out;
     populateTestComponentSelect();
-  } catch (e) { $("#rc-status").textContent = "Error: " + e.message; }
+  } catch (e) { $("#rc-status").textContent = tr("common.error") + ": " + e.message; }
 });
 
 // ---- Render preview ----
@@ -1065,7 +1066,7 @@ async function _runPreviewRender() {
   try { payload = JSON.parse($("#pv-input").value || "{}"); }
   catch (e) {
     // JSON not yet valid (user mid-typing) — show in output but keep mock as-is
-    $("#pv-output").textContent = "Invalid JSON: " + e.message;
+    $("#pv-output").textContent = tr("preview.invalid_json", { message: e.message });
     return;
   }
   try {
@@ -1077,8 +1078,8 @@ async function _runPreviewRender() {
     $("#pv-output").textContent = JSON.stringify(r, null, 2);
     renderNtfyMock(r);
   } catch (e) {
-    $("#pv-output").textContent = "Error: " + e.message;
-    $("#pv-vis-body").textContent = "Error rendering preview";
+    $("#pv-output").textContent = tr("common.error") + ": " + e.message;
+    $("#pv-vis-body").textContent = tr("preview.error_rendering");
   }
 }
 
@@ -1107,7 +1108,7 @@ $("#pv-sev")?.addEventListener("change", _schedulePreview);
 function renderNtfyMock(r) {
   const h = r.headers || {};
   $("#pv-vis-title").textContent = h["Title (raw)"] || "—";
-  $("#pv-vis-body").textContent = r.body || "(empty body)";
+  $("#pv-vis-body").textContent = r.body || tr("preview.empty_body");
   const tags = (h["Tags"] || "").split(",").filter(Boolean);
   $("#pv-vis-tags").innerHTML = tags.map(t => `<span class="chip">${escapeHtml(t)}</span>`).join("");
   const prio = (h["Priority"] || "default").toLowerCase();
@@ -1152,7 +1153,10 @@ $("#btn-test-fire").addEventListener("click", async () => {
         headers: {"Content-Type": "application/json"},
       });
       $("#t-result").textContent = JSON.stringify(r, null, 2);
-      showToast(`Dry-run: ${r.would_send ? "would deliver" : "would suppress"} (${r.reason})`, r.would_send ? "info" : "warn", 5000);
+      showToast(tr("test.dry_run_toast", {
+        verdict: r.would_send ? tr("test.would_deliver") : tr("test.would_suppress"),
+        reason: r.reason
+      }), r.would_send ? "info" : "warn", 5000);
       setTimeout(loadDeliv, 500);
       return;
     }
@@ -1170,8 +1174,8 @@ $("#btn-test-fire").addEventListener("click", async () => {
     $("#t-result").textContent = JSON.stringify(r, null, 2);
     setTimeout(loadDeliv, 1000);
   } catch (e) {
-    $("#t-result").textContent = "Error: " + e.message;
-    showToast("Send-test failed: " + e.message, "error");
+    $("#t-result").textContent = tr("common.error") + ": " + e.message;
+    showToast(tr("test.send_failed", { message: e.message }), "error");
   } finally {
     button.disabled = false;
   }
@@ -1188,8 +1192,8 @@ async function loadNtfyTopics() {
     ntfyTopicsData = j;
     renderNtfyTopicsEditor();
     const sev = (j.known_severities || []).filter(s => s !== "resolved");
-    const sevStr = sev.length ? sev.map(s => `<code>${escapeHtml(s)}</code>`).join(", ") : "<em>none</em>";
-    $("#ntfy-topics-summary").innerHTML = `<small>${(j.topics || []).length} topic(s) · severities routed: ${sevStr}</small>`;
+    const sevStr = sev.length ? sev.map(s => `<code>${escapeHtml(s)}</code>`).join(", ") : `<em>${escapeHtml(tr("routing.none"))}</em>`;
+    $("#ntfy-topics-summary").innerHTML = `<small>${tr("routing.summary", { count: (j.topics || []).length, severities: sevStr })}</small>`;
     $("#ntfy-topics-note").textContent = j.note || "";
   } catch (e) {
     fetchError("ntfy-topics", e);
@@ -1201,17 +1205,17 @@ function _renderTopicRow(t, idx) {
   return `
     <div class="card" data-topic-idx="${idx}" style="margin-bottom:8px">
       <div class="grid2">
-        <label>Topic name <input type="text" class="ntfy-t-name" value="${escapeHtml(t.name || "")}" placeholder="ntfy topic id"></label>
-        <label>Token
-          <input type="password" class="ntfy-t-token" value="${escapeHtml(t.token || "")}" placeholder="${t.token === '***SET***' ? '(keep existing — leave as ***SET***)' : 'tk_... (or empty for env fallback)'}">
-          <small class="muted">${t.token === '***SET***' ? '<span style="color:#2c8a47">✓ token set</span> — clear field to remove' : '<span style="color:#c44">✗ no token set</span>'}</small>
+        <label>${escapeHtml(tr("routing.topic_name"))} <input type="text" class="ntfy-t-name" value="${escapeHtml(t.name || "")}" placeholder="${escapeHtml(tr("routing.topic_placeholder"))}"></label>
+        <label>${escapeHtml(tr("routing.token"))}
+          <input type="password" class="ntfy-t-token" value="${escapeHtml(t.token || "")}" placeholder="${escapeHtml(t.token === '***SET***' ? tr("routing.keep_existing_placeholder") : tr("routing.token_placeholder"))}">
+          <small class="muted">${t.token === '***SET***' ? `<span style="color:#2c8a47">${escapeHtml(tr("routing.token_set"))}</span> ${escapeHtml(tr("routing.clear_to_remove"))}` : `<span style="color:#c44">${escapeHtml(tr("routing.no_token"))}</span>`}</small>
         </label>
       </div>
-      <label>Handles severities (comma-separated, any string allowed)
+      <label>${escapeHtml(tr("routing.handles"))}
         <input type="text" class="ntfy-t-handles" value="${escapeHtml(handlesStr)}" placeholder="info, warning, critical">
       </label>
       <p class="row" style="margin-top:8px">
-        <button type="button" class="ntfy-t-delete" data-idx="${idx}" style="color:#c44">Delete topic</button>
+        <button type="button" class="ntfy-t-delete" data-idx="${idx}" style="color:#c44">${escapeHtml(tr("routing.delete_topic"))}</button>
       </p>
     </div>`;
 }
@@ -1248,7 +1252,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
     if (!name) return;  // skip empty rows on save (use Delete instead)
     out.push({ name, token: tokenRaw, handles });
   });
-  $("#ntfy-topics-status").textContent = "Saving…";
+  $("#ntfy-topics-status").textContent = tr("status.saving");
   $("#ntfy-topics-status").style.color = "";
   try {
     const r = await fetch("/api/ntfy-topics", {
@@ -1264,13 +1268,16 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
     }
     const j = await r.json();
     $("#ntfy-topics-status").style.color = "#2c8a47";
-    $("#ntfy-topics-status").textContent = `Saved ✓ (${j.topics.length} topic(s), severities: ${(j.known_severities || []).filter(s => s !== "resolved").join(", ")})`;
+    $("#ntfy-topics-status").textContent = tr("routing.saved_topics", {
+      count: j.topics.length,
+      severities: (j.known_severities || []).filter(s => s !== "resolved").join(", ")
+    });
     _markTabDirty("routing", false);
     // Reload to refresh badges
     setTimeout(() => loadNtfyTopics(), 500);
   } catch (e) {
     $("#ntfy-topics-status").style.color = "#c44";
-    $("#ntfy-topics-status").textContent = "Error: " + e.message;
+    $("#ntfy-topics-status").textContent = tr("common.error") + ": " + e.message;
   }
 });
 
@@ -1283,20 +1290,20 @@ async function loadRouting() {
     $("#r-ntfy-url").value = c.ntfy.url || "";
     // ntfy topics are managed by the rich-view editor below (loadNtfyTopics).
     // The "Save routing" button only persists ntfy URL + telegram + smtp.
-    $("#r-ntfy-status").innerHTML = c.ntfy.url_from_env ? "<em>url overridden by env</em>" : "";
+    $("#r-ntfy-status").innerHTML = c.ntfy.url_from_env ? `<em>${escapeHtml(tr("routing.url_overridden_env"))}</em>` : "";
     $("#r-tg-chat").value = c.telegram.chat_id || "";
-    $("#r-tg-status").innerHTML = `bot token: ${badge(c.telegram.bot_token_configured)}` +
-      (c.telegram.chat_id_from_env ? " · <em>chat_id overridden by env</em>" : "");
+    $("#r-tg-status").innerHTML = `${escapeHtml(tr("routing.bot_token"))} ${badge(c.telegram.bot_token_configured)}` +
+      (c.telegram.chat_id_from_env ? ` · <em>${escapeHtml(tr("routing.chat_overridden_env"))}</em>` : "");
     $("#r-smtp-host").value = c.smtp.host || "";
     $("#r-smtp-port").value = c.smtp.port || 587;
     $("#r-smtp-from").value = c.smtp.from_addr || "";
     $("#r-smtp-to").value = c.smtp.to_addr || "";
-    $("#r-smtp-status").innerHTML = `user: ${badge(c.smtp.user_configured)} password: ${badge(c.smtp.password_configured)}` +
-      (c.smtp.host_from_env ? " · <em>host overridden by env</em>" : "");
+    $("#r-smtp-status").innerHTML = `${escapeHtml(tr("routing.user"))} ${badge(c.smtp.user_configured)} ${escapeHtml(tr("routing.password"))} ${badge(c.smtp.password_configured)}` +
+      (c.smtp.host_from_env ? ` · <em>${escapeHtml(tr("routing.host_overridden_env"))}</em>` : "");
   } catch (e) { fetchError("routing", e); }
 }
 
-const badge = ok => ok ? "<span style='color:var(--green)'>✓ configured</span>" : "<span style='color:var(--red)'>✗ missing</span>";
+const badge = ok => ok ? `<span style='color:var(--green)'>✓ ${escapeHtml(tr("common.configured"))}</span>` : `<span style='color:var(--red)'>✗ ${escapeHtml(tr("common.missing"))}</span>`;
 
 $("#btn-routing-save").addEventListener("click", async () => {
   // ntfy topics intentionally omitted — managed by the topic editor + /api/ntfy-topics.
@@ -1312,11 +1319,11 @@ $("#btn-routing-save").addEventListener("click", async () => {
   };
   try {
     await J("/api/channel-config", { method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" } });
-    $("#routing-msg").textContent = "Saved ✓ (env vars still take precedence if set)";
+    $("#routing-msg").textContent = tr("routing.saved");
     setTimeout(() => $("#routing-msg").textContent = "", 4000);
     _markTabDirty("routing", false);
     loadStatus();
-  } catch (e) { $("#routing-msg").textContent = "Error: " + e.message; }
+  } catch (e) { $("#routing-msg").textContent = tr("common.error") + ": " + e.message; }
 });
 
 
@@ -1329,24 +1336,24 @@ async function loadIngestAuth() {
     tb.innerHTML = "";
     for (const src of Object.keys(srcs).sort()) {
       const info = srcs[src];
-      const tr = document.createElement("tr");
+      const row = document.createElement("tr");
       const status = info.configured
-        ? `<span style='color:var(--green)'>✓ secret set</span>`
-        : `<span style='color:var(--muted)'>(permissive — no secret)</span>`;
-      const from = info.from === "env" ? `<code>env</code> (read-only, set <code>KLAXOND_INGEST_SECRET_${src.toUpperCase()}</code>)`
+        ? `<span style='color:var(--green)'>${escapeHtml(tr("ingest.secret_set"))}</span>`
+        : `<span style='color:var(--muted)'>${escapeHtml(tr("ingest.permissive"))}</span>`;
+      const from = info.from === "env" ? `${escapeHtml(tr("ingest.env_readonly", { name: `KLAXOND_INGEST_SECRET_${src.toUpperCase()}` }))}`
                   : info.from === "toml" ? `<code>klaxond.toml</code>`
                   : "—";
       const isEnv = info.from === "env";
-      tr.innerHTML = `
+      row.innerHTML = `
         <td><code>${escapeHtml(src)}</code></td>
         <td>${status}</td>
         <td><small>${from}</small></td>
         <td>
-          <button class="btn primary" data-act="generate" data-src="${escapeHtml(src)}" ${isEnv ? "disabled title='env override active'" : ""}>Generate</button>
-          <button class="btn" data-act="set" data-src="${escapeHtml(src)}" ${isEnv ? "disabled" : ""}>Set custom…</button>
-          <button class="btn" data-act="clear" data-src="${escapeHtml(src)}" ${(!info.configured || isEnv) ? "disabled" : ""} style="color:var(--red)">Clear</button>
+          <button class="btn primary" data-act="generate" data-src="${escapeHtml(src)}" ${isEnv ? "disabled title='env override active'" : ""}>${escapeHtml(tr("ingest.generate"))}</button>
+          <button class="btn" data-act="set" data-src="${escapeHtml(src)}" ${isEnv ? "disabled" : ""}>${escapeHtml(tr("ingest.set_custom"))}</button>
+          <button class="btn" data-act="clear" data-src="${escapeHtml(src)}" ${(!info.configured || isEnv) ? "disabled" : ""} style="color:var(--red)">${escapeHtml(tr("ingest.clear"))}</button>
         </td>`;
-      tb.appendChild(tr);
+      tb.appendChild(row);
     }
     // Wire button handlers
     tb.querySelectorAll("button[data-act]").forEach(btn => {
@@ -1414,25 +1421,25 @@ function renderCascadeTable() {
 function addCasRow(name = "ntfy", timeout = 5, idx = -1) {
   const tb = $("#t-cas tbody");
   const i = idx === -1 ? tb.children.length : idx;
-  const tr = document.createElement("tr");
+  const row = document.createElement("tr");
   const opts = TIER_OPTS.map(o => `<option ${o === name ? "selected" : ""}>${o}</option>`).join("");
-  tr.innerHTML = `
-    <td><span class="muted">${i + 1}</span> <button data-up title="Move up">↑</button><button data-dn title="Move down">↓</button></td>
+  row.innerHTML = `
+    <td><span class="muted">${i + 1}</span> <button data-up title="${escapeHtml(tr("cascade.move_up"))}">↑</button><button data-dn title="${escapeHtml(tr("cascade.move_down"))}">↓</button></td>
     <td><select data-f="name">${opts}</select></td>
     <td><input type="number" min="1" max="60" value="${timeout}" data-f="timeout"></td>
     <td><button class="danger" data-del>×</button></td>`;
-  tr.querySelector("[data-del]").addEventListener("click", () => { tr.remove(); renumberCas(); });
-  tr.querySelector("[data-up]").addEventListener("click", () => {
-    const prev = tr.previousElementSibling;
-    if (prev) tb.insertBefore(tr, prev);
+  row.querySelector("[data-del]").addEventListener("click", () => { row.remove(); renumberCas(); });
+  row.querySelector("[data-up]").addEventListener("click", () => {
+    const prev = row.previousElementSibling;
+    if (prev) tb.insertBefore(row, prev);
     renumberCas();
   });
-  tr.querySelector("[data-dn]").addEventListener("click", () => {
-    const next = tr.nextElementSibling;
-    if (next) tb.insertBefore(next, tr);
+  row.querySelector("[data-dn]").addEventListener("click", () => {
+    const next = row.nextElementSibling;
+    if (next) tb.insertBefore(next, row);
     renumberCas();
   });
-  tb.appendChild(tr);
+  tb.appendChild(row);
   renumberCas();
 }
 
@@ -1457,11 +1464,11 @@ $("#btn-cas-save").addEventListener("click", async () => {
       body: JSON.stringify({ tiers, default_enabled_for_webhook: $("#cas-default").checked }),
       headers: { "Content-Type": "application/json" }
     });
-    $("#cas-status").textContent = `Saved (${tiers.length} tiers) ✓`;
+    $("#cas-status").textContent = tr("cascade.saved", { count: tiers.length });
     setTimeout(() => $("#cas-status").textContent = "", 3000);
     _markTabDirty("cascade", false);
     loadStatus();
-  } catch (e) { $("#cas-status").textContent = "Error: " + e.message; }
+  } catch (e) { $("#cas-status").textContent = tr("common.error") + ": " + e.message; }
 });
 
 
@@ -1585,10 +1592,10 @@ $("#btn-delivery-save").addEventListener("click", async () => {
       body: JSON.stringify(payload),
       headers: { "Content-Type": "application/json" }
     });
-    $("#delivery-status").textContent = `Saved (${policies.length} policies, ${rules.length} rules) ✓`;
+    $("#delivery-status").textContent = tr("delivery.saved", { policies: policies.length, rules: rules.length });
     setTimeout(() => $("#delivery-status").textContent = "", 4000);
     _markTabDirty("delivery", false);
-  } catch (e) { $("#delivery-status").textContent = "Error: " + e.message; }
+  } catch (e) { $("#delivery-status").textContent = tr("common.error") + ": " + e.message; }
 });
 
 
@@ -1596,20 +1603,20 @@ $("#btn-delivery-save").addEventListener("click", async () => {
 let dedupData = { settings: {}, sources: [], pending_counts: {}, defaults: {} };
 
 const STRATEGY_HELP = {
-  none: "no grouping (immediate delivery, equivalent to disabled)",
-  time: "all events in the window batched together",
-  key:  "group items sharing the same dedup key (per source)",
+  none: "dedup.help_none",
+  time: "dedup.help_time",
+  key:  "dedup.help_key",
 };
 
 const SOURCE_HELP = {
-  wud:          "WUD container image updates — key=image.name → 1 notif per image even if fires on N hosts",
-  grafana:      "Grafana alerts (via /webhook/*) — key=commonLabels.alertname",
-  beszel:       "Beszel host/container metrics — key=container_name",
-  healthchecks: "Healthchecks deadman — key=check name",
-  authentik:    "Authentik identity events — key=action:user (group login bursts)",
-  shelfmark:    "Shelfmark book events — key=event:title (download-complete/failed, request approve/reject)",
-  prowlarr:     "Prowlarr indexer/health events — key=eventType:message (Health, ApplicationUpdate, ecc.)",
-  decypharr:    "Decypharr Real-Debrid bridge events — key=event:hash (download-start/complete/fail per torrent)",
+  wud:          "dedup.source_wud",
+  grafana:      "dedup.source_grafana",
+  beszel:       "dedup.source_beszel",
+  healthchecks: "dedup.source_healthchecks",
+  authentik:    "dedup.source_authentik",
+  shelfmark:    "dedup.source_shelfmark",
+  prowlarr:     "dedup.source_prowlarr",
+  decypharr:    "dedup.source_decypharr",
 };
 
 async function loadDedup() {
@@ -1632,28 +1639,28 @@ function renderDedupCards() {
   let html = '<div class="grid2">';
   for (const src of sources) {
     const s = settings[src] || {};
-    const help = SOURCE_HELP[src] || "";
+    const help = SOURCE_HELP[src] ? tr(SOURCE_HELP[src]) : "";
     const pcount = pending[src] || 0;
     html += `
       <div class="card" data-src="${src}">
         <h3 style="margin-top:0">${src.toUpperCase()}
-          <small class="muted" style="font-weight:normal">${pcount > 0 ? `· ${pcount} pending` : ""}</small>
+          <small class="muted" style="font-weight:normal">${pcount > 0 ? `· ${escapeHtml(tr("dedup.pending", { count: pcount }))}` : ""}</small>
         </h3>
         <p class="muted"><small>${help}</small></p>
-        <label><input type="checkbox" class="d-enabled" ${s.enabled ? "checked" : ""}> Enabled</label>
-        <label>Strategy
+        <label><input type="checkbox" class="d-enabled" ${s.enabled ? "checked" : ""}> ${escapeHtml(tr("dedup.enabled"))}</label>
+        <label>${escapeHtml(tr("dedup.strategy"))}
           <select class="d-strategy">
-            <option value="key" ${s.strategy === "key" ? "selected" : ""}>key (recommended)</option>
-            <option value="time" ${s.strategy === "time" ? "selected" : ""}>time</option>
-            <option value="none" ${s.strategy === "none" ? "selected" : ""}>none</option>
+            <option value="key" ${s.strategy === "key" ? "selected" : ""}>${escapeHtml(tr("dedup.key_recommended"))}</option>
+            <option value="time" ${s.strategy === "time" ? "selected" : ""}>${escapeHtml(tr("dedup.time"))}</option>
+            <option value="none" ${s.strategy === "none" ? "selected" : ""}>${escapeHtml(tr("dedup.none"))}</option>
           </select>
         </label>
-        <label>Window (seconds, 5..3600)
+        <label>${escapeHtml(tr("dedup.window"))}
           <input type="number" class="d-window" min="5" max="3600" value="${s.window_s || 90}">
         </label>
-        <label title="By default, severity=critical events bypass the dedup window and deliver immediately. Toggle to also debounce critical (risky).">
+        <label title="${escapeHtml(tr("dedup.override_title"))}">
           <input type="checkbox" class="d-override" ${s.override_critical ? "checked" : ""}>
-          Override critical (debounce critical too)
+          ${escapeHtml(tr("dedup.override_critical"))}
         </label>
       </div>`;
   }
@@ -1672,7 +1679,7 @@ $("#dedup-save")?.addEventListener("click", async () => {
       override_critical: card.querySelector(".d-override").checked,
     };
   }
-  $("#dedup-status").textContent = "Saving…";
+  $("#dedup-status").textContent = tr("status.saving");
   try {
     const r = await J("/api/dedup-config", {
       method: "POST",
@@ -1681,14 +1688,14 @@ $("#dedup-save")?.addEventListener("click", async () => {
     });
     if (r.ok) {
       dedupData.settings = r.settings;
-      $("#dedup-status").textContent = "Saved ✓";
+      $("#dedup-status").textContent = tr("dedup.saved");
       setTimeout(() => { $("#dedup-status").textContent = ""; }, 3000);
       _markTabDirty("grouping", false);
     } else {
-      $("#dedup-status").textContent = "Error: " + (r.error || "unknown");
+      $("#dedup-status").textContent = tr("common.error") + ": " + (r.error || "unknown");
     }
   } catch (e) {
-    $("#dedup-status").textContent = "Error: " + e.message;
+    $("#dedup-status").textContent = tr("common.error") + ": " + e.message;
   }
 });
 
@@ -1743,14 +1750,14 @@ async function loadAuth() {
     $("#auth-basic-user").value = b.username || "";
     $("#auth-basic-realm").value = b.realm || "klaxond";
     $("#auth-basic-pwd").value = "";
-    $("#auth-basic-status").textContent = b.password_hash === "***SET***" ? "set" : "not set";
+    $("#auth-basic-status").textContent = b.password_hash === "***SET***" ? tr("auth.set") : tr("auth.not_set");
     // oidc
     const o = s.oidc || {};
     $("#auth-oidc-provider").value = o.provider || "authentik";
     $("#auth-oidc-issuer").value = o.issuer || "";
     $("#auth-oidc-cid").value = o.client_id || "";
     $("#auth-oidc-csec").value = "";
-    $("#auth-oidc-csec-status").textContent = o.client_secret === "***SET***" ? "set" : "not set";
+    $("#auth-oidc-csec-status").textContent = o.client_secret === "***SET***" ? tr("auth.set") : tr("auth.not_set");
     $("#auth-oidc-scopes").value = o.scopes || "openid profile email";
     $("#auth-oidc-group").value = o.required_group || "";
     $("#auth-oidc-redirect").value = o.redirect_path || "/auth/callback";
@@ -1762,7 +1769,7 @@ async function loadAuth() {
     $("#auth-tp-gheader").value = tp.groups_header || "X-Forwarded-Groups";
     $("#auth-tp-cidrs").value = (tp.trusted_cidrs || []).join(", ");
   } catch (e) {
-    $("#auth-status").textContent = "Error loading: " + e.message;
+    $("#auth-status").textContent = tr("auth.error_loading", { message: e.message });
   }
 }
 
@@ -1800,7 +1807,7 @@ $("#auth-save")?.addEventListener("click", async () => {
       trusted_cidrs: $("#auth-tp-cidrs").value.split(",").map(x => x.trim()).filter(Boolean),
     },
   };
-  $("#auth-status").textContent = "Saving…";
+  $("#auth-status").textContent = tr("status.saving");
   try {
     const r = await J("/api/auth-config", {
       method: "POST",
@@ -1808,15 +1815,15 @@ $("#auth-save")?.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
     });
     if (r.ok) {
-      $("#auth-status").textContent = `Saved ✓ (mode=${r.settings.mode}). Reload page to apply.`;
+      $("#auth-status").textContent = tr("auth.saved", { mode: r.settings.mode });
       _markTabDirty("auth", false);
       authData.settings = r.settings;
       _showSubcard(r.settings.mode);
     } else {
-      $("#auth-status").textContent = "Error: " + (r.error || "unknown");
+      $("#auth-status").textContent = tr("common.error") + ": " + (r.error || "unknown");
     }
   } catch (e) {
-    $("#auth-status").textContent = "Error: " + e.message;
+    $("#auth-status").textContent = tr("common.error") + ": " + e.message;
   }
 });
 
@@ -1880,7 +1887,7 @@ function buildMermaidDiagram(cfgs, stats) {
   // Severity stat string per source
   const srcStat = (source) => {
     const n = s.bySource[source] || 0;
-    return n ? `<br/><small>${n} in 24h</small>` : "";
+    return n ? `<br/><small>${tr("flow.in_24h", { count: n })}</small>` : "";
   };
   const dedupStat = (source) => {
     const d = (dedup && dedup.settings) ? (dedup.settings[source] || {}) : {};
@@ -1889,7 +1896,7 @@ function buildMermaidDiagram(cfgs, stats) {
   };
   const chStat = (chan) => {
     const n = s.byChannel[chan] || 0;
-    return n ? `<br/><small>${n} delivered</small>` : "";
+    return n ? `<br/><small>${tr("flow.delivered", { count: n })}</small>` : "";
   };
 
   // ntfy topics — group as one collapsed sub-node or list inline
@@ -1898,7 +1905,7 @@ function buildMermaidDiagram(cfgs, stats) {
     const lines = ntfy.topics.slice(0, 6).map(t =>
       `${t.name}: ${(t.handles || []).join(", ")}`);
     if (ntfy.topics.length > 6) lines.push(`… +${ntfy.topics.length - 6} more`);
-    ntfyLabel = `ntfy<br/><small>${lines.join("<br/>")}${chStat("ntfy") ? "<br/>" + (s.byChannel["ntfy"] || 0) + " delivered/24h" : ""}</small>`;
+    ntfyLabel = `ntfy<br/><small>${lines.join("<br/>")}${chStat("ntfy") ? "<br/>" + tr("flow.delivered_24h", { count: s.byChannel["ntfy"] || 0 }) : ""}</small>`;
   }
 
   // Cascade
@@ -1929,7 +1936,7 @@ function buildMermaidDiagram(cfgs, stats) {
   // Upstream sources — what feeds the actual emitters.
   // Grafana → Alertmanager (which then POSTs to klaxond /webhook/).
   lines.push(`  subgraph UPS["Upstream"]`);
-  lines.push(`    GRA["Grafana<br/><small>alert rules</small>"]`);
+  lines.push(`    GRA["Grafana<br/><small>${_mermaidEscape(tr("flow.alert_rules"))}</small>"]`);
   lines.push("  end");
   lines.push("  class GRA src");
 
@@ -1978,8 +1985,8 @@ function buildMermaidDiagram(cfgs, stats) {
   if (tiers.find(t => t.name === "telegram")) {
     const tgClass = tgConfigured ? "sink" : "disabled";
     const tgLabel = tgConfigured
-      ? `Telegram<br/><small>chat ${channel.telegram.chat_id}${chStat("telegram") ? "<br/>" + (s.byChannel["telegram"] || 0) + " delivered/24h" : ""}</small>`
-      : "Telegram<br/><small>not configured</small>";
+      ? `Telegram<br/><small>chat ${channel.telegram.chat_id}${chStat("telegram") ? "<br/>" + tr("flow.delivered_24h", { count: s.byChannel["telegram"] || 0 }) : ""}</small>`
+      : `Telegram<br/><small>${_mermaidEscape(tr("flow.not_configured"))}</small>`;
     lines.push(`  TG["${_mermaidEscape(tgLabel)}"]`);
     lines.push(`  class TG ${tgClass}`);
     lines.push(`  CAS -.->|"tier 2 on ntfy fail"| TG`);
@@ -1989,8 +1996,8 @@ function buildMermaidDiagram(cfgs, stats) {
   if (tiers.find(t => t.name === "smtp")) {
     const smClass = smtpConfigured ? "sink" : "disabled";
     const smLabel = smtpConfigured
-      ? `SMTP<br/><small>${channel.smtp.host}:${channel.smtp.port}${chStat("smtp") ? "<br/>" + (s.byChannel["smtp"] || 0) + " delivered/24h" : ""}</small>`
-      : "SMTP<br/><small>not configured</small>";
+      ? `SMTP<br/><small>${channel.smtp.host}:${channel.smtp.port}${chStat("smtp") ? "<br/>" + tr("flow.delivered_24h", { count: s.byChannel["smtp"] || 0 }) : ""}</small>`
+      : `SMTP<br/><small>${_mermaidEscape(tr("flow.not_configured"))}</small>`;
     lines.push(`  SMTP["${_mermaidEscape(smLabel)}"]`);
     lines.push(`  class SMTP ${smClass}`);
     lines.push(`  CAS -.->|"tier 3 on tg fail"| SMTP`);
@@ -2023,7 +2030,7 @@ let _flowMermaidInitialized = false;
 async function _waitForMermaid(timeoutMs = 15000) {
   if (window.mermaid) return true;
   const t0 = Date.now();
-  $("#flow-status").textContent = "Loading Mermaid library (3.3MB)…";
+  $("#flow-status").textContent = tr("flow.loading_mermaid");
   while (!window.mermaid) {
     if (Date.now() - t0 > timeoutMs) return false;
     await new Promise(r => setTimeout(r, 100));
@@ -2033,14 +2040,14 @@ async function _waitForMermaid(timeoutMs = 15000) {
 
 async function loadFlow() {
   if (!await _waitForMermaid()) {
-    $("#flow-status").textContent = "Mermaid library failed to load (timeout). Check Network tab.";
+    $("#flow-status").textContent = tr("flow.mermaid_timeout");
     return;
   }
   if (!_flowMermaidInitialized) {
     mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
     _flowMermaidInitialized = true;
   }
-  $("#flow-status").textContent = "Fetching config…";
+  $("#flow-status").textContent = tr("flow.fetching_config");
   let cfgs = {}, stats = null;
   try {
     const [channel, cascade, ntfy, dedup, auth, deliveries] = await Promise.all([
@@ -2054,7 +2061,7 @@ async function loadFlow() {
     cfgs = { channel, cascade, ntfy, dedup, auth };
     stats = _aggregateDeliveries24h(deliveries);
   } catch (e) {
-    $("#flow-status").textContent = "Config fetch failed: " + e.message;
+    $("#flow-status").textContent = tr("flow.config_fetch_failed", { message: e.message });
     return;
   }
   const src = buildMermaidDiagram(cfgs, stats);
@@ -2067,10 +2074,10 @@ async function loadFlow() {
     $("#flow-diagram")?.classList.toggle("animate", !!$("#flow-animate")?.checked);
     // Pulse nodes that had any activity in the last 60s
     _pulseRecentActivityNodes(stats);
-    $("#flow-status").textContent = "Rendered ✓ at " + new Date().toLocaleTimeString();
+    $("#flow-status").textContent = tr("flow.rendered_at", { time: new Date().toLocaleTimeString() });
   } catch (e) {
     $("#flow-diagram").innerHTML = `<pre style="color:#c44">Mermaid render error: ${e.message}</pre>`;
-    $("#flow-status").textContent = "Render failed";
+    $("#flow-status").textContent = tr("flow.render_failed");
   }
 }
 
@@ -2107,7 +2114,7 @@ async function refreshFlowStats() {
     _pulseRecentActivityNodes(stats);
     // Update status timestamp
     const ts = $("#flow-status");
-    if (ts) ts.textContent = "Stats refreshed at " + new Date().toLocaleTimeString();
+    if (ts) ts.textContent = tr("flow.stats_refreshed", { time: new Date().toLocaleTimeString() });
   } catch (e) {
     // silent
   }
@@ -2157,6 +2164,20 @@ async function refreshAll() {
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
+
+document.addEventListener("klaxond:languagechange", () => {
+  loadStatus();
+  loadConfigBackups();
+  renderDeliv();
+  if (!_dirtyTabs.has("inhibitions")) { loadInhib(); loadInhibRules(); loadSchedules(); loadAcks(); }
+  if (!_dirtyTabs.has("render")) { renderRCTable(); populateTestComponentSelect(); }
+  if (!_dirtyTabs.has("routing")) { renderNtfyTopicsEditor(); loadRouting(); loadIngestAuth(); }
+  if (!_dirtyTabs.has("cascade")) renderCascadeTable();
+  if (!_dirtyTabs.has("delivery")) { renderDeliveryDefault(); renderPoliciesTable(); renderRulesTable(); }
+  if (!_dirtyTabs.has("grouping")) renderDedupCards();
+  if (!_dirtyTabs.has("auth")) loadAuth();
+  if (document.querySelector("#tab-flow.active")) loadFlow();
+});
 
 
 // ---- Theme toggle (light / dark) ----
@@ -2228,7 +2249,7 @@ function _markTabDirty(tabId, dirty = true) {
   if (dirty && !dot) {
     dot = document.createElement("span");
     dot.className = "tab-dirty";
-    dot.title = "Unsaved changes";
+    dot.title = tr("shortcut.unsaved");
     tab.appendChild(dot);
   } else if (!dirty && dot) {
     dot.remove();
@@ -2274,7 +2295,7 @@ function activateTabWithDirtyGuard(tabId) {
   const active = document.querySelector(".tabpane.active");
   const activeId = active ? active.id.replace(/^tab-/, "") : null;
   if (activeId && _dirtyTabs.has(activeId) && activeId !== tabId) {
-    if (!confirm(`Tab "${activeId}" has unsaved changes. Discard and switch to "${tabId}"?`)) return false;
+    if (!confirm(tr("shortcut.discard_confirm", { from: activeId, to: tabId }))) return false;
     _markTabDirty(activeId, false);
   }
   return _origActivateTab(tabId);
@@ -2288,10 +2309,10 @@ document.addEventListener("DOMContentLoaded", _wireDirtyTracking);
 // Esc        → blur active input; if it was a search input, clear it too
 // ?          → toggle the shortcut overlay (when not typing in an input)
 const _SHORTCUT_HELP = [
-  ["Ctrl/Cmd + S", "Save the active tab (clicks its primary Save button)"],
-  ["Esc",          "Blur the focused input; clears search filters"],
-  ["?",            "Show this help overlay"],
-  ["1..9 / 0",     "Jump to tab by position (when no input is focused)"],
+  ["Ctrl/Cmd + S", "shortcut.save"],
+  ["Esc",          "shortcut.esc"],
+  ["?",            "shortcut.help"],
+  ["1..9 / 0",     "shortcut.jump"],
 ];
 
 function _activeTabPane() {
@@ -2320,11 +2341,11 @@ function _showShortcutHelp() {
   box.id = "shortcut-help";
   box.innerHTML = `
     <div class="shortcut-help-inner">
-      <h3 style="margin-top:0; text-transform:none; color:var(--text); letter-spacing:0; font-size:1.1em">Keyboard shortcuts</h3>
+      <h3 style="margin-top:0; text-transform:none; color:var(--text); letter-spacing:0; font-size:1.1em">${escapeHtml(tr("shortcut.title"))}</h3>
       <table style="border:none">
-        ${_SHORTCUT_HELP.map(([k, d]) => `<tr><td style="border:none;padding:4px 12px 4px 0"><code>${escapeHtml(k)}</code></td><td style="border:none;padding:4px 0">${escapeHtml(d)}</td></tr>`).join("")}
+        ${_SHORTCUT_HELP.map(([k, d]) => `<tr><td style="border:none;padding:4px 12px 4px 0"><code>${escapeHtml(k)}</code></td><td style="border:none;padding:4px 0">${escapeHtml(tr(d))}</td></tr>`).join("")}
       </table>
-      <p class="muted" style="margin-top:1em; font-size:11px">Press <code>?</code> or click outside to close.</p>
+      <p class="muted" style="margin-top:1em; font-size:11px">${tr("shortcut.close")}</p>
     </div>`;
   box.addEventListener("click", e => { if (e.target === box) box.remove(); });
   document.body.appendChild(box);

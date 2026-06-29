@@ -1,0 +1,910 @@
+// klaxond UI preferences: i18n + theme mode.
+// No build step and no framework: this file is loaded before app.js.
+
+(function () {
+  const LANG_KEY = "klaxond.lang";
+  const THEME_MODE_KEY = "klaxond.themeMode";
+  const LEGACY_THEME_KEY = "klaxond.theme";
+  const LANGS = ["en", "it"];
+  const THEME_MODES = ["system", "light", "dark"];
+
+  const M = {
+    en: {
+      "app.title": "klaxond — notification daemon",
+      "app.tagline": "klaxond — cascade • inhibition • render",
+      "prefs.language": "Language",
+      "prefs.theme": "Theme",
+      "lang.en": "English",
+      "lang.it": "Italiano",
+      "theme.system": "System",
+      "theme.light": "Light",
+      "theme.dark": "Dark",
+      "nav.operations": "Operations",
+      "nav.settings": "Settings",
+      "nav.tools": "Tools",
+      "tab.status": "Status",
+      "tab.flow": "Flow",
+      "tab.inhibitions": "Inhibitions",
+      "tab.deliveries": "Recent deliveries",
+      "tab.render": "Render config",
+      "tab.routing": "Routing",
+      "tab.cascade": "Cascade",
+      "tab.delivery": "Delivery rules",
+      "tab.grouping": "Grouping",
+      "tab.auth": "Authentication",
+      "tab.preview": "Render preview",
+      "tab.test": "Send test",
+
+      "common.actions": "Actions",
+      "common.applies_to": "Applies to",
+      "common.channel": "Channel",
+      "common.component": "Component",
+      "common.configured": "configured",
+      "common.delete": "Delete",
+      "common.dismiss": "Dismiss",
+      "common.error": "Error",
+      "common.expires_in": "Expires in",
+      "common.label": "label",
+      "common.missing": "missing",
+      "common.mode": "Mode",
+      "common.name": "Name",
+      "common.refresh": "Refresh",
+      "common.render": "Render",
+      "common.save": "Save",
+      "common.save_changes": "Save changes",
+      "common.severity": "Severity",
+      "common.source": "Source",
+      "common.status": "Status",
+      "common.test": "Test",
+      "common.time": "Time",
+      "common.title": "Title",
+
+      "status.channels": "Channels",
+      "status.activity": "Activity",
+      "status.activity_sub": "(last 24h, in-memory ring buffer)",
+      "status.deliveries_24h": "Deliveries 24h",
+      "status.by_source_empty": "by source: —",
+      "status.by_source": "by source:",
+      "status.no_activity": "(no activity)",
+      "status.deliveries_unreachable": "deliveries unreachable",
+      "status.active_suppressions": "Active suppressions",
+      "status.dedup_pending": "Dedup pending",
+      "status.view_inhibitions": "View inhibitions →",
+      "status.view_grouping": "View grouping →",
+      "status.cascade": "Cascade",
+      "status.cascade_desc": "When enabled, on ntfy failure klaxond falls back to Telegram → SMTP.<br>Always on for <code>/beszel/*</code>; gated for <code>/webhook/*</code> (Grafana usually has its own retries).",
+      "status.default_env": "Default (env):",
+      "status.runtime": "Runtime:",
+      "status.toggle_cascade": "Toggle runtime cascade",
+      "status.config_backup": "Config backup",
+      "status.config_backup_desc": "Download the current config or restore from a previous TOML. Klaxond also auto-saves a snapshot under <code id=\"cfg-backup-dir\">/data/backups/</code> before every config write (keeps newest <code id=\"cfg-backup-keep\">10</code>).",
+      "status.config_backup_intro": "Download the current config or restore from a previous TOML. Klaxond also auto-saves a snapshot under",
+      "status.config_backup_mid": "before every config write (keeps newest",
+      "status.config_backup_end": ").",
+      "status.download_config": "Download config",
+      "status.restore_toml": "Restore from TOML…",
+      "status.latest_backups": "Latest auto-backups (newest first):",
+      "status.no_backups": "(no backups yet — saved on next config change)",
+      "status.backups_unavailable": "backups list unavailable: {message}",
+      "channel.reachable": "Reachable",
+      "channel.unreachable": "Unreachable",
+      "channel.up": "✓ up",
+      "channel.down": "✗ down",
+      "channel.bot_configured": "bot configured",
+      "channel.not_configured": "(not configured)",
+
+      "flow.title": "Flow — how klaxond routes inbound events",
+      "flow.desc": "Auto-generated from your current configuration. Click any node to jump to the relevant tab. Stats in parentheses are deliveries over the last 24h from <code>/api/deliveries</code> (klaxond's in-memory ring buffer; resets on restart).",
+      "flow.animate": "Animate",
+      "flow.animate_title": "Animated dashes flowing along arrows + pulse on recently active nodes",
+      "flow.autorefresh": "Auto-refresh stats",
+      "flow.autorefresh_title": "Auto-refresh stats every 30s (no full re-render)",
+      "flow.show_source": "Show Mermaid source",
+      "flow.download_svg": "Download SVG",
+      "flow.download_svg_title": "Download rendered diagram as SVG",
+      "flow.legend": "Legend",
+      "flow.legend_blue": "<b style=\"color:#5b8def\">Blue nodes</b> = emitters (POST /webhook/, /beszel/, /healthchecks/, /wud/, /authentik/, /shelfmark/, /prowlarr/)",
+      "flow.legend_purple": "<b style=\"color:#9b6bff\">Purple nodes</b> = klaxond internal stages (inhibition, dedup buffer, render, cascade)",
+      "flow.legend_green": "<b style=\"color:#48bb78\">Green nodes</b> = delivery channels (ntfy, telegram, smtp)",
+      "flow.legend_arrows": "<b>Solid arrows</b> = primary path · <b>Dashed arrows</b> = fallback on failure",
+      "flow.legend_grey": "<span style=\"color:#999\">Greyed nodes</span> = configured but currently disabled",
+      "flow.loading_mermaid": "Loading Mermaid library (3.3MB)…",
+      "flow.mermaid_timeout": "Mermaid library failed to load (timeout). Check Network tab.",
+      "flow.fetching_config": "Fetching config…",
+      "flow.config_fetch_failed": "Config fetch failed: {message}",
+      "flow.rendered_at": "Rendered ✓ at {time}",
+      "flow.render_failed": "Render failed",
+      "flow.stats_refreshed": "Stats refreshed at {time}",
+      "flow.in_24h": "{count} in 24h",
+      "flow.delivered": "{count} delivered",
+      "flow.delivered_24h": "{count} delivered/24h",
+      "flow.alert_rules": "alert rules",
+      "flow.not_configured": "not configured",
+
+      "inhib.rules_title": "Inhibition rules",
+      "inhib.persisted": "(persisted to <code>klaxond.toml</code>)",
+      "inhib.rules_desc": "Source-agnostic (0.9.6+): rules apply to all emitters by default. Restrict scope by selecting one or more sources under <b>Applies to</b> (empty = all). Match type is exclusive — pick one: <code>match_by</code> (equality on one label vs. source anchor), <code>match_label + regex</code> (regex on one label), or <code>match_all</code> (suppress everything). Saving replaces the in-memory rules and clears any active suppressions — they re-arm naturally on the next source alert.",
+      "inhib.match_type": "Match type",
+      "inhib.match_value": "Match value",
+      "inhib.ttl_sec": "TTL (sec)",
+      "inhib.add_rule": "+ Add rule",
+      "inhib.test_title": "Test a rule",
+      "inhib.dry_run_note": "(dry-run — no state modified)",
+      "inhib.test_desc": "Given a source + label set, simulate which inhibition rule (if any) would match and whether the alert would be delivered. Useful when iterating on regexes / <code>match_by</code> labels against a real payload you have in hand.",
+      "inhib.labels_one_line": "Labels (one per line, <code>label=value</code>)",
+      "inhib.active_suppressions": "Active suppressions",
+      "inhib.transient_state": "(transient in-memory state)",
+      "inhib.active_desc": "Lists currently-armed suppressions and their remaining TTL. The <b>Applies to</b> column shows which sources each suppression is scoped to (<code>*</code> = all). Clears automatically at TTL expiry or when the source alert resolves; use the <code>✕</code> button to force-clear early (suppressions re-arm naturally on the next source alert).",
+      "inhib.anchor": "Anchor",
+      "inhib.clear_all": "Clear all suppressions",
+      "inhib.acks_title": "Active ack-snoozes",
+      "inhib.acks_sub": "(from ntfy push button, 0.9.20+)",
+      "inhib.acks_desc": "When you tap the <b>Snooze 1h</b> button on a ntfy notification, klaxond registers a transient suppression keyed on <code>alertname</code> for 1 hour. They auto-expire; force-clear via the ✕ button below.",
+      "inhib.no_active": "No active suppressions.",
+      "inhib.no_acks": "No active ack-snoozes.",
+      "inhib.clear_one_title": "Force-clear this suppression",
+      "inhib.clear_ack_title": "Force-clear this ack",
+      "inhib.empty_all_sources": "(empty = all sources)",
+      "inhib.suppresses_all": "(suppresses every alert)",
+      "inhib.duplicate_title": "Duplicate this rule",
+      "inhib.delete_rule_title": "Delete this rule",
+      "inhib.would_deliver": "✓ Would be delivered",
+      "inhib.would_suppress": "✗ Would be SUPPRESSED",
+      "inhib.reason": "reason",
+      "inhib.by_rule": "by rule",
+      "inhib.source_alert_arm": "⚡ Source alert detected — would ARM a new suppression for this rule.",
+      "inhib.rules_considered": "Rules considered for source",
+      "inhib.no_rules_apply": "No rules apply to source",
+      "inhib.cleared_for_source": "Cleared {count} suppression(s) for {source}",
+      "inhib.cleared_all": "Cleared {count} suppression(s)",
+      "inhib.rules_saved": "Saved {count} rule(s). Cleared {cleared} active suppression(s).",
+
+      "sched.title": "Maintenance windows",
+      "sched.sub": "(scheduled silences, 0.9.19+)",
+      "sched.desc": "Cron-driven silences. When an alert arrives during a window AND its labels match the rule's <b>match</b> dict (subset-equality), the alert is suppressed with channel <code>scheduled-mute</code> and the schedule name as <code>suppressed_by</code>. Use for backup windows, planned maintenance, recurring noise sources.<br>Cron is standard 5-field (<code>min hour dom month dow</code>). Duration in minutes from cron-tick. Applies-to empty = all sources.",
+      "sched.cron": "Cron (5-field)",
+      "sched.duration": "Duration (min)",
+      "sched.match": "Match (label=value, one per line)",
+      "sched.add": "+ Add window",
+      "sched.active": "⚡ ACTIVE",
+      "sched.left_minutes": "{minutes}m left",
+      "sched.idle": "idle",
+      "sched.delete_title": "Delete this schedule",
+      "sched.saved": "Saved {count} schedule(s).",
+
+      "deliveries.title": "Recent deliveries",
+      "deliveries.sub": "(last 50, newest first)",
+      "deliveries.desc": "Includes both delivered and <span class=\"ch-suppressed\">suppressed</span> events. Suppressed rows show the rule that matched in the Channel column.",
+      "deliveries.filter_placeholder": "Filter (title, source, severity, channel)…",
+      "deliveries.show_suppressed": "Show suppressed",
+      "deliveries.export_csv": "Export CSV",
+      "deliveries.export_title": "Download visible rows as CSV",
+      "deliveries.channel_or_suppressed": "Channel / Suppressed by",
+      "deliveries.event_count": "{count} event(s)",
+      "deliveries.event_count_filtered": "{shown} / {total} event(s)",
+      "deliveries.no_match": "No events match the filter.",
+      "deliveries.no_deliveries": "No deliveries yet.",
+      "deliveries.suppressed_by": "suppressed by",
+      "deliveries.dry_run": "dry-run",
+      "deliveries.would_suppress": "would suppress",
+      "deliveries.no_rows_export": "No rows to export",
+      "deliveries.exported": "Exported {count} row(s)",
+
+      "render.title": "Component → dashboard mapping",
+      "render.desc": "When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button \"Open &lt;label&gt;\" pointing to URL. URLs starting with <code>/</code> are appended to <code id=\"gbase\">https://grafana.example.com</code>.",
+      "render.desc_before_base": "When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button \"Open &lt;label&gt;\" pointing to URL. URLs starting with <code>/</code> are appended to",
+      "render.desc_after_base": ".",
+      "render.button_label": "Button label",
+      "render.add_row": "+ Add row",
+      "render.open_title": "Open URL in new tab",
+      "render.saved_mappings": "Saved ({count} mappings) ✓",
+      "render.none_freeform": "(none — freeform, no button)",
+
+      "preview.title": "Render preview",
+      "preview.desc": "Paste a sample payload (Grafana Alertmanager-shape OR Beszel-shape), pick severity, see what would be POSTed to ntfy. <b>Updates live</b> as you type (debounced 500ms). Nothing is delivered.",
+      "preview.payload": "Payload (JSON)",
+      "preview.load_grafana": "Load Grafana sample",
+      "preview.load_beszel": "Load Beszel sample",
+      "preview.load_healthchecks": "Load Healthchecks sample",
+      "preview.load_wud": "Load WUD sample",
+      "preview.load_shelfmark": "Load Shelfmark sample",
+      "preview.load_prowlarr": "Load Prowlarr sample",
+      "preview.load_decypharr": "Load Decypharr sample",
+      "preview.visual": "Visual preview",
+      "preview.mock_empty": "paste a payload + Render",
+      "preview.raw": "Raw ntfy headers + body",
+      "preview.invalid_json": "Invalid JSON: {message}",
+      "preview.error_rendering": "Error rendering preview",
+      "preview.empty_body": "(empty body)",
+
+      "routing.title": "Channel routing",
+      "routing.desc": "Non-secret routing config (URLs, topic ids, host:port). Saved to <code>/data/klaxond.toml</code>. Secrets (Bearer tokens, bot tokens, SMTP password) stay in env vars from the Ansible vault and are NOT editable here.",
+      "routing.base_url": "Base URL",
+      "routing.ntfy_topics": "ntfy topics",
+      "routing.ntfy_topics_desc": "Each topic has a name (ntfy topic id), an optional bearer token, and a list of severities it <i>handles</i>. Same severity in multiple topics → fan-out (notification sent to all matching topics). Severity names can be any non-empty string (e.g. <code>info</code>, <code>warning</code>, <code>critical</code>, or custom like <code>low</code>/<code>page</code>).<br>Token <code>***SET***</code> = keep existing; empty = clear (env vars repopulate at next reload for legacy info/warning/critical names).",
+      "routing.add_topic": "+ Add topic",
+      "routing.save_topics": "Save topics",
+      "routing.chat_id": "Chat ID",
+      "routing.host": "Host",
+      "routing.port": "Port",
+      "routing.from_addr": "From address",
+      "routing.to_addr": "To address",
+      "routing.save": "Save routing",
+      "routing.url_overridden_env": "url overridden by env",
+      "routing.chat_overridden_env": "chat_id overridden by env",
+      "routing.host_overridden_env": "host overridden by env",
+      "routing.bot_token": "bot token:",
+      "routing.user": "user:",
+      "routing.password": "password:",
+      "routing.saved": "Saved ✓ (env vars still take precedence if set)",
+      "routing.topic_name": "Topic name",
+      "routing.topic_placeholder": "ntfy topic id",
+      "routing.token": "Token",
+      "routing.keep_existing_placeholder": "(keep existing — leave as ***SET***)",
+      "routing.token_placeholder": "tk_... (or empty for env fallback)",
+      "routing.token_set": "✓ token set",
+      "routing.clear_to_remove": "— clear field to remove",
+      "routing.no_token": "✗ no token set",
+      "routing.handles": "Handles severities (comma-separated, any string allowed)",
+      "routing.delete_topic": "Delete topic",
+      "routing.summary": "{count} topic(s) · severities routed: {severities}",
+      "routing.none": "none",
+      "routing.saved_topics": "Saved ✓ ({count} topic(s), severities: {severities})",
+
+      "ingest.title": "Inbound webhook auth",
+      "ingest.sub": "(0.9.18+, per-source shared secret)",
+      "ingest.desc": "Optional shared secret per ingest source. When configured, the emitter MUST present the secret via one of:<br>1. <code>Authorization: Bearer &lt;secret&gt;</code> header (Grafana Alertmanager, ntfy, custom)<br>2. <code>X-Klaxond-Token: &lt;secret&gt;</code> header<br>3. <code>?token=&lt;secret&gt;</code> query parameter<br>Sources with no configured secret remain in <b>legacy permissive mode</b> (accept all — same as ≤ 0.9.17). Env <code>KLAXOND_INGEST_SECRET_&lt;SOURCE&gt;</code> overrides TOML.",
+      "ingest.secret_source": "Source of secret",
+      "ingest.note": "\"Generate\" creates a 64-char hex secret server-side; the value is shown <b>once</b> in a toast — copy it into the emitter immediately. \"Clear\" removes the secret (source returns to permissive mode).",
+      "ingest.secret_set": "✓ secret set",
+      "ingest.permissive": "(permissive — no secret)",
+      "ingest.env_readonly": "env (read-only, set {name})",
+      "ingest.generate": "Generate",
+      "ingest.set_custom": "Set custom…",
+      "ingest.clear": "Clear",
+
+      "cascade.title": "Cascade tier chain",
+      "cascade.desc": "Order matters: first tier is always tried; subsequent tiers are tried only if cascade is enabled (always on for <code>/beszel/*</code>, gated for <code>/webhook/*</code>). Drag rows to reorder, edit timeouts. Persisted to <code>/data/klaxond.toml</code>.",
+      "cascade.timeout": "Timeout (s)",
+      "cascade.add_tier": "+ Add tier",
+      "cascade.default_webhook": "default-enabled for /webhook/* (Grafana)",
+      "cascade.move_up": "Move up",
+      "cascade.move_down": "Move down",
+      "cascade.saved": "Saved ({count} tiers) ✓",
+
+      "delivery.title": "Delivery — policies + rules",
+      "delivery.desc": "Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>cascade</code> is the synthetic policy built from the global <code>[cascade]</code> tier list in <code>klaxond.toml</code> — picked here by name.",
+      "delivery.default_policy_title": "Default policy (no-match fallback)",
+      "delivery.default_policy": "Default policy",
+      "delivery.policies": "Policies",
+      "delivery.tiers_order": "Tiers (in order)",
+      "delivery.add_policy": "+ Add policy",
+      "delivery.rules_title": "Rules (first-match wins)",
+      "delivery.match_header": "Match (label = value, prefix <code>re:</code> for regex)",
+      "delivery.policy": "Policy",
+      "delivery.add_rule": "+ Add rule",
+      "delivery.save": "Save delivery config",
+      "delivery.saved": "Saved ({policies} policies, {rules} rules) ✓",
+
+      "dedup.title": "Notification grouping (dedup)",
+      "dedup.desc1": "When enabled, klaxond buffers inbound events per source for the configured window before delivering a single aggregated notification. Useful when a cluster-wide trigger (e.g. WUD finding the same image update on N hosts) would otherwise produce N pushes.",
+      "dedup.desc2": "Strategy <b>key</b> groups events sharing the same dedup key: WUD → image name, Grafana → alertname, Beszel → container name, HC → check name.<br><b>Severity caveat</b>: by default <code>critical</code> events are NOT debounced (delivered immediately, even if buffering is enabled). Use the <i>override critical</i> toggle per source if you want to debounce critical too. Disk-backed pending queue at <code>/data/dedup_pending/</code> survives klaxond restarts — pending events are flushed immediately on next start.",
+      "dedup.pending_note": "Pending counts shown in cards are live (refreshed when this tab is opened).",
+      "dedup.enabled": "Enabled",
+      "dedup.strategy": "Strategy",
+      "dedup.key_recommended": "key (recommended)",
+      "dedup.time": "time",
+      "dedup.none": "none",
+      "dedup.window": "Window (seconds, 5..3600)",
+      "dedup.override_critical": "Override critical (debounce critical too)",
+      "dedup.override_title": "By default, severity=critical events bypass the dedup window and deliver immediately. Toggle to also debounce critical (risky).",
+      "dedup.pending": "{count} pending",
+      "dedup.saved": "Saved ✓",
+      "dedup.help_none": "no grouping (immediate delivery, equivalent to disabled)",
+      "dedup.help_time": "all events in the window batched together",
+      "dedup.help_key": "group items sharing the same dedup key (per source)",
+      "dedup.source_wud": "WUD container image updates — key=image.name → 1 notif per image even if fires on N hosts",
+      "dedup.source_grafana": "Grafana alerts (via /webhook/*) — key=commonLabels.alertname",
+      "dedup.source_beszel": "Beszel host/container metrics — key=container_name",
+      "dedup.source_healthchecks": "Healthchecks deadman — key=check name",
+      "dedup.source_authentik": "Authentik identity events — key=action:user (group login bursts)",
+      "dedup.source_shelfmark": "Shelfmark book events — key=event:title (download-complete/failed, request approve/reject)",
+      "dedup.source_prowlarr": "Prowlarr indexer/health events — key=eventType:message (Health, ApplicationUpdate, ecc.)",
+      "dedup.source_decypharr": "Decypharr Real-Debrid bridge events — key=event:hash (download-start/complete/fail per torrent)",
+
+      "auth.title": "Authentication",
+      "auth.desc": "Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user: <code id=\"auth-current-user\">—</code>.",
+      "auth.desc_before_user": "Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user:",
+      "auth.mode_none": "<b>None</b> — public (default; suitable when klaxond is on a trusted internal network)",
+      "auth.mode_basic": "<b>Basic</b> — single user with bcrypt password (browser native)",
+      "auth.mode_oidc": "<b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)",
+      "auth.mode_trusted_proxy": "<b>Trusted proxy</b> — read <code>X-Forwarded-User</code> from upstream proxy (Traefik+Authentik forwardAuth, oauth2-proxy, ecc.) — CIDR-gated for safety",
+      "auth.bcrypt_warn": "⚠ bcrypt not installed in image — basic auth will fail",
+      "auth.jwt_warn": "⚠ PyJWT not installed in image — OIDC will fail",
+      "auth.session": "Session",
+      "auth.timeout": "Timeout (hours, 1..720)",
+      "auth.basic_config": "Basic auth config",
+      "auth.username": "Username",
+      "auth.realm": "Realm",
+      "auth.set_password": "Set password (leave blank to keep existing)",
+      "auth.password_placeholder": "new password (bcrypt-hashed before storage)",
+      "auth.password_hash_status": "Password hash status:",
+      "auth.oidc_config": "OIDC config",
+      "auth.provider_preset": "Provider preset",
+      "auth.issuer_url": "Issuer URL",
+      "auth.issuer_hint": "Authentik: <code>https://&lt;host&gt;/application/o/&lt;slug&gt;/</code> · Keycloak: <code>https://&lt;host&gt;/realms/&lt;realm&gt;</code> · Authelia: <code>https://&lt;host&gt;</code> · Google: <code>https://accounts.google.com</code>",
+      "auth.client_id": "Client ID",
+      "auth.client_secret": "Client Secret",
+      "auth.keep_existing_placeholder": "(leave blank to keep existing)",
+      "auth.scopes": "Scopes",
+      "auth.required_group": "Required group (optional, to restrict to a specific group)",
+      "auth.group_placeholder": "e.g. klaxond-admins",
+      "auth.redirect_path": "Redirect path",
+      "auth.redirect_uri": "Redirect URI used at the IdP:",
+      "auth.trusted_proxy_config": "Trusted-proxy config",
+      "auth.user_header": "User header",
+      "auth.email_header": "Email header",
+      "auth.groups_header": "Groups header",
+      "auth.trusted_cidrs": "Trusted CIDRs (comma-separated)",
+      "auth.trusted_cidrs_hint": "Only requests from these source IPs will have their forwarded-user header honored. Critical to prevent header spoofing.",
+      "auth.logout": "Logout",
+      "auth.set": "set",
+      "auth.not_set": "not set",
+      "auth.error_loading": "Error loading: {message}",
+      "auth.saved": "Saved ✓ (mode={mode}). Reload page to apply.",
+
+      "test.title": "Send synthetic alert",
+      "test.desc": "Fires a real alert through the cascade (ntfy → Telegram → SMTP) with the runtime cascade flag. Counts toward \"Recent deliveries\".",
+      "test.component": "Component (action button preview)",
+      "test.host_label": "Host label",
+      "test.host_placeholder": "(optional — appended to title)",
+      "test.body": "Body",
+      "test.fire": "Fire test alert",
+      "test.dry_run": "Dry-run",
+      "test.dry_run_desc": "(simulate pipeline, no actual notification — uses /webhook/<sev>?dry_run=1)",
+      "test.note": "When a component is selected, the alert is built as a Grafana-shape payload with <code>commonLabels.component=&lt;chosen&gt;</code>. The render pipeline picks up the matching dashboard URL and adds the action button — exactly like a real alert would. Use this to verify your render config end-to-end without waiting for a real trigger.",
+      "test.manual_body": "Manual smoke test from the admin UI.",
+      "test.synthetic_title": "klaxond synthetic test",
+      "test.dry_run_toast": "Dry-run: {verdict} ({reason})",
+      "test.would_deliver": "would deliver",
+      "test.would_suppress": "would suppress",
+      "test.send_failed": "Send-test failed: {message}",
+
+      "shortcut.unsaved": "Unsaved changes",
+      "shortcut.discard_confirm": "Tab \"{from}\" has unsaved changes. Discard and switch to \"{to}\"?",
+      "shortcut.title": "Keyboard shortcuts",
+      "shortcut.save": "Save the active tab (clicks its primary Save button)",
+      "shortcut.esc": "Blur the focused input; clears search filters",
+      "shortcut.help": "Show this help overlay",
+      "shortcut.jump": "Jump to tab by position (when no input is focused)",
+      "shortcut.close": "Press <code>?</code> or click outside to close.",
+
+      "status.saving": "Saving…",
+      "status.uploading": "Uploading…",
+      "status.saved": "Saved ✓",
+      "status.restored": "✓ Restored {bytes} bytes. Pre-restore backup: {backup}",
+      "status.none": "(none)",
+      "config.restore_confirm": "Restore klaxond config from \"{name}\" ({size} bytes)?\n\nThe current config will be auto-backed-up first. After upload, in-memory state reloads. Continue?",
+      "config.restored_toast": "Config restored — reload page to see all UI state refresh"
+    },
+    it: {
+      "app.title": "klaxond — demone notifiche",
+      "app.tagline": "klaxond — cascata • inibizioni • rendering",
+      "prefs.language": "Lingua",
+      "prefs.theme": "Tema",
+      "theme.system": "Sistema",
+      "theme.light": "Chiaro",
+      "theme.dark": "Scuro",
+      "nav.operations": "Operazioni",
+      "nav.settings": "Impostazioni",
+      "nav.tools": "Strumenti",
+      "tab.status": "Stato",
+      "tab.flow": "Flusso",
+      "tab.inhibitions": "Inibizioni",
+      "tab.deliveries": "Consegne recenti",
+      "tab.render": "Config rendering",
+      "tab.routing": "Instradamento",
+      "tab.cascade": "Cascata",
+      "tab.delivery": "Regole consegna",
+      "tab.grouping": "Raggruppamento",
+      "tab.auth": "Autenticazione",
+      "tab.preview": "Anteprima rendering",
+      "tab.test": "Invia test",
+
+      "common.actions": "Azioni",
+      "common.applies_to": "Si applica a",
+      "common.channel": "Canale",
+      "common.component": "Componente",
+      "common.configured": "configurato",
+      "common.delete": "Elimina",
+      "common.dismiss": "Chiudi",
+      "common.error": "Errore",
+      "common.expires_in": "Scade tra",
+      "common.label": "etichetta",
+      "common.missing": "mancante",
+      "common.mode": "Modalità",
+      "common.name": "Nome",
+      "common.refresh": "Aggiorna",
+      "common.render": "Renderizza",
+      "common.save": "Salva",
+      "common.save_changes": "Salva modifiche",
+      "common.severity": "Severità",
+      "common.source": "Sorgente",
+      "common.status": "Stato",
+      "common.test": "Test",
+      "common.time": "Ora",
+      "common.title": "Titolo",
+
+      "status.channels": "Canali",
+      "status.activity": "Attività",
+      "status.activity_sub": "(ultime 24h, buffer in memoria)",
+      "status.deliveries_24h": "Consegne 24h",
+      "status.by_source_empty": "per sorgente: —",
+      "status.by_source": "per sorgente:",
+      "status.no_activity": "(nessuna attività)",
+      "status.deliveries_unreachable": "consegne non raggiungibili",
+      "status.active_suppressions": "Soppressioni attive",
+      "status.dedup_pending": "Dedup in attesa",
+      "status.view_inhibitions": "Vedi inibizioni →",
+      "status.view_grouping": "Vedi raggruppamento →",
+      "status.cascade": "Cascata",
+      "status.cascade_desc": "Quando è attiva, se ntfy fallisce klaxond ripiega su Telegram → SMTP.<br>Sempre attiva per <code>/beszel/*</code>; condizionata per <code>/webhook/*</code> (Grafana di solito ha retry propri).",
+      "status.default_env": "Default (env):",
+      "status.runtime": "Runtime:",
+      "status.toggle_cascade": "Attiva/disattiva cascata runtime",
+      "status.config_backup": "Backup config",
+      "status.config_backup_desc": "Scarica la configurazione corrente o ripristina un TOML precedente. Klaxond salva anche uno snapshot automatico in <code id=\"cfg-backup-dir\">/data/backups/</code> prima di ogni scrittura config (mantiene i <code id=\"cfg-backup-keep\">10</code> più recenti).",
+      "status.config_backup_intro": "Scarica la configurazione corrente o ripristina un TOML precedente. Klaxond salva anche uno snapshot automatico in",
+      "status.config_backup_mid": "prima di ogni scrittura config (mantiene i",
+      "status.config_backup_end": " più recenti).",
+      "status.download_config": "Scarica config",
+      "status.restore_toml": "Ripristina da TOML…",
+      "status.latest_backups": "Ultimi backup automatici (più recenti prima):",
+      "status.no_backups": "(nessun backup ancora — verrà salvato alla prossima modifica config)",
+      "status.backups_unavailable": "lista backup non disponibile: {message}",
+      "channel.reachable": "Raggiungibile",
+      "channel.unreachable": "Non raggiungibile",
+      "channel.up": "✓ attivo",
+      "channel.down": "✗ giù",
+      "channel.bot_configured": "bot configurato",
+      "channel.not_configured": "(non configurato)",
+
+      "flow.title": "Flusso — come klaxond instrada gli eventi in ingresso",
+      "flow.desc": "Generato automaticamente dalla configurazione corrente. Clicca un nodo per aprire la scheda relativa. Le statistiche tra parentesi sono le consegne delle ultime 24h da <code>/api/deliveries</code> (buffer in memoria di klaxond; si azzera al riavvio).",
+      "flow.animate": "Anima",
+      "flow.animate_title": "Tratteggi animati sulle frecce e pulse sui nodi attivi di recente",
+      "flow.autorefresh": "Auto-aggiorna statistiche",
+      "flow.autorefresh_title": "Aggiorna le statistiche ogni 30s senza ridisegnare tutto",
+      "flow.show_source": "Mostra sorgente Mermaid",
+      "flow.download_svg": "Scarica SVG",
+      "flow.download_svg_title": "Scarica il diagramma renderizzato come SVG",
+      "flow.legend": "Legenda",
+      "flow.legend_blue": "<b style=\"color:#5b8def\">Nodi blu</b> = emitter (POST /webhook/, /beszel/, /healthchecks/, /wud/, /authentik/, /shelfmark/, /prowlarr/)",
+      "flow.legend_purple": "<b style=\"color:#9b6bff\">Nodi viola</b> = stadi interni klaxond (inibizione, buffer dedup, render, cascata)",
+      "flow.legend_green": "<b style=\"color:#48bb78\">Nodi verdi</b> = canali di consegna (ntfy, telegram, smtp)",
+      "flow.legend_arrows": "<b>Frecce piene</b> = percorso primario · <b>Frecce tratteggiate</b> = fallback su errore",
+      "flow.legend_grey": "<span style=\"color:#999\">Nodi grigi</span> = configurati ma disabilitati ora",
+      "flow.loading_mermaid": "Caricamento libreria Mermaid (3.3MB)…",
+      "flow.mermaid_timeout": "Libreria Mermaid non caricata (timeout). Controlla il tab Network.",
+      "flow.fetching_config": "Caricamento config…",
+      "flow.config_fetch_failed": "Caricamento config fallito: {message}",
+      "flow.rendered_at": "Renderizzato ✓ alle {time}",
+      "flow.render_failed": "Rendering fallito",
+      "flow.stats_refreshed": "Statistiche aggiornate alle {time}",
+      "flow.in_24h": "{count} in 24h",
+      "flow.delivered": "{count} consegnate",
+      "flow.delivered_24h": "{count} consegnate/24h",
+      "flow.alert_rules": "regole alert",
+      "flow.not_configured": "non configurato",
+
+      "inhib.rules_title": "Regole di inibizione",
+      "inhib.persisted": "(persistite in <code>klaxond.toml</code>)",
+      "inhib.rules_desc": "Source-agnostic (0.9.6+): le regole valgono per tutti gli emitter di default. Restringi lo scope selezionando una o più sorgenti sotto <b>Si applica a</b> (vuoto = tutte). Il tipo di match è esclusivo: scegli <code>match_by</code> (uguaglianza su una label rispetto all'anchor sorgente), <code>match_label + regex</code> (regex su una label), oppure <code>match_all</code> (sopprime tutto). Il salvataggio sostituisce le regole in memoria e cancella le soppressioni attive; si riarmano naturalmente al prossimo alert sorgente.",
+      "inhib.match_type": "Tipo match",
+      "inhib.match_value": "Valore match",
+      "inhib.ttl_sec": "TTL (sec)",
+      "inhib.add_rule": "+ Aggiungi regola",
+      "inhib.test_title": "Testa una regola",
+      "inhib.dry_run_note": "(dry-run — nessuno stato modificato)",
+      "inhib.test_desc": "Dato un set di sorgente + label, simula quale regola di inibizione farebbe match e se l'alert verrebbe consegnato. Utile mentre iteri regex / label <code>match_by</code> su un payload reale.",
+      "inhib.labels_one_line": "Label (una per riga, <code>label=value</code>)",
+      "inhib.active_suppressions": "Soppressioni attive",
+      "inhib.transient_state": "(stato transiente in memoria)",
+      "inhib.active_desc": "Elenca le soppressioni armate e il TTL residuo. La colonna <b>Si applica a</b> mostra lo scope sorgenti di ogni soppressione (<code>*</code> = tutte). Scadono automaticamente al TTL o quando l'alert sorgente si risolve; usa il pulsante <code>✕</code> per forzare la cancellazione anticipata.",
+      "inhib.anchor": "Anchor",
+      "inhib.clear_all": "Cancella tutte le soppressioni",
+      "inhib.acks_title": "Ack-snooze attivi",
+      "inhib.acks_sub": "(dal pulsante push ntfy, 0.9.20+)",
+      "inhib.acks_desc": "Quando tocchi il pulsante <b>Snooze 1h</b> su una notifica ntfy, klaxond registra una soppressione transiente keyed su <code>alertname</code> per 1 ora. Scadono automaticamente; puoi forzarne la cancellazione con il pulsante ✕ sotto.",
+      "inhib.no_active": "Nessuna soppressione attiva.",
+      "inhib.no_acks": "Nessun ack-snooze attivo.",
+      "inhib.clear_one_title": "Forza cancellazione di questa soppressione",
+      "inhib.clear_ack_title": "Forza cancellazione di questo ack",
+      "inhib.empty_all_sources": "(vuoto = tutte le sorgenti)",
+      "inhib.suppresses_all": "(sopprime ogni alert)",
+      "inhib.duplicate_title": "Duplica questa regola",
+      "inhib.delete_rule_title": "Elimina questa regola",
+      "inhib.would_deliver": "✓ Verrebbe consegnato",
+      "inhib.would_suppress": "✗ Verrebbe SOPPRESSO",
+      "inhib.reason": "motivo",
+      "inhib.by_rule": "dalla regola",
+      "inhib.source_alert_arm": "⚡ Alert sorgente rilevato — armerebbe una nuova soppressione per questa regola.",
+      "inhib.rules_considered": "Regole considerate per sorgente",
+      "inhib.no_rules_apply": "Nessuna regola si applica alla sorgente",
+      "inhib.cleared_for_source": "Cancellate {count} soppressioni per {source}",
+      "inhib.cleared_all": "Cancellate {count} soppressioni",
+      "inhib.rules_saved": "Salvate {count} regole. Cancellate {cleared} soppressioni attive.",
+
+      "sched.title": "Finestre di manutenzione",
+      "sched.sub": "(silenziamenti schedulati, 0.9.19+)",
+      "sched.desc": "Silenziamenti via cron. Quando un alert arriva durante una finestra E le sue label combaciano con il dict <b>match</b> della regola (subset-equality), l'alert viene soppresso con canale <code>scheduled-mute</code> e nome schedulazione in <code>suppressed_by</code>. Utile per backup, manutenzioni e rumore ricorrente.<br>Cron standard a 5 campi (<code>min hour dom month dow</code>). Durata in minuti dal tick cron. Si applica a vuoto = tutte le sorgenti.",
+      "sched.cron": "Cron (5 campi)",
+      "sched.duration": "Durata (min)",
+      "sched.match": "Match (label=value, una per riga)",
+      "sched.add": "+ Aggiungi finestra",
+      "sched.active": "⚡ ATTIVA",
+      "sched.left_minutes": "{minutes}m rimanenti",
+      "sched.idle": "inattiva",
+      "sched.delete_title": "Elimina questa schedulazione",
+      "sched.saved": "Salvate {count} schedulazioni.",
+
+      "deliveries.title": "Consegne recenti",
+      "deliveries.sub": "(ultime 50, più recenti prima)",
+      "deliveries.desc": "Include sia eventi consegnati sia eventi <span class=\"ch-suppressed\">soppressi</span>. Le righe soppresse mostrano la regola che ha fatto match nella colonna Canale.",
+      "deliveries.filter_placeholder": "Filtra (titolo, sorgente, severità, canale)…",
+      "deliveries.show_suppressed": "Mostra soppressi",
+      "deliveries.export_csv": "Esporta CSV",
+      "deliveries.export_title": "Scarica le righe visibili come CSV",
+      "deliveries.channel_or_suppressed": "Canale / Soppressa da",
+      "deliveries.event_count": "{count} evento/i",
+      "deliveries.event_count_filtered": "{shown} / {total} evento/i",
+      "deliveries.no_match": "Nessun evento corrisponde al filtro.",
+      "deliveries.no_deliveries": "Nessuna consegna finora.",
+      "deliveries.suppressed_by": "soppressa da",
+      "deliveries.dry_run": "dry-run",
+      "deliveries.would_suppress": "sopprimerebbe",
+      "deliveries.no_rows_export": "Nessuna riga da esportare",
+      "deliveries.exported": "Esportate {count} righe",
+
+      "render.title": "Mappatura componente → dashboard",
+      "render.desc": "Quando un alert Grafana ha label <code>component=X</code>, la push ntfy risultante riceve un action button \"Open &lt;label&gt;\" verso l'URL. Gli URL che iniziano con <code>/</code> vengono appesi a <code id=\"gbase\">https://grafana.example.com</code>.",
+      "render.desc_before_base": "Quando un alert Grafana ha label <code>component=X</code>, la push ntfy risultante riceve un action button \"Open &lt;label&gt;\" verso l'URL. Gli URL che iniziano con <code>/</code> vengono appesi a",
+      "render.desc_after_base": ".",
+      "render.button_label": "Etichetta pulsante",
+      "render.add_row": "+ Aggiungi riga",
+      "render.open_title": "Apri URL in un nuovo tab",
+      "render.saved_mappings": "Salvate {count} mappature ✓",
+      "render.none_freeform": "(nessuno — libero, senza pulsante)",
+
+      "preview.title": "Anteprima rendering",
+      "preview.desc": "Incolla un payload campione (forma Grafana Alertmanager O Beszel), scegli la severità e vedi cosa verrebbe inviato a ntfy. <b>Si aggiorna live</b> mentre scrivi (debounce 500ms). Non viene consegnato nulla.",
+      "preview.payload": "Payload (JSON)",
+      "preview.load_grafana": "Carica campione Grafana",
+      "preview.load_beszel": "Carica campione Beszel",
+      "preview.load_healthchecks": "Carica campione Healthchecks",
+      "preview.load_wud": "Carica campione WUD",
+      "preview.load_shelfmark": "Carica campione Shelfmark",
+      "preview.load_prowlarr": "Carica campione Prowlarr",
+      "preview.load_decypharr": "Carica campione Decypharr",
+      "preview.visual": "Anteprima visiva",
+      "preview.mock_empty": "incolla un payload + Renderizza",
+      "preview.raw": "Header ntfy raw + body",
+      "preview.invalid_json": "JSON non valido: {message}",
+      "preview.error_rendering": "Errore nel rendering anteprima",
+      "preview.empty_body": "(body vuoto)",
+
+      "routing.title": "Instradamento canali",
+      "routing.desc": "Configurazione non segreta di routing (URL, topic id, host:port). Salvata in <code>/data/klaxond.toml</code>. I segreti (Bearer token, bot token, password SMTP) restano nelle env var dall'Ansible vault e NON sono modificabili qui.",
+      "routing.base_url": "URL base",
+      "routing.ntfy_topics": "Topic ntfy",
+      "routing.ntfy_topics_desc": "Ogni topic ha un nome (topic id ntfy), un bearer token opzionale e una lista di severità che <i>gestisce</i>. La stessa severità in più topic → fan-out (notifica inviata a tutti i topic che matchano). Le severità possono essere qualunque stringa non vuota (es. <code>info</code>, <code>warning</code>, <code>critical</code>, o custom come <code>low</code>/<code>page</code>).<br>Token <code>***SET***</code> = mantieni esistente; vuoto = cancella (le env var ripopolano al prossimo reload i nomi legacy info/warning/critical).",
+      "routing.add_topic": "+ Aggiungi topic",
+      "routing.save_topics": "Salva topic",
+      "routing.chat_id": "Chat ID",
+      "routing.host": "Host",
+      "routing.port": "Porta",
+      "routing.from_addr": "Indirizzo mittente",
+      "routing.to_addr": "Indirizzo destinatario",
+      "routing.save": "Salva routing",
+      "routing.url_overridden_env": "url sovrascritto da env",
+      "routing.chat_overridden_env": "chat_id sovrascritto da env",
+      "routing.host_overridden_env": "host sovrascritto da env",
+      "routing.bot_token": "bot token:",
+      "routing.user": "utente:",
+      "routing.password": "password:",
+      "routing.saved": "Salvato ✓ (le env var hanno ancora precedenza se impostate)",
+      "routing.topic_name": "Nome topic",
+      "routing.topic_placeholder": "topic id ntfy",
+      "routing.token": "Token",
+      "routing.keep_existing_placeholder": "(mantieni esistente — lascia ***SET***)",
+      "routing.token_placeholder": "tk_... (o vuoto per fallback env)",
+      "routing.token_set": "✓ token impostato",
+      "routing.clear_to_remove": "— svuota il campo per rimuovere",
+      "routing.no_token": "✗ nessun token impostato",
+      "routing.handles": "Severità gestite (separate da virgola, qualunque stringa)",
+      "routing.delete_topic": "Elimina topic",
+      "routing.summary": "{count} topic · severità instradate: {severities}",
+      "routing.none": "nessuna",
+      "routing.saved_topics": "Salvato ✓ ({count} topic, severità: {severities})",
+
+      "ingest.title": "Auth webhook in ingresso",
+      "ingest.sub": "(0.9.18+, secret condiviso per sorgente)",
+      "ingest.desc": "Secret opzionale condiviso per sorgente ingest. Quando configurato, l'emitter DEVE presentarlo tramite uno di questi metodi:<br>1. header <code>Authorization: Bearer &lt;secret&gt;</code> (Grafana Alertmanager, ntfy, custom)<br>2. header <code>X-Klaxond-Token: &lt;secret&gt;</code><br>3. query parameter <code>?token=&lt;secret&gt;</code><br>Le sorgenti senza secret restano in <b>modalità permissiva legacy</b> (accetta tutto — come ≤ 0.9.17). Env <code>KLAXOND_INGEST_SECRET_&lt;SOURCE&gt;</code> sovrascrive TOML.",
+      "ingest.secret_source": "Origine secret",
+      "ingest.note": "\"Generate\" crea lato server un secret hex di 64 caratteri; il valore viene mostrato <b>una sola volta</b> in un toast — copialo subito nella configurazione dell'emitter. \"Clear\" rimuove il secret (la sorgente torna permissiva).",
+      "ingest.secret_set": "✓ secret impostato",
+      "ingest.permissive": "(permissiva — nessun secret)",
+      "ingest.env_readonly": "env (sola lettura, imposta {name})",
+      "ingest.generate": "Genera",
+      "ingest.set_custom": "Imposta custom…",
+      "ingest.clear": "Cancella",
+
+      "cascade.title": "Catena tier cascata",
+      "cascade.desc": "L'ordine conta: il primo tier viene sempre provato; i tier successivi solo se la cascata è attiva (sempre attiva per <code>/beszel/*</code>, condizionata per <code>/webhook/*</code>). Trascina le righe per riordinare, modifica i timeout. Persistito in <code>/data/klaxond.toml</code>.",
+      "cascade.timeout": "Timeout (s)",
+      "cascade.add_tier": "+ Aggiungi tier",
+      "cascade.default_webhook": "abilitata di default per /webhook/* (Grafana)",
+      "cascade.move_up": "Sposta su",
+      "cascade.move_down": "Sposta giù",
+      "cascade.saved": "Salvati {count} tier ✓",
+
+      "delivery.title": "Consegna — policy + regole",
+      "delivery.desc": "Le policy definiscono <em>come</em> klaxond consegna un alert (cascade = fermati al primo OK; broadcast = invia tutti i tier in parallelo). Le regole scelgono una policy in base alle label dell'alert (first-match wins, regex con prefisso <code>re:</code>). Se nessuna regola matcha, si applica la <strong>policy default</strong>. <code>cascade</code> è la policy sintetica costruita dal blocco globale <code>[cascade]</code> in <code>klaxond.toml</code>.",
+      "delivery.default_policy_title": "Policy default (fallback no-match)",
+      "delivery.default_policy": "Policy default",
+      "delivery.policies": "Policy",
+      "delivery.tiers_order": "Tier (in ordine)",
+      "delivery.add_policy": "+ Aggiungi policy",
+      "delivery.rules_title": "Regole (first-match wins)",
+      "delivery.match_header": "Match (label = valore, prefisso <code>re:</code> per regex)",
+      "delivery.policy": "Policy",
+      "delivery.add_rule": "+ Aggiungi regola",
+      "delivery.save": "Salva config consegna",
+      "delivery.saved": "Salvate {policies} policy, {rules} regole ✓",
+
+      "dedup.title": "Raggruppamento notifiche (dedup)",
+      "dedup.desc1": "Quando attivo, klaxond mette in buffer gli eventi in ingresso per sorgente per la finestra configurata prima di consegnare una singola notifica aggregata. Utile quando un trigger cluster-wide (es. WUD che trova la stessa immagine aggiornata su N host) produrrebbe N push.",
+      "dedup.desc2": "La strategia <b>key</b> raggruppa eventi con la stessa chiave dedup: WUD → nome immagine, Grafana → alertname, Beszel → nome container, HC → nome check.<br><b>Nota severità</b>: di default gli eventi <code>critical</code> NON sono debounced (consegnati subito, anche se il buffering è attivo). Usa il toggle <i>override critical</i> per sorgente se vuoi debounce anche sui critical. La coda pending su disco in <code>/data/dedup_pending/</code> sopravvive ai restart di klaxond.",
+      "dedup.pending_note": "I conteggi pending nelle card sono live (aggiornati all'apertura della scheda).",
+      "dedup.enabled": "Abilitato",
+      "dedup.strategy": "Strategia",
+      "dedup.key_recommended": "key (consigliata)",
+      "dedup.time": "tempo",
+      "dedup.none": "nessuna",
+      "dedup.window": "Finestra (secondi, 5..3600)",
+      "dedup.override_critical": "Override critical (debounce anche sui critical)",
+      "dedup.override_title": "Di default gli eventi severity=critical bypassano la finestra dedup e vengono consegnati subito. Attiva per fare debounce anche sui critical (rischioso).",
+      "dedup.pending": "{count} pending",
+      "dedup.saved": "Salvato ✓",
+      "dedup.help_none": "nessun raggruppamento (consegna immediata, equivalente a disabilitato)",
+      "dedup.help_time": "tutti gli eventi nella finestra vengono batchati insieme",
+      "dedup.help_key": "raggruppa elementi con la stessa chiave dedup (per sorgente)",
+      "dedup.source_wud": "Aggiornamenti immagini container WUD — key=image.name → 1 notifica per immagine anche se scatta su N host",
+      "dedup.source_grafana": "Alert Grafana (via /webhook/*) — key=commonLabels.alertname",
+      "dedup.source_beszel": "Metriche host/container Beszel — key=container_name",
+      "dedup.source_healthchecks": "Deadman Healthchecks — key=nome check",
+      "dedup.source_authentik": "Eventi identità Authentik — key=action:user (raggruppa burst login)",
+      "dedup.source_shelfmark": "Eventi libri Shelfmark — key=event:title (download-complete/failed, request approve/reject)",
+      "dedup.source_prowlarr": "Eventi indexer/health Prowlarr — key=eventType:message (Health, ApplicationUpdate, ecc.)",
+      "dedup.source_decypharr": "Eventi Decypharr Real-Debrid bridge — key=event:hash (download-start/complete/fail per torrent)",
+
+      "auth.title": "Autenticazione",
+      "auth.desc": "Protegge UI e admin API. Gli endpoint webhook (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) restano sempre pubblici a prescindere dalla modalità — gli emitter non possono fare OIDC.<br>Utente loggato corrente: <code id=\"auth-current-user\">—</code>.",
+      "auth.desc_before_user": "Protegge UI e admin API. Gli endpoint webhook (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) restano sempre pubblici a prescindere dalla modalità — gli emitter non possono fare OIDC.<br>Utente loggato corrente:",
+      "auth.mode_none": "<b>Nessuna</b> — pubblico (default; adatto quando klaxond è su una rete interna fidata)",
+      "auth.mode_basic": "<b>Basic</b> — singolo utente con password bcrypt (browser native)",
+      "auth.mode_oidc": "<b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)",
+      "auth.mode_trusted_proxy": "<b>Trusted proxy</b> — legge <code>X-Forwarded-User</code> dal proxy upstream (Traefik+Authentik forwardAuth, oauth2-proxy, ecc.) — protetto da CIDR",
+      "auth.bcrypt_warn": "⚠ bcrypt non installato nell'immagine — basic auth fallirà",
+      "auth.jwt_warn": "⚠ PyJWT non installato nell'immagine — OIDC fallirà",
+      "auth.session": "Sessione",
+      "auth.timeout": "Timeout (ore, 1..720)",
+      "auth.basic_config": "Config basic auth",
+      "auth.username": "Username",
+      "auth.realm": "Realm",
+      "auth.set_password": "Imposta password (lascia vuoto per mantenere l'esistente)",
+      "auth.password_placeholder": "nuova password (bcrypt-hash prima del salvataggio)",
+      "auth.password_hash_status": "Stato hash password:",
+      "auth.oidc_config": "Config OIDC",
+      "auth.provider_preset": "Preset provider",
+      "auth.issuer_url": "URL issuer",
+      "auth.issuer_hint": "Authentik: <code>https://&lt;host&gt;/application/o/&lt;slug&gt;/</code> · Keycloak: <code>https://&lt;host&gt;/realms/&lt;realm&gt;</code> · Authelia: <code>https://&lt;host&gt;</code> · Google: <code>https://accounts.google.com</code>",
+      "auth.client_id": "Client ID",
+      "auth.client_secret": "Client Secret",
+      "auth.keep_existing_placeholder": "(lascia vuoto per mantenere l'esistente)",
+      "auth.scopes": "Scope",
+      "auth.required_group": "Gruppo richiesto (opzionale, per restringere a un gruppo specifico)",
+      "auth.group_placeholder": "es. klaxond-admins",
+      "auth.redirect_path": "Path redirect",
+      "auth.redirect_uri": "Redirect URI usato dall'IdP:",
+      "auth.trusted_proxy_config": "Config trusted-proxy",
+      "auth.user_header": "Header utente",
+      "auth.email_header": "Header email",
+      "auth.groups_header": "Header gruppi",
+      "auth.trusted_cidrs": "CIDR fidati (separati da virgola)",
+      "auth.trusted_cidrs_hint": "Solo richieste da questi IP sorgente useranno l'header forwarded-user. Critico per prevenire spoofing header.",
+      "auth.logout": "Logout",
+      "auth.set": "impostato",
+      "auth.not_set": "non impostato",
+      "auth.error_loading": "Errore caricamento: {message}",
+      "auth.saved": "Salvato ✓ (mode={mode}). Ricarica la pagina per applicare.",
+
+      "test.title": "Invia alert sintetico",
+      "test.desc": "Invia un alert reale attraverso la cascata (ntfy → Telegram → SMTP) con il flag runtime della cascata. Conta in \"Consegne recenti\".",
+      "test.component": "Componente (anteprima action button)",
+      "test.host_label": "Label host",
+      "test.host_placeholder": "(opzionale — aggiunta al titolo)",
+      "test.body": "Body",
+      "test.fire": "Invia alert di test",
+      "test.dry_run": "Dry-run",
+      "test.dry_run_desc": "(simula la pipeline, nessuna notifica reale — usa /webhook/<sev>?dry_run=1)",
+      "test.note": "Quando selezioni un componente, l'alert viene costruito come payload Grafana con <code>commonLabels.component=&lt;chosen&gt;</code>. La pipeline di rendering prende l'URL dashboard corrispondente e aggiunge l'action button, esattamente come un alert reale. Usalo per verificare la config render end-to-end senza aspettare un trigger vero.",
+      "test.manual_body": "Smoke test manuale dalla UI admin.",
+      "test.synthetic_title": "test sintetico klaxond",
+      "test.dry_run_toast": "Dry-run: {verdict} ({reason})",
+      "test.would_deliver": "verrebbe consegnato",
+      "test.would_suppress": "verrebbe soppresso",
+      "test.send_failed": "Invio test fallito: {message}",
+
+      "shortcut.unsaved": "Modifiche non salvate",
+      "shortcut.discard_confirm": "Il tab \"{from}\" ha modifiche non salvate. Scartarle e passare a \"{to}\"?",
+      "shortcut.title": "Scorciatoie tastiera",
+      "shortcut.save": "Salva il tab attivo (clicca il pulsante Salva primario)",
+      "shortcut.esc": "Toglie focus dall'input; svuota i filtri di ricerca",
+      "shortcut.help": "Mostra questo overlay",
+      "shortcut.jump": "Vai al tab per posizione (quando nessun input è a focus)",
+      "shortcut.close": "Premi <code>?</code> o clicca fuori per chiudere.",
+
+      "status.saving": "Salvataggio…",
+      "status.uploading": "Upload…",
+      "status.saved": "Salvato ✓",
+      "status.restored": "✓ Ripristinati {bytes} byte. Backup pre-ripristino: {backup}",
+      "status.none": "(nessuno)",
+      "config.restore_confirm": "Ripristinare la config klaxond da \"{name}\" ({size} byte)?\n\nLa config corrente verrà prima salvata in backup automatico. Dopo l'upload, lo stato in memoria viene ricaricato. Continuare?",
+      "config.restored_toast": "Config ripristinata — ricarica la pagina per aggiornare tutto lo stato UI"
+    }
+  };
+
+  function normalizeLang(value) {
+    const lang = String(value || "").toLowerCase().slice(0, 2);
+    return LANGS.includes(lang) ? lang : "en";
+  }
+
+  function browserLang() {
+    return normalizeLang((navigator.language || "en").toLowerCase().startsWith("it") ? "it" : "en");
+  }
+
+  function currentLanguage() {
+    try {
+      const stored = localStorage.getItem(LANG_KEY);
+      if (stored) return normalizeLang(stored);
+    } catch (e) {}
+    return normalizeLang(document.documentElement.getAttribute("data-lang") || browserLang());
+  }
+
+  function interpolate(text, vars) {
+    return String(text).replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => {
+      const value = vars && Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : "";
+      return value == null ? "" : String(value);
+    });
+  }
+
+  function t(key, vars) {
+    const lang = currentLanguage();
+    const text = (M[lang] && M[lang][key]) || M.en[key] || key;
+    return interpolate(text, vars || {});
+  }
+
+  function setText(el, text) {
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+
+  function setHtml(el, html) {
+    if (el && el.innerHTML !== html) el.innerHTML = html;
+  }
+
+  function applyI18n(lang) {
+    const next = normalizeLang(lang || currentLanguage());
+    document.documentElement.lang = next;
+    document.documentElement.setAttribute("data-lang", next);
+    document.title = t("app.title");
+
+    document.querySelectorAll("[data-i18n-html]").forEach(el => setHtml(el, t(el.dataset.i18nHtml)));
+    document.querySelectorAll("[data-i18n]").forEach(el => {
+      if (!el.closest("[data-i18n-html]")) setText(el, t(el.dataset.i18n));
+    });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach(el => {
+      el.setAttribute("placeholder", t(el.dataset.i18nPlaceholder));
+    });
+    document.querySelectorAll("[data-i18n-title]").forEach(el => {
+      el.setAttribute("title", t(el.dataset.i18nTitle));
+    });
+
+    const select = document.getElementById("language-select");
+    if (select) select.value = next;
+  }
+
+  function setLanguage(lang) {
+    const next = normalizeLang(lang);
+    try { localStorage.setItem(LANG_KEY, next); } catch (e) {}
+    applyI18n(next);
+    document.dispatchEvent(new CustomEvent("klaxond:languagechange", { detail: { lang: next } }));
+  }
+
+  function normalizeThemeMode(mode) {
+    return THEME_MODES.includes(mode) ? mode : "system";
+  }
+
+  function storedThemeMode() {
+    try {
+      const mode = localStorage.getItem(THEME_MODE_KEY);
+      if (mode) return normalizeThemeMode(mode);
+      const legacy = localStorage.getItem(LEGACY_THEME_KEY);
+      if (legacy === "light" || legacy === "dark") return legacy;
+    } catch (e) {}
+    return normalizeThemeMode(document.documentElement.getAttribute("data-theme-mode") || "system");
+  }
+
+  function resolveTheme(mode) {
+    const m = normalizeThemeMode(mode);
+    if (m !== "system") return m;
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) return "light";
+    } catch (e) {}
+    return "dark";
+  }
+
+  function applyThemeMode(mode) {
+    const next = normalizeThemeMode(mode);
+    const theme = resolveTheme(next);
+    document.documentElement.setAttribute("data-theme-mode", next);
+    document.documentElement.setAttribute("data-theme", theme);
+    document.documentElement.style.colorScheme = theme;
+    const select = document.getElementById("theme-mode");
+    if (select) select.value = next;
+  }
+
+  function setThemeMode(mode) {
+    const next = normalizeThemeMode(mode);
+    try {
+      localStorage.setItem(THEME_MODE_KEY, next);
+      localStorage.removeItem(LEGACY_THEME_KEY);
+    } catch (e) {}
+    applyThemeMode(next);
+    document.dispatchEvent(new CustomEvent("klaxond:themechange", {
+      detail: { mode: next, theme: resolveTheme(next) }
+    }));
+  }
+
+  function initPreferences() {
+    applyI18n(currentLanguage());
+    applyThemeMode(storedThemeMode());
+
+    document.getElementById("language-select")?.addEventListener("change", e => setLanguage(e.target.value));
+    document.getElementById("theme-mode")?.addEventListener("change", e => setThemeMode(e.target.value));
+
+    try {
+      const media = window.matchMedia("(prefers-color-scheme: light)");
+      media.addEventListener("change", () => {
+        if (storedThemeMode() === "system") applyThemeMode("system");
+      });
+    } catch (e) {}
+  }
+
+  window.klaxondI18n = {
+    applyI18n,
+    applyThemeMode,
+    currentLanguage,
+    setLanguage,
+    setThemeMode,
+    storedThemeMode,
+    t
+  };
+  window.t = t;
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initPreferences);
+  } else {
+    initPreferences();
+  }
+})();

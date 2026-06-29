@@ -10,7 +10,7 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator("h1")).toContainText("klaxond");
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
   await expect(page.locator('[data-tab="preview"]')).toBeVisible();
-  await expect(page.locator("#footer-version")).toContainText(/^v0\.11\./);
+  await expect(page.locator("#footer-version")).toContainText(/^v0\.12\./);
 });
 
 test("inhibition applies-to checkboxes stay compact and aligned", async ({ page }) => {
@@ -21,6 +21,51 @@ test("inhibition applies-to checkboxes stay compact and aligned", async ({ page 
   const box = await firstCheckbox.boundingBox();
   expect(box?.width).toBeLessThanOrEqual(20);
   await expect(firstCheckbox.locator("xpath=..")).toHaveCSS("align-items", "center");
+});
+
+test("supports Italian and English plus system/light/dark theme modes", async ({ page }) => {
+  await page.goto("/healthz");
+  await page.evaluate(() => {
+    localStorage.setItem("klaxond.theme", "light");
+    localStorage.removeItem("klaxond.themeMode");
+  });
+
+  await page.goto("/ui/");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
+
+  await page.selectOption("#language-select", "it");
+  await expect(page.locator("html")).toHaveAttribute("lang", "it");
+  await expect(page.locator('[data-tab="status"]')).toHaveText("Stato");
+  await expect(page.locator('[data-tab="deliveries"]')).toHaveText("Consegne recenti");
+  await expect(page).toHaveTitle(/demone notifiche/);
+  await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.lang"))).toBe("it");
+
+  await page.selectOption("#theme-mode", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "light");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+
+  await page.selectOption("#theme-mode", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.themeMode"))).toBe("dark");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.theme"))).toBeNull();
+
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("lang", "it");
+  await expect(page.locator('[data-tab="status"]')).toHaveText("Stato");
+  await expect(page.locator("#theme-mode")).toHaveValue("dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+
+  await page.selectOption("#theme-mode", "system");
+  await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "system");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", /^(light|dark)$/);
+
+  await page.selectOption("#language-select", "en");
+  await expect(page.locator("html")).toHaveAttribute("lang", "en");
+  await expect(page.locator('[data-tab="status"]')).toHaveText("Status");
 });
 
 test("render-preview returns ntfy-compatible headers without delivery", async ({ request }) => {
