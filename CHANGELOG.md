@@ -1,5 +1,16 @@
 # Klaxond — CHANGELOG
 
+## 0.11.0 — 2026-06-29
+
+- Backend portato da Python a Rust mantenendo il contratto HTTP/API esistente:
+  webhook, UI admin API, auth Basic/OIDC/trusted-proxy, dedup persistente,
+  inhibition/ack/schedule, metriche Prometheus, delivery ntfy/Telegram/SMTP,
+  render immagini Grafana e static UI.
+- Runtime Docker convertito a multi-stage Rust build con immagine finale Alpine
+  e binario `/usr/local/bin/klaxond`; Python non è più usato nel container.
+- Aggiunti test di parità Rust (`cargo test`) e smoke E2E Playwright
+  (`npm run test:e2e`) con server isolato e `/data` temporanea.
+
 ## 0.10.2 — 2026-06-15
 
 - Override immagine per-componente: nuova sezione toml `[render.component_image]`

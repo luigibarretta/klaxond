@@ -26,7 +26,7 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 - **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
 - **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, render mappings, inhibition rules. Auto-bootstrapped on first run from the bundled default.
 - **Admin UI** (vanilla HTML+JS, zero build) at `/ui/`: channel health, active inhibitions, recent deliveries, render config CRUD with deep-link test, visual ntfy push preview, cascade tier editor, channel routing config.
-- **Python stdlib only** — no pip install needed. Runs in `python:3.13-alpine`.
+- **Rust backend** — single `klaxond` binary built with Cargo, served from a small Alpine runtime image.
 
 ## Quick start
 
@@ -284,15 +284,20 @@ This single push **bypasses klaxond** by design — it's the one alert that has 
 
 ```
 klaxond/
-├── app.py                  backend (Python stdlib only, ~800 lines)
+├── Cargo.toml / Cargo.lock backend crate and locked Rust dependencies
+├── src/                    Rust backend modules
 ├── static/
 │   ├── index.html          admin UI (single page)
 │   ├── style.css           dark theme, ~6KB
-│   └── app.js              vanilla JS, fetch + DOM (~400 lines)
+│   └── app.js              vanilla JS, fetch + DOM
+├── tests/
+│   ├── parity.rs           parser/inhibition parity tests
+│   └── e2e/                Playwright smoke tests
 ├── klaxond.default.toml     bundled defaults, copied to /data on first run
-├── Dockerfile              builds an image (~50 MB)
+├── Dockerfile              multi-stage Rust build
 ├── docker-compose.yml      reference standalone deploy
 ├── .env.example            secrets/site-specific env vars
+├── playwright.config.ts
 ├── README.md
 ├── CHANGELOG.md
 └── LICENSE
@@ -300,14 +305,22 @@ klaxond/
 
 ## Development
 
-There's no build step. Edit `app.py` or `static/*` and restart the container. For local development:
+For local development:
 
 ```bash
-python3 app.py &
+cargo run &
 curl -s http://127.0.0.1:8181/healthz
-curl -s -X POST http://127.0.0.1:8181/webhook/info \
+curl -s -X POST 'http://127.0.0.1:8181/webhook/info?dry_run=1' \
   -H 'Content-Type: application/json' \
   -d '{"status":"firing","commonLabels":{"alertname":"local-test","severity":"info","host":"dev"}}'
+```
+
+Verification:
+
+```bash
+cargo test
+npm run test:e2e
+docker build -t klaxond:local .
 ```
 
 ## License
@@ -318,6 +331,6 @@ Apache-2.0 — see [LICENSE](./LICENSE).
 > **Questo repo È la source of truth di klaxond** (progetto personale,
 > 2026-06-10: invertito il modello — prima il sorgente viveva in
 > infra-ansible/files/klaxond). Il deploy (`infra-ansible/playbooks/deploy-klaxond.yml`)
-> clona QUESTO repo al tag pinnato e builda su mgmt-01.
-> Flusso release: commit qui → tag vX.Y.Z → bump `klaxon_image_tag` nel
-> playbook → deploy.
+> clona QUESTO repo al tag pinnato e builda/deploya l'immagine pubblicata dal
+> registry Gitea. Flusso release: commit qui → tag vX.Y.Z → CI build/push →
+> deploy automatico via Semaphore con `klaxond_image_tag`.

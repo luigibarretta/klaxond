@@ -1,0 +1,217 @@
+use crate::config::{Paths, RuntimeConfig, load_runtime_config};
+use crate::util::{atomic_write, random_bytes};
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Instant;
+use tokio::sync::Mutex as AsyncMutex;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub paths: Paths,
+    pub http: reqwest::Client,
+    pub started: Instant,
+    pub config: Arc<RwLock<RuntimeConfig>>,
+    pub session_key: Arc<Vec<u8>>,
+    pub cascade_runtime_enabled: Arc<AtomicBool>,
+    pub delivery_log: Arc<Mutex<VecDeque<DeliveryEntry>>>,
+    pub suppressions: Arc<Mutex<Vec<Suppression>>>,
+    pub ack_suppressions: Arc<Mutex<HashMap<String, f64>>>,
+    pub active_mutes: Arc<Mutex<HashMap<String, f64>>>,
+    pub rendered_images: Arc<Mutex<HashMap<String, RenderedImage>>>,
+    pub metrics: Arc<Metrics>,
+    pub dedup: Arc<AsyncMutex<DedupQueues>>,
+    pub oidc_states: Arc<Mutex<HashMap<String, (f64, String)>>>,
+}
+
+#[derive(Clone)]
+pub struct RenderedImage {
+    pub bytes: Vec<u8>,
+    pub expires_at: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DeliveryEntry {
+    pub ts: f64,
+    pub source: String,
+    pub severity: String,
+    pub title: String,
+    pub channel: String,
+    pub suppressed_by: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct Suppression {
+    pub rule_idx: usize,
+    pub anchor: Option<String>,
+    pub expiry: f64,
+}
+
+#[derive(Default)]
+pub struct Metrics {
+    pub counters: Mutex<HashMap<String, i64>>,
+    pub gauges: Mutex<HashMap<String, f64>>,
+}
+
+#[derive(Default, Debug)]
+pub struct DedupQueues {
+    pub queues: HashMap<String, Vec<DedupItem>>,
+    pub timer_active: HashMap<String, bool>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DedupItem {
+    pub ts: f64,
+    pub source: String,
+    pub severity: String,
+    pub payload: Value,
+    pub parts: crate::parsers::Parts,
+    pub common_labels: HashMap<String, String>,
+    pub with_cascade: bool,
+    pub dedup_key: String,
+}
+
+impl AppState {
+    pub fn new(paths: Paths) -> Result<Self> {
+        let cfg = load_runtime_config(&paths)?;
+        let cascade_runtime_enabled = cfg.cascade_default;
+        let session_key = load_or_create_session_key(&paths)?;
+        let mut queues = DedupQueues::default();
+        for src in crate::config::DEDUP_SOURCES {
+            queues.queues.insert((*src).to_string(), Vec::new());
+            queues.timer_active.insert((*src).to_string(), false);
+        }
+        Ok(Self {
+            paths,
+            http: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .context("build reqwest client")?,
+            started: Instant::now(),
+            config: Arc::new(RwLock::new(cfg)),
+            session_key: Arc::new(session_key),
+            cascade_runtime_enabled: Arc::new(AtomicBool::new(cascade_runtime_enabled)),
+            delivery_log: Arc::new(Mutex::new(VecDeque::with_capacity(50))),
+            suppressions: Arc::new(Mutex::new(Vec::new())),
+            ack_suppressions: Arc::new(Mutex::new(HashMap::new())),
+            active_mutes: Arc::new(Mutex::new(HashMap::new())),
+            rendered_images: Arc::new(Mutex::new(HashMap::new())),
+            metrics: Arc::new(Metrics::default()),
+            dedup: Arc::new(AsyncMutex::new(queues)),
+            oidc_states: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+
+    pub fn cfg(&self) -> RuntimeConfig {
+        self.config.read().expect("config poisoned").clone()
+    }
+
+    pub fn with_cfg<R>(&self, f: impl FnOnce(&RuntimeConfig) -> R) -> R {
+        let cfg = self.config.read().expect("config poisoned");
+        f(&cfg)
+    }
+
+    pub fn replace_config(&self, cfg: RuntimeConfig) {
+        self.cascade_runtime_enabled
+            .store(cfg.cascade_default, Ordering::Relaxed);
+        *self.config.write().expect("config poisoned") = cfg;
+    }
+
+    pub fn log_delivery(
+        &self,
+        source: &str,
+        severity: &str,
+        title: &str,
+        channel: &str,
+        suppressed_by: &str,
+    ) {
+        let mut log = self.delivery_log.lock().expect("delivery log poisoned");
+        if log.len() == 50 {
+            log.pop_front();
+        }
+        log.push_back(DeliveryEntry {
+            ts: crate::util::now_epoch(),
+            source: source.to_string(),
+            severity: severity.to_string(),
+            title: title.to_string(),
+            channel: channel.to_string(),
+            suppressed_by: suppressed_by.to_string(),
+        });
+    }
+
+    pub fn recent_deliveries(&self) -> Vec<DeliveryEntry> {
+        self.delivery_log
+            .lock()
+            .expect("delivery log poisoned")
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    pub fn metric_inc(&self, name: &str, labels: &[(&str, &str)], by: i64) {
+        let key = metric_key(name, labels);
+        let mut counters = self.metrics.counters.lock().expect("metrics poisoned");
+        *counters.entry(key).or_insert(0) += by;
+    }
+
+    pub fn metric_set(&self, name: &str, labels: &[(&str, &str)], value: f64) {
+        let key = metric_key(name, labels);
+        self.metrics
+            .gauges
+            .lock()
+            .expect("metrics poisoned")
+            .insert(key, value);
+    }
+}
+
+fn metric_key(name: &str, labels: &[(&str, &str)]) -> String {
+    let mut l = labels
+        .iter()
+        .map(|(k, v)| format!("{k}={}", esc_label(v)))
+        .collect::<Vec<_>>();
+    l.sort();
+    format!("{name}|{}", l.join(","))
+}
+
+pub fn esc_label(v: &str) -> String {
+    v.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn load_or_create_session_key(paths: &Paths) -> Result<Vec<u8>> {
+    if let Ok(v) = std::env::var("AUTH_SESSION_SECRET")
+        && !v.is_empty()
+    {
+        return Ok(v.into_bytes());
+    }
+    if paths.auth_session_key.exists() {
+        return fs::read(&paths.auth_session_key)
+            .with_context(|| format!("read {}", paths.auth_session_key.display()));
+    }
+    let key = random_bytes::<32>().to_vec();
+    if let Some(parent) = paths.auth_session_key.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    atomic_write(&paths.auth_session_key, &key)?;
+    set_private_mode(&paths.auth_session_key);
+    Ok(key)
+}
+
+#[cfg(unix)]
+fn set_private_mode(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = fs::metadata(path) {
+        let mut perms = meta.permissions();
+        perms.set_mode(0o600);
+        let _ = fs::set_permissions(path, perms);
+    }
+}
+
+#[cfg(not(unix))]
+fn set_private_mode(_path: &Path) {}

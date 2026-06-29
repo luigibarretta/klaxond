@@ -1,31 +1,35 @@
 # syntax=docker/dockerfile:1.7
-FROM python:3.13-alpine
+FROM rust:1.96-alpine AS build
+
+WORKDIR /src
+
+RUN apk add --no-cache build-base perl
+
+COPY Cargo.toml Cargo.lock ./
+COPY src/ ./src/
+
+RUN cargo build --release --locked
+
+FROM alpine:3.23
 
 LABEL org.opencontainers.image.title="klaxond"
 LABEL org.opencontainers.image.description="Homelab notification bridge — Grafana/Beszel webhook → ntfy with cascade (Telegram, SMTP) and admin UI"
-LABEL org.opencontainers.image.source="https://example.com/yourname/klaxond"
+LABEL org.opencontainers.image.source="https://git.luigibarretta.com/luigibarretta/klaxond"
 LABEL org.opencontainers.image.licenses="MIT"
+
+RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 
-# Runtime deps:
-#  - PyJWT[crypto]: OIDC id_token verification (RS256/RS512/ES256)
-#  - bcrypt: basic-auth password hashing
-# Pinned to current major to keep image reproducible.
-RUN apk add --no-cache --virtual .build-deps gcc musl-dev libffi-dev openssl-dev \
- && pip install --no-cache-dir 'PyJWT[crypto]==2.10.1' 'bcrypt==4.2.1' \
- && apk del .build-deps
-
-COPY app.py /app/app.py
+COPY --from=build /src/target/release/klaxond /usr/local/bin/klaxond
 COPY static/ /app/static/
 COPY klaxond.default.toml /app/klaxond.default.toml
 
-# Persistent state lives here (klaxond.toml + render-config.json + future).
 VOLUME ["/data"]
 
 EXPOSE 8181
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8181/healthz', timeout=2).status==200 else 1)"
+    CMD wget -qO- --timeout=2 http://localhost:8181/healthz | grep -qx OK
 
-CMD ["python", "/app/app.py"]
+CMD ["/usr/local/bin/klaxond"]
