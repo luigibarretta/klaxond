@@ -4,6 +4,11 @@
 .env
 .env.*
 node_modules/
+target/
+.tmp/
+.e2e-data/
+test-results/
+playwright-report/
 __pycache__/
 *.pyc
 README.md

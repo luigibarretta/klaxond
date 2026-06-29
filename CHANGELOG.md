@@ -1,5 +1,16 @@
 # Klaxond — CHANGELOG
 
+## 0.11.1 — 2026-06-29
+
+- Corretto l'healthcheck Docker del container Rust: usa `127.0.0.1` invece di
+  `localhost`, evitando il probe IPv6 `::1` di BusyBox `wget` mentre klaxond
+  ascolta su IPv4.
+- Ridotto il grafo di compilazione Rust: feature-minimal per `axum`, `tokio` e
+  `chrono`; rimosse dipendenze inutili come `axum-macros`, `multer`,
+  `parking_lot`, `oldtime` e `wasm-bindgen`.
+- Ottimizzato il Docker build con cache BuildKit per registry/git/target e
+  contesto piu' piccolo tramite `.dockerignore`.
+
 ## 0.11.0 — 2026-06-29
 
 - Backend portato da Python a Rust mantenendo il contratto HTTP/API esistente:

@@ -1,14 +1,14 @@
 [package]
 name = "klaxond"
-version = "0.11.0"
+version = "0.11.1"
 edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
-axum = { version = "0.8", features = ["macros", "multipart"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22"
 bcrypt = "0.17"
-chrono = { version = "0.4", features = ["clock", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 constant_time_eq = "0.4"
 hmac = "0.12"
 hex = "0.4"
@@ -24,7 +24,7 @@ rusqlite = { version = "0.38", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-tokio = { version = "1.48", features = ["full"] }
+tokio = { version = "1.48", default-features = false, features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 toml = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

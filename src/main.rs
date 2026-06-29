@@ -24,17 +24,19 @@ async fn main() -> Result<()> {
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(8181);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let enabled = state
-        .cfg()
-        .dedup
-        .into_iter()
-        .filter(|(_, s)| s.enabled)
-        .map(|(k, _)| k)
-        .collect::<Vec<_>>();
+    let (cascade_default, enabled) = state.with_cfg(|cfg| {
+        let enabled = cfg
+            .dedup
+            .iter()
+            .filter(|(_, s)| s.enabled)
+            .map(|(k, _)| k.clone())
+            .collect::<Vec<_>>();
+        (cfg.cascade_default, enabled)
+    });
     tracing::info!(
         "klaxond listening on :{}  (cascade_enabled={}, dedup_sources_enabled={:?})",
         port,
-        state.cfg().cascade_default,
+        cascade_default,
         enabled
     );
 
