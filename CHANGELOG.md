@@ -1,5 +1,11 @@
 # Klaxond — CHANGELOG
 
+## 0.11.2 — 2026-06-29
+
+- Corretto il probe `/api/status` per SMTP: ora risolve hostname DNS come
+  `smtp.gmail.com` invece di accettare solo indirizzi IP numerici. Questo
+  elimina il falso `SMTP down` nella UI quando il server SMTP e' raggiungibile.
+
 ## 0.11.1 — 2026-06-29
 
 - Corretto l'healthcheck Docker del container Rust: usa `127.0.0.1` invece di

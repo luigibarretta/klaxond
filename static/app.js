@@ -79,6 +79,8 @@ async function loadStatus() {
     setCh("ch-ntfy", s.channels.ntfy, s.ntfy_url);
     setCh("ch-telegram", s.channels.telegram, s.telegram_configured ? "bot configured" : "(not configured)");
     setCh("ch-smtp", s.channels.smtp, s.smtp_host ? `${s.smtp_host}` : "(not configured)");
+    const footerVersion = $("#footer-version");
+    if (footerVersion && s.version) footerVersion.textContent = `v${s.version}`;
     $("#cas-default").textContent = s.cascade_enabled_default;
     $("#cas-runtime").textContent = s.cascade_enabled_runtime;
   } catch (e) { fetchError("status", e); }
@@ -2355,4 +2357,3 @@ document.addEventListener("keydown", e => {
     if (tabs[idx]) tabs[idx].click();
   }
 });
-

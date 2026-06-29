@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
-use std::net::{SocketAddr, TcpStream};
+use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use url::form_urlencoded;
@@ -1439,6 +1439,7 @@ fn ingest_auth_payload(state: &AppState) -> Value {
 async fn status_payload(state: &AppState) -> Value {
     let cfg = state.cfg();
     json!({
+        "version": crate::config::VERSION,
         "cascade_enabled_runtime": state.cascade_runtime_enabled.load(Ordering::Relaxed),
         "cascade_enabled_default": cfg.cascade_default,
         "channels": check_channel_reachability(state).await,
@@ -1477,13 +1478,13 @@ async fn check_channel_reachability(state: &AppState) -> Value {
             .unwrap_or(false);
     }
     if !cfg.smtp_host.is_empty() {
-        smtp = TcpStream::connect_timeout(
-            &format!("{}:{}", cfg.smtp_host, cfg.smtp_port)
-                .parse()
-                .unwrap_or_else(|_| "127.0.0.1:9".parse().unwrap()),
+        smtp = tokio::time::timeout(
             Duration::from_secs(4),
+            tokio::net::TcpStream::connect(format!("{}:{}", cfg.smtp_host, cfg.smtp_port)),
         )
-        .is_ok();
+        .await
+        .map(|r| r.is_ok())
+        .unwrap_or(false);
     }
     json!({"ntfy": ntfy, "telegram": telegram, "smtp": smtp})
 }

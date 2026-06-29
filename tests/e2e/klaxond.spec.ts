@@ -10,6 +10,17 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator("h1")).toContainText("klaxond");
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
   await expect(page.locator('[data-tab="preview"]')).toBeVisible();
+  await expect(page.locator("#footer-version")).toContainText(/^v0\.11\./);
+});
+
+test("inhibition applies-to checkboxes stay compact and aligned", async ({ page }) => {
+  await page.goto("/ui/index.html#inhibitions");
+  const firstCheckbox = page.locator('#t-inhib-rules [data-k="applies_to"] input[type="checkbox"]').first();
+  await expect(firstCheckbox).toBeVisible();
+
+  const box = await firstCheckbox.boundingBox();
+  expect(box?.width).toBeLessThanOrEqual(20);
+  await expect(firstCheckbox.locator("xpath=..")).toHaveCSS("align-items", "center");
 });
 
 test("render-preview returns ntfy-compatible headers without delivery", async ({ request }) => {

@@ -202,7 +202,7 @@ table {
 #t-inhib-rules tbody tr:hover { background: var(--row-hover); }
 th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
 th { background: var(--panel-light); color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
-td input {
+td input:not([type="checkbox"]):not([type="radio"]) {
   background: var(--panel-light);
   border: 1px solid var(--border);
   color: var(--text);
@@ -210,6 +210,20 @@ td input {
   border-radius: 3px;
   width: 100%;
   font-family: inherit;
+}
+td input[type="checkbox"],
+td input[type="radio"] {
+  width: auto;
+  margin: 0;
+  padding: 0;
+  vertical-align: middle;
+}
+#t-inhib-rules [data-k="applies_to"] label,
+#t-schedules [data-k="applies_to"] label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.35;
 }
 button {
   background: var(--panel-light);
