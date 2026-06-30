@@ -114,19 +114,20 @@
     <button id="btn-cascade-toggle" data-i18n="status.toggle_cascade">Toggle runtime cascade</button>
   </div>
 
-  <h2><span data-i18n="status.config_backup">Config backup</span> <small class="muted">(<code>klaxond.toml</code>)</small></h2>
+  <h2><span data-i18n="status.config_backup">Config backup</span> <small class="muted">(<code>klaxond.toml</code> + bundle)</small></h2>
   <div class="card">
     <p class="muted">
-      <span data-i18n="status.config_backup_intro">Download the current config or restore from a previous TOML. Klaxond also auto-saves a snapshot under</span>
+      <span data-i18n="status.config_backup_intro">Download the current config or restore from a previous TOML/full bundle. Klaxond also auto-saves a snapshot under</span>
       <code id="cfg-backup-dir">/data/backups/</code>
       <span data-i18n="status.config_backup_mid">before every config write (keeps newest</span>
       <code id="cfg-backup-keep">10</code><span data-i18n="status.config_backup_end">).</span>
     </p>
     <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap;">
       <a id="cfg-backup-download" class="btn primary" style="text-decoration:none" data-i18n="status.download_config">Download config</a>
+      <a id="cfg-full-export-download" class="btn" style="text-decoration:none" data-i18n="status.download_full_export" data-i18n-title="status.download_full_export_title" title="Download TOML, sidecars, and runtime-derived settings including secrets">Full export</a>
       <label class="btn" style="margin:0; cursor:pointer">
-        <input type="file" id="cfg-restore-file" accept=".toml,application/toml,text/plain" style="display:none">
-        <span data-i18n="status.restore_toml">Restore from TOML…</span>
+        <input type="file" id="cfg-restore-file" accept=".toml,.json,application/toml,application/json,text/plain" style="display:none">
+        <span data-i18n="status.restore_toml">Restore from TOML/bundle…</span>
       </label>
       <span id="cfg-restore-status" class="muted"></span>
     </div>
@@ -673,7 +674,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.13.2</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.13.3</span></small>
 </footer>
 
 <!--

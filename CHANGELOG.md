@@ -1,5 +1,16 @@
 # Klaxond — CHANGELOG
 
+## 0.13.3 — 2026-06-30
+
+- Aggiunto export completo impostazioni (`/api/config/export`) in formato JSON:
+  include `klaxond.toml`, sidecar effettivi `render-config.json`,
+  `ntfy-topics.json`, `dedup-config.json`, `auth-config.json` e snapshot
+  runtime derivato da env/stack, inclusi i segreti.
+- Il restore config accetta anche il bundle JSON completo e ripristina TOML +
+  sidecar in modo atomico sotto config lock.
+- Aggiunto pulsante UI "Export completo" e copertura e2e del round-trip
+  export/restore bundle.
+
 ## 0.13.2 — 2026-06-30
 
 - Serializzate le write admin di configurazione con lock in-process e lock file

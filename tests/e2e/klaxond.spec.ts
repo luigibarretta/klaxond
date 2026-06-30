@@ -188,6 +188,53 @@ test("inhibition rule simulator reports source and suppression matches", async (
   });
 });
 
+test("full config export includes TOML sidecars and runtime settings", async ({ page, request }) => {
+  await page.goto("/ui/index.html#status");
+  await expect(page.locator("#cfg-backup-download")).toHaveAttribute("href", "/api/config/backup");
+  await expect(page.locator("#cfg-full-export-download")).toHaveAttribute("href", "/api/config/export");
+
+  const exported = await request.get("/api/config/export");
+  await expect(exported).toBeOK();
+  expect(exported.headers()["content-type"]).toContain("application/json");
+  expect(exported.headers()["content-disposition"]).toContain("klaxond-full-settings-");
+
+  const bundle = await exported.json();
+  expect(bundle).toMatchObject({
+    kind: "klaxond.full-settings",
+    format_version: 1,
+    includes_secrets: true,
+    files_are_effective: true
+  });
+  expect(Object.keys(bundle.files)).toEqual(expect.arrayContaining([
+    "klaxond.toml",
+    "render-config.json",
+    "ntfy-topics.json",
+    "dedup-config.json",
+    "auth-config.json"
+  ]));
+  expect(JSON.parse(bundle.files["render-config.json"]).component_dashboards).toBeTruthy();
+  expect(JSON.parse(bundle.files["ntfy-topics.json"]).topics.length).toBeGreaterThan(0);
+  expect(bundle.effective_runtime).toHaveProperty("telegram");
+  expect(bundle.effective_runtime).toHaveProperty("smtp");
+  expect(bundle.effective_runtime).toHaveProperty("grafana");
+
+  const restored = await request.post("/api/config/restore", {
+    data: JSON.stringify(bundle),
+    headers: { "Content-Type": "application/json" }
+  });
+  await expect(restored).toBeOK();
+  expect(await restored.json()).toMatchObject({
+    ok: true,
+    source_kind: "full-bundle",
+    restored_sidecars: [
+      "render-config.json",
+      "ntfy-topics.json",
+      "dedup-config.json",
+      "auth-config.json"
+    ]
+  });
+});
+
 test("backend logs require admin auth when auth is enabled", async ({ request }) => {
   const update = await request.post("/api/auth-config", {
     data: {

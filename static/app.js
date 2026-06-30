@@ -185,6 +185,8 @@ async function loadConfigBackups() {
 document.addEventListener("DOMContentLoaded", () => {
   const dl = document.getElementById("cfg-backup-download");
   if (dl) dl.href = "/api/config/backup";
+  const full = document.getElementById("cfg-full-export-download");
+  if (full) full.href = "/api/config/export";
 
   const fileInput = document.getElementById("cfg-restore-file");
   if (fileInput) fileInput.addEventListener("change", async e => {
@@ -196,8 +198,9 @@ document.addEventListener("DOMContentLoaded", () => {
     status.textContent = tr("status.uploading"); status.style.color = "";
     try {
       const raw = await f.text();
+      const isJson = raw.trimStart().startsWith("{");
       const res = await fetch("/api/config/restore", {
-        method: "POST", headers: {"Content-Type": "application/toml"}, body: raw,
+        method: "POST", headers: {"Content-Type": isJson ? "application/json" : "application/toml"}, body: raw,
       });
       if (!res.ok) {
         const txt = await res.text();
