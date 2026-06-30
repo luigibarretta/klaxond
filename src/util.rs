@@ -60,10 +60,13 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
-    let tmp = tmp_path(path, "tmp");
+    let suffix = format!("{}.{}.tmp", std::process::id(), random_hex(4));
+    let tmp = tmp_path(path, &suffix);
     fs::write(&tmp, bytes).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, path)
-        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+    if let Err(err) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err).with_context(|| format!("rename {} -> {}", tmp.display(), path.display()));
+    }
     Ok(())
 }
 

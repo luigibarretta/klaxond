@@ -1,5 +1,20 @@
 # Klaxond — CHANGELOG
 
+## 0.13.2 — 2026-06-30
+
+- Serializzate le write admin di configurazione con lock in-process e lock file
+  cross-process, evitando lost update tra salvataggi concorrenti di TOML/JSON
+  runtime.
+- Reso il restore TOML coerente con i sidecar JSON di render, dedup, auth e
+  ntfy quando il TOML ripristinato contiene quelle sezioni.
+- Resi univoci i temp file delle write atomiche e i nomi degli auto-backup anche
+  con piu' salvataggi nello stesso secondo.
+- Aggiunta base Telegram configurabile per test/parita' (`TELEGRAM_API_BASE`),
+  mantenendo il default `https://api.telegram.org` in produzione.
+- Aggiunti test con servizi fake locali per ntfy, Telegram, render Grafana e
+  SMTP, così le integrazioni delivery vengono verificate senza dipendere da
+  endpoint esterni reali.
+
 ## 0.13.1 — 2026-06-30
 
 - Rafforzata la redazione dei log esposti da `/api/logs` per coprire anche

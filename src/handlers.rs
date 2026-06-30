@@ -1,7 +1,8 @@
 use crate::auth::{self, AuthOutcome, User};
 use crate::config::{
     DEDUP_SOURCES, InhibitionRule, NtfyTopic, Schedule, default_dedup, default_tiers,
-    load_runtime_config, save_auth, save_dedup, save_ntfy_topics, save_render_config, save_toml,
+    load_runtime_config, restore_sidecars_from_toml, save_auth, save_dedup, save_ntfy_topics,
+    save_render_config, save_toml,
 };
 use crate::dedup;
 use crate::delivery::deliver;
@@ -595,13 +596,17 @@ fn update_render_config(state: &AppState, body: Bytes) -> Response<Body> {
             }
         }
     }
-    if let Err(err) = save_render_config(&state.paths, &cleaned) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
-    }
-    let mut cfg = state.cfg();
-    cfg.component_dashboards = cleaned.clone();
-    state.replace_config(cfg);
-    json_response(json!({"ok": true, "count": cleaned.len()}))
+    state
+        .with_config_write_lock(|| {
+            if let Err(err) = save_render_config(&state.paths, &cleaned) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            let mut cfg = state.cfg();
+            cfg.component_dashboards = cleaned.clone();
+            state.replace_config(cfg);
+            json_response(json!({"ok": true, "count": cleaned.len()}))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
 fn update_ntfy_topics(state: &AppState, body: Bytes) -> Response<Body> {
@@ -611,80 +616,83 @@ fn update_ntfy_topics(state: &AppState, body: Bytes) -> Response<Body> {
     let Some(incoming) = payload.get("topics").and_then(|v| v.as_array()) else {
         return text(StatusCode::BAD_REQUEST, "missing 'topics' list");
     };
-    let existing = state
-        .cfg()
-        .ntfy_topics
-        .into_iter()
-        .map(|t| (t.name, t.token))
-        .collect::<HashMap<_, _>>();
-    let mut cleaned = Vec::new();
-    let mut names = std::collections::HashSet::new();
-    let mut errors = Vec::new();
-    for (idx, t) in incoming.iter().enumerate() {
-        let name = t
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim()
-            .to_string();
-        if name.is_empty() {
-            errors.push(format!("topic[{idx}]: empty name"));
-            continue;
+    state.with_config_write_lock(|| {
+        let existing = state
+            .cfg()
+            .ntfy_topics
+            .into_iter()
+            .map(|t| (t.name, t.token))
+            .collect::<HashMap<_, _>>();
+        let mut cleaned = Vec::new();
+        let mut names = std::collections::HashSet::new();
+        let mut errors = Vec::new();
+        for (idx, t) in incoming.iter().enumerate() {
+            let name = t
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if name.is_empty() {
+                errors.push(format!("topic[{idx}]: empty name"));
+                continue;
+            }
+            if !names.insert(name.clone()) {
+                errors.push(format!("topic[{idx}]: duplicate name '{name}'"));
+                continue;
+            }
+            let Some(handles_arr) = t.get("handles").and_then(|v| v.as_array()) else {
+                errors.push(format!("topic[{idx}] '{name}': handles must be a list"));
+                continue;
+            };
+            let handles = handles_arr
+                .iter()
+                .filter_map(|h| h.as_str().map(|s| s.trim().to_ascii_lowercase()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
+            if handles.is_empty() {
+                errors.push(format!("topic[{idx}] '{name}': handles is empty"));
+                continue;
+            }
+            let token_in = t.get("token").and_then(|v| v.as_str()).unwrap_or("");
+            let token = if token_in == "***SET***" {
+                existing.get(&name).cloned().unwrap_or_default()
+            } else {
+                token_in.to_string()
+            };
+            cleaned.push(NtfyTopic {
+                name,
+                token,
+                handles,
+            });
         }
-        if !names.insert(name.clone()) {
-            errors.push(format!("topic[{idx}]: duplicate name '{name}'"));
-            continue;
+        if !errors.is_empty() {
+            return text(
+                StatusCode::BAD_REQUEST,
+                &format!("validation errors:\n  - {}", errors.join("\n  - ")),
+            );
         }
-        let Some(handles_arr) = t.get("handles").and_then(|v| v.as_array()) else {
-            errors.push(format!("topic[{idx}] '{name}': handles must be a list"));
-            continue;
-        };
-        let handles = handles_arr
+        if cleaned.is_empty() {
+            return text(StatusCode::BAD_REQUEST, "need at least one valid topic");
+        }
+        if let Err(err) = save_ntfy_topics(&state.paths, &cleaned) {
+            return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+        }
+        match load_runtime_config(&state.paths) {
+            Ok(cfg) => state.replace_config(cfg),
+            Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
+        }
+        let cfg = state.cfg();
+        let redacted = cfg
+            .ntfy_topics
             .iter()
-            .filter_map(|h| h.as_str().map(|s| s.trim().to_ascii_lowercase()))
-            .filter(|s| !s.is_empty())
+            .map(|t| json!({"name": t.name, "token": if t.token.is_empty() { "" } else { "***SET***" }, "handles": t.handles}))
             .collect::<Vec<_>>();
-        if handles.is_empty() {
-            errors.push(format!("topic[{idx}] '{name}': handles is empty"));
-            continue;
-        }
-        let token_in = t.get("token").and_then(|v| v.as_str()).unwrap_or("");
-        let token = if token_in == "***SET***" {
-            existing.get(&name).cloned().unwrap_or_default()
-        } else {
-            token_in.to_string()
-        };
-        cleaned.push(NtfyTopic {
-            name,
-            token,
-            handles,
-        });
-    }
-    if !errors.is_empty() {
-        return text(
-            StatusCode::BAD_REQUEST,
-            &format!("validation errors:\n  - {}", errors.join("\n  - ")),
-        );
-    }
-    if cleaned.is_empty() {
-        return text(StatusCode::BAD_REQUEST, "need at least one valid topic");
-    }
-    if let Err(err) = save_ntfy_topics(&state.paths, &cleaned) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
-    }
-    match load_runtime_config(&state.paths) {
-        Ok(cfg) => state.replace_config(cfg),
-        Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
-    }
-    let cfg = state.cfg();
-    let redacted = cfg
-        .ntfy_topics
-        .iter()
-        .map(|t| json!({"name": t.name, "token": if t.token.is_empty() { "" } else { "***SET***" }, "handles": t.handles}))
-        .collect::<Vec<_>>();
-    json_response(
-        json!({"ok": true, "topics": redacted, "known_severities": cfg.known_severities(), "persisted_at": state.paths.ntfy_topics}),
-    )
+        json_response(
+            json!({"ok": true, "topics": redacted, "known_severities": cfg.known_severities(), "persisted_at": state.paths.ntfy_topics}),
+        )
+    })
+    .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
 fn update_dedup_config(state: &AppState, body: Bytes) -> Response<Body> {
@@ -715,13 +723,17 @@ fn update_dedup_config(state: &AppState, body: Bytes) -> Response<Body> {
             }
         }
     }
-    if let Err(err) = save_dedup(&state.paths, &cleaned) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
-    }
-    let mut cfg = state.cfg();
-    cfg.dedup = cleaned.clone();
-    state.replace_config(cfg);
-    json_response(json!({"ok": true, "settings": cleaned}))
+    state
+        .with_config_write_lock(|| {
+            if let Err(err) = save_dedup(&state.paths, &cleaned) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            let mut cfg = state.cfg();
+            cfg.dedup = cleaned.clone();
+            state.replace_config(cfg);
+            json_response(json!({"ok": true, "settings": cleaned}))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
 fn update_auth_config(state: &AppState, body: Bytes) -> Response<Body> {
@@ -731,103 +743,109 @@ fn update_auth_config(state: &AppState, body: Bytes) -> Response<Body> {
     let Some(incoming) = payload.get("settings") else {
         return text(StatusCode::BAD_REQUEST, "missing 'settings' object");
     };
-    let mut auth = state.cfg().auth;
-    if let Some(mode) = incoming.get("mode").and_then(|v| v.as_str()) {
-        if !matches!(mode, "none" | "basic" | "oidc" | "trusted-proxy") {
-            return text(StatusCode::BAD_REQUEST, "invalid mode");
-        }
-        auth.mode = mode.into();
-    }
-    if let Some(h) = incoming
-        .get("session_timeout_hours")
-        .and_then(|v| v.as_u64())
-    {
-        auth.session_timeout_hours = h.clamp(1, 720);
-    }
-    if let Some(b) = incoming.get("basic").and_then(|v| v.as_object()) {
-        if let Some(v) = b.get("username").and_then(|v| v.as_str()) {
-            auth.basic.username = v.into();
-        }
-        if let Some(v) = b.get("realm").and_then(|v| v.as_str()) {
-            auth.basic.realm = v.into();
-        }
-        if let Some(pwd) = b
-            .get("password")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-        {
-            match bcrypt::hash(pwd, bcrypt::DEFAULT_COST) {
-                Ok(h) => auth.basic.password_hash = h,
-                Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
+    state
+        .with_config_write_lock(|| {
+            let mut auth = state.cfg().auth;
+            if let Some(mode) = incoming.get("mode").and_then(|v| v.as_str()) {
+                if !matches!(mode, "none" | "basic" | "oidc" | "trusted-proxy") {
+                    return text(StatusCode::BAD_REQUEST, "invalid mode");
+                }
+                auth.mode = mode.into();
             }
-        } else if let Some(h) = b
-            .get("password_hash")
-            .and_then(|v| v.as_str())
-            .filter(|s| *s != "***SET***" && !s.is_empty())
-        {
-            auth.basic.password_hash = h.into();
-        }
-    }
-    if let Some(o) = incoming.get("oidc").and_then(|v| v.as_object()) {
-        for (k, slot) in [
-            ("provider", &mut auth.oidc.provider),
-            ("issuer", &mut auth.oidc.issuer),
-            ("client_id", &mut auth.oidc.client_id),
-            ("scopes", &mut auth.oidc.scopes),
-            ("required_group", &mut auth.oidc.required_group),
-            ("redirect_path", &mut auth.oidc.redirect_path),
-        ] {
-            if let Some(v) = o.get(k).and_then(|v| v.as_str()) {
-                *slot = v.into();
+            if let Some(h) = incoming
+                .get("session_timeout_hours")
+                .and_then(|v| v.as_u64())
+            {
+                auth.session_timeout_hours = h.clamp(1, 720);
             }
-        }
-        if let Some(v) = o
-            .get("client_secret")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty() && *s != "***SET***")
-        {
-            auth.oidc.client_secret = v.into();
-        }
-    }
-    if let Some(tp) = incoming.get("trusted_proxy").and_then(|v| v.as_object()) {
-        if let Some(v) = tp.get("user_header").and_then(|v| v.as_str()) {
-            auth.trusted_proxy.user_header = v.into();
-        }
-        if let Some(v) = tp.get("email_header").and_then(|v| v.as_str()) {
-            auth.trusted_proxy.email_header = v.into();
-        }
-        if let Some(v) = tp.get("groups_header").and_then(|v| v.as_str()) {
-            auth.trusted_proxy.groups_header = v.into();
-        }
-        if let Some(arr) = tp.get("trusted_cidrs").and_then(|v| v.as_array()) {
-            auth.trusted_proxy.trusted_cidrs = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                .collect();
-        }
-    }
-    if let Err(err) = save_auth(&state.paths, &auth) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
-    }
-    let mut cfg = state.cfg();
-    cfg.auth = auth;
-    let mut redacted = serde_json::to_value(&cfg.auth).unwrap();
-    if !redacted["basic"]["password_hash"]
-        .as_str()
-        .unwrap_or("")
-        .is_empty()
-    {
-        redacted["basic"]["password_hash"] = json!("***SET***");
-    }
-    if !redacted["oidc"]["client_secret"]
-        .as_str()
-        .unwrap_or("")
-        .is_empty()
-    {
-        redacted["oidc"]["client_secret"] = json!("***SET***");
-    }
-    state.replace_config(cfg);
-    json_response(json!({"ok": true, "settings": redacted}))
+            if let Some(b) = incoming.get("basic").and_then(|v| v.as_object()) {
+                if let Some(v) = b.get("username").and_then(|v| v.as_str()) {
+                    auth.basic.username = v.into();
+                }
+                if let Some(v) = b.get("realm").and_then(|v| v.as_str()) {
+                    auth.basic.realm = v.into();
+                }
+                if let Some(pwd) = b
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    match bcrypt::hash(pwd, bcrypt::DEFAULT_COST) {
+                        Ok(h) => auth.basic.password_hash = h,
+                        Err(err) => {
+                            return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+                        }
+                    }
+                } else if let Some(h) = b
+                    .get("password_hash")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| *s != "***SET***" && !s.is_empty())
+                {
+                    auth.basic.password_hash = h.into();
+                }
+            }
+            if let Some(o) = incoming.get("oidc").and_then(|v| v.as_object()) {
+                for (k, slot) in [
+                    ("provider", &mut auth.oidc.provider),
+                    ("issuer", &mut auth.oidc.issuer),
+                    ("client_id", &mut auth.oidc.client_id),
+                    ("scopes", &mut auth.oidc.scopes),
+                    ("required_group", &mut auth.oidc.required_group),
+                    ("redirect_path", &mut auth.oidc.redirect_path),
+                ] {
+                    if let Some(v) = o.get(k).and_then(|v| v.as_str()) {
+                        *slot = v.into();
+                    }
+                }
+                if let Some(v) = o
+                    .get("client_secret")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty() && *s != "***SET***")
+                {
+                    auth.oidc.client_secret = v.into();
+                }
+            }
+            if let Some(tp) = incoming.get("trusted_proxy").and_then(|v| v.as_object()) {
+                if let Some(v) = tp.get("user_header").and_then(|v| v.as_str()) {
+                    auth.trusted_proxy.user_header = v.into();
+                }
+                if let Some(v) = tp.get("email_header").and_then(|v| v.as_str()) {
+                    auth.trusted_proxy.email_header = v.into();
+                }
+                if let Some(v) = tp.get("groups_header").and_then(|v| v.as_str()) {
+                    auth.trusted_proxy.groups_header = v.into();
+                }
+                if let Some(arr) = tp.get("trusted_cidrs").and_then(|v| v.as_array()) {
+                    auth.trusted_proxy.trusted_cidrs = arr
+                        .iter()
+                        .filter_map(|v| v.as_str().map(ToOwned::to_owned))
+                        .collect();
+                }
+            }
+            if let Err(err) = save_auth(&state.paths, &auth) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            let mut cfg = state.cfg();
+            cfg.auth = auth;
+            let mut redacted = serde_json::to_value(&cfg.auth).unwrap();
+            if !redacted["basic"]["password_hash"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
+                redacted["basic"]["password_hash"] = json!("***SET***");
+            }
+            if !redacted["oidc"]["client_secret"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
+                redacted["oidc"]["client_secret"] = json!("***SET***");
+            }
+            state.replace_config(cfg);
+            json_response(json!({"ok": true, "settings": redacted}))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
 fn update_cascade_config(state: &AppState, body: Bytes) -> Response<Body> {
@@ -852,87 +870,99 @@ fn update_cascade_config(state: &AppState, body: Bytes) -> Response<Body> {
     if tiers.is_empty() {
         return text(StatusCode::BAD_REQUEST, "no valid tiers");
     }
-    let mut cfg = state.cfg();
-    {
-        let cas = toml_table_mut(&mut cfg.toml, &["cascade"]);
-        cas.insert("tiers".into(), json_to_toml(Value::Array(tiers.clone())));
-        if let Some(v) = payload
-            .get("default_enabled_for_webhook")
-            .and_then(|v| v.as_bool())
-        {
-            cas.insert(
-                "default_enabled_for_webhook".into(),
-                toml::Value::Boolean(v),
-            );
-        }
-    }
-    persist_reload(state, cfg.toml)
-        .map(|_| json_response(json!({"ok": true, "tiers": state.cfg().tiers})))
-        .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            {
+                let cas = toml_table_mut(&mut cfg.toml, &["cascade"]);
+                cas.insert("tiers".into(), json_to_toml(Value::Array(tiers.clone())));
+                if let Some(v) = payload
+                    .get("default_enabled_for_webhook")
+                    .and_then(|v| v.as_bool())
+                {
+                    cas.insert(
+                        "default_enabled_for_webhook".into(),
+                        toml::Value::Boolean(v),
+                    );
+                }
+            }
+            persist_reload(state, cfg.toml)
+                .map(|_| json_response(json!({"ok": true, "tiers": state.cfg().tiers})))
+                .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
 fn update_channel_config(state: &AppState, body: Bytes) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let mut cfg = state.cfg();
-    if let Some(n) = payload.get("ntfy").and_then(|v| v.as_object()) {
-        let ntfy = toml_table_mut(&mut cfg.toml, &["ntfy"]);
-        if let Some(url) = n.get("url").and_then(|v| v.as_str()) {
-            ntfy.insert(
-                "url".into(),
-                toml::Value::String(url.trim_end_matches('/').into()),
-            );
-        }
-        if let Some(topics) = n.get("topics").and_then(|v| v.as_object()) {
-            let ntfy_topics = toml_table_mut(&mut cfg.toml, &["ntfy", "topics"]);
-            for sev in ["info", "warning", "critical"] {
-                if let Some(v) = topics.get(sev).and_then(|v| v.as_str()) {
-                    ntfy_topics.insert(sev.into(), toml::Value::String(v.into()));
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            if let Some(n) = payload.get("ntfy").and_then(|v| v.as_object()) {
+                let ntfy = toml_table_mut(&mut cfg.toml, &["ntfy"]);
+                if let Some(url) = n.get("url").and_then(|v| v.as_str()) {
+                    ntfy.insert(
+                        "url".into(),
+                        toml::Value::String(url.trim_end_matches('/').into()),
+                    );
+                }
+                if let Some(topics) = n.get("topics").and_then(|v| v.as_object()) {
+                    let ntfy_topics = toml_table_mut(&mut cfg.toml, &["ntfy", "topics"]);
+                    for sev in ["info", "warning", "critical"] {
+                        if let Some(v) = topics.get(sev).and_then(|v| v.as_str()) {
+                            ntfy_topics.insert(sev.into(), toml::Value::String(v.into()));
+                        }
+                    }
                 }
             }
-        }
-    }
-    if let Some(t) = payload.get("telegram").and_then(|v| v.as_object()) {
-        let tg = toml_table_mut(&mut cfg.toml, &["telegram"]);
-        if let Some(v) = t.get("chat_id").and_then(|v| v.as_str()) {
-            tg.insert("chat_id".into(), toml::Value::String(v.into()));
-        }
-    }
-    if let Some(s) = payload.get("smtp").and_then(|v| v.as_object()) {
-        let smtp = toml_table_mut(&mut cfg.toml, &["smtp"]);
-        for k in ["host", "from_addr", "to_addr"] {
-            if let Some(v) = s.get(k).and_then(|v| v.as_str()) {
-                smtp.insert(k.into(), toml::Value::String(v.into()));
+            if let Some(t) = payload.get("telegram").and_then(|v| v.as_object()) {
+                let tg = toml_table_mut(&mut cfg.toml, &["telegram"]);
+                if let Some(v) = t.get("chat_id").and_then(|v| v.as_str()) {
+                    tg.insert("chat_id".into(), toml::Value::String(v.into()));
+                }
             }
-        }
-        if let Some(p) = s.get("port").and_then(|v| v.as_i64()) {
-            smtp.insert("port".into(), toml::Value::Integer(p));
-        }
-    }
-    persist_reload(state, cfg.toml)
-        .map(|_| json_response(json!({"ok": true})))
-        .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
+            if let Some(s) = payload.get("smtp").and_then(|v| v.as_object()) {
+                let smtp = toml_table_mut(&mut cfg.toml, &["smtp"]);
+                for k in ["host", "from_addr", "to_addr"] {
+                    if let Some(v) = s.get(k).and_then(|v| v.as_str()) {
+                        smtp.insert(k.into(), toml::Value::String(v.into()));
+                    }
+                }
+                if let Some(p) = s.get("port").and_then(|v| v.as_i64()) {
+                    smtp.insert("port".into(), toml::Value::Integer(p));
+                }
+            }
+            persist_reload(state, cfg.toml)
+                .map(|_| json_response(json!({"ok": true})))
+                .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
 fn update_delivery_config(state: &AppState, body: Bytes) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let mut cfg = state.cfg();
-    let delivery = toml_table_mut(&mut cfg.toml, &["delivery"]);
-    if let Some(v) = payload.get("default_policy").and_then(|v| v.as_str()) {
-        delivery.insert("default_policy".into(), toml::Value::String(v.into()));
-    }
-    if let Some(p) = payload.get("policies") {
-        delivery.insert("policies".into(), json_to_toml(p.clone()));
-    }
-    if let Some(r) = payload.get("rules") {
-        delivery.insert("rules".into(), json_to_toml(r.clone()));
-    }
-    persist_reload(state, cfg.toml)
-        .map(|_| json_response(json!({"ok": true})))
-        .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            let delivery = toml_table_mut(&mut cfg.toml, &["delivery"]);
+            if let Some(v) = payload.get("default_policy").and_then(|v| v.as_str()) {
+                delivery.insert("default_policy".into(), toml::Value::String(v.into()));
+            }
+            if let Some(p) = payload.get("policies") {
+                delivery.insert("policies".into(), json_to_toml(p.clone()));
+            }
+            if let Some(r) = payload.get("rules") {
+                delivery.insert("rules".into(), json_to_toml(r.clone()));
+            }
+            persist_reload(state, cfg.toml)
+                .map(|_| json_response(json!({"ok": true})))
+                .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
 fn update_inhibition_rules(state: &AppState, body: Bytes) -> Response<Body> {
@@ -1029,13 +1059,16 @@ fn update_inhibition_rules(state: &AppState, body: Bytes) -> Response<Body> {
     if !errors.is_empty() {
         return text(StatusCode::BAD_REQUEST, &errors.join("\n"));
     }
-    let mut cfg = state.cfg();
-    cfg.toml.as_table_mut().unwrap().insert(
-        "inhibitions".into(),
-        json_to_toml(serde_json::to_value(&cleaned).unwrap()),
-    );
-    if let Err(err) = persist_reload(state, cfg.toml) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err);
+    match state.with_config_write_lock(|| {
+        let mut cfg = state.cfg();
+        cfg.toml.as_table_mut().unwrap().insert(
+            "inhibitions".into(),
+            json_to_toml(serde_json::to_value(&cleaned).unwrap()),
+        );
+        persist_reload(state, cfg.toml)
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) | Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
     }
     let cleared = {
         let mut s = lock_mutex(&state.suppressions, "suppressions");
@@ -1074,36 +1107,47 @@ fn update_ingest_auth(state: &AppState, body: Bytes) -> Response<Body> {
             "action must be one of: set, generate, clear",
         );
     }
-    let mut cfg = state.cfg();
-    let secrets = toml_table_mut(&mut cfg.toml, &["ingest", "secrets"]);
-    let mut new_secret = None;
-    match action.as_str() {
-        "clear" => {
-            secrets.remove(&src);
+    if action == "set" {
+        let sec = payload
+            .get("secret")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+        if sec.len() < 16 {
+            return text(
+                StatusCode::BAD_REQUEST,
+                "secret missing or shorter than 16 chars",
+            );
         }
-        "generate" => {
-            let sec = random_hex(32);
-            secrets.insert(src.clone(), toml::Value::String(sec.clone()));
-            new_secret = Some(sec);
-        }
-        _ => {
-            let sec = payload
-                .get("secret")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim();
-            if sec.len() < 16 {
-                return text(
-                    StatusCode::BAD_REQUEST,
-                    "secret missing or shorter than 16 chars",
-                );
+    }
+    let new_secret = match state.with_config_write_lock(|| {
+        let mut cfg = state.cfg();
+        let secrets = toml_table_mut(&mut cfg.toml, &["ingest", "secrets"]);
+        let mut new_secret = None;
+        match action.as_str() {
+            "clear" => {
+                secrets.remove(&src);
             }
-            secrets.insert(src.clone(), toml::Value::String(sec.into()));
+            "generate" => {
+                let sec = random_hex(32);
+                secrets.insert(src.clone(), toml::Value::String(sec.clone()));
+                new_secret = Some(sec);
+            }
+            _ => {
+                let sec = payload
+                    .get("secret")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                secrets.insert(src.clone(), toml::Value::String(sec.into()));
+            }
         }
-    }
-    if let Err(err) = persist_reload(state, cfg.toml) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err);
-    }
+        persist_reload(state, cfg.toml).map(|_| new_secret)
+    }) {
+        Ok(Ok(new_secret)) => new_secret,
+        Ok(Err(err)) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
+        Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
+    };
     let mut resp = json!({"ok": true, "source": src, "action": action});
     if let Some(sec) = new_secret {
         resp["secret"] = json!(sec);
@@ -1185,13 +1229,16 @@ fn update_schedules(state: &AppState, body: Bytes) -> Response<Body> {
     if !errors.is_empty() {
         return text(StatusCode::BAD_REQUEST, &errors.join("\n"));
     }
-    let mut cfg = state.cfg();
-    cfg.toml.as_table_mut().unwrap().insert(
-        "schedules".into(),
-        json_to_toml(serde_json::to_value(&cleaned).unwrap()),
-    );
-    if let Err(err) = persist_reload(state, cfg.toml) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err);
+    match state.with_config_write_lock(|| {
+        let mut cfg = state.cfg();
+        cfg.toml.as_table_mut().unwrap().insert(
+            "schedules".into(),
+            json_to_toml(serde_json::to_value(&cleaned).unwrap()),
+        );
+        persist_reload(state, cfg.toml)
+    }) {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) | Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
     }
     {
         let mut active = lock_mutex(&state.active_mutes, "active mutes");
@@ -1225,24 +1272,25 @@ fn restore_config(state: &AppState, body: Bytes) -> Response<Body> {
             "no recognised top-level sections; refusing as likely empty",
         );
     }
-    let backup = config_auto_backup(state).ok().flatten();
-    if let Err(err) = atomic_write(&state.paths.config, text_body.as_bytes()) {
-        return text(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("write failed: {err}"),
-        );
-    }
-    match load_runtime_config(&state.paths) {
-        Ok(cfg) => state.replace_config(cfg),
-        Err(err) => {
-            return text(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("reload failed: {err}"),
-            );
+    let (backup, restored_sidecars) = match state.with_config_write_lock(|| {
+        let backup = config_auto_backup(state).ok().flatten();
+        if let Err(err) = atomic_write(&state.paths.config, text_body.as_bytes()) {
+            return Err(format!("write failed: {err}"));
         }
-    }
+        let restored_sidecars = restore_sidecars_from_toml(&state.paths, &parsed)
+            .map_err(|err| format!("restore sidecars failed: {err}"))?;
+        match load_runtime_config(&state.paths) {
+            Ok(cfg) => state.replace_config(cfg),
+            Err(err) => return Err(format!("reload failed: {err}")),
+        }
+        Ok((backup, restored_sidecars))
+    }) {
+        Ok(Ok(result)) => result,
+        Ok(Err(err)) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
+        Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
+    };
     json_response(
-        json!({"ok": true, "bytes_written": text_body.len(), "pre_restore_backup": backup}),
+        json!({"ok": true, "bytes_written": text_body.len(), "pre_restore_backup": backup, "restored_sidecars": restored_sidecars}),
     )
 }
 
@@ -1467,12 +1515,10 @@ async fn check_channel_reachability(state: &AppState) -> Value {
             .unwrap_or(false);
     }
     if !cfg.tg_token.is_empty() {
+        let base = cfg.telegram_api_base.trim_end_matches('/');
         telegram = state
             .http
-            .get(format!(
-                "https://api.telegram.org/bot{}/getMe",
-                cfg.tg_token
-            ))
+            .get(format!("{base}/bot{}/getMe", cfg.tg_token))
             .timeout(Duration::from_secs(4))
             .send()
             .await
@@ -1767,7 +1813,7 @@ fn config_backup_response(state: &AppState) -> Response<Body> {
     let Ok(bytes) = fs::read(&state.paths.config) else {
         return text(StatusCode::NOT_FOUND, "klaxond.toml not found");
     };
-    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%f");
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/toml")
@@ -1823,7 +1869,7 @@ fn config_auto_backup(state: &AppState) -> anyhow::Result<Option<String>> {
         return Ok(None);
     }
     fs::create_dir_all(&state.paths.backup_dir).ok();
-    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S-%f");
     let dest = state.paths.backup_dir.join(format!("klaxond-{stamp}.toml"));
     fs::copy(&state.paths.config, &dest)?;
     let mut files = fs::read_dir(&state.paths.backup_dir)?

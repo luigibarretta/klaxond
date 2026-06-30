@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const VERSION: &str = "0.13.1";
+pub const VERSION: &str = "0.13.2";
 pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",
@@ -272,9 +272,11 @@ pub struct RuntimeConfig {
     pub tg_chat: String,
     pub smtp_host: String,
     pub smtp_port: u16,
+    pub smtp_starttls: bool,
     pub smtp_from: String,
     pub smtp_to: String,
     pub tg_token: String,
+    pub telegram_api_base: String,
     pub smtp_user: String,
     pub smtp_pass: String,
     pub grafana_base: String,
@@ -492,9 +494,14 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
         tg_chat: String::new(),
         smtp_host: String::new(),
         smtp_port,
+        smtp_starttls: true,
         smtp_from: String::new(),
         smtp_to: String::new(),
         tg_token: env_string("TELEGRAM_BOT_TOKEN"),
+        telegram_api_base: env_string("TELEGRAM_API_BASE")
+            .trim_end_matches('/')
+            .to_string()
+            .if_empty_else(|| "https://api.telegram.org".to_string()),
         smtp_user,
         smtp_pass: env_string("SMTP_PASSWORD"),
         grafana_base,
@@ -865,8 +872,8 @@ pub fn default_inhibition_rules() -> Vec<InhibitionRule> {
 }
 
 fn load_dedup(paths: &Paths, seed: Option<&toml::Value>) -> Result<HashMap<String, DedupSetting>> {
-    let mut out = default_dedup();
     if paths.dedup_config.exists() {
+        let mut out = default_dedup();
         let raw: HashMap<String, DedupSetting> =
             serde_json::from_slice(&fs::read(&paths.dedup_config)?)?;
         for (k, v) in raw {
@@ -874,6 +881,13 @@ fn load_dedup(paths: &Paths, seed: Option<&toml::Value>) -> Result<HashMap<Strin
         }
         return Ok(out);
     }
+    let out = dedup_from_toml(seed);
+    save_dedup(paths, &out)?;
+    Ok(out)
+}
+
+fn dedup_from_toml(seed: Option<&toml::Value>) -> HashMap<String, DedupSetting> {
+    let mut out = default_dedup();
     if let Some(seed_table) = seed.and_then(|v| v.as_table()) {
         for src in DEDUP_SOURCES {
             if let Some(t) = seed_table.get(*src).and_then(|v| v.as_table())
@@ -894,8 +908,7 @@ fn load_dedup(paths: &Paths, seed: Option<&toml::Value>) -> Result<HashMap<Strin
             }
         }
     }
-    save_dedup(paths, &out)?;
-    Ok(out)
+    out
 }
 
 pub fn save_dedup(paths: &Paths, settings: &HashMap<String, DedupSetting>) -> Result<()> {
@@ -1065,64 +1078,8 @@ fn load_ntfy_topics(paths: &Paths, toml: &toml::Value) -> Result<Vec<NtfyTopic>>
             topics = Some(arr.iter().filter_map(topic_from_json).collect());
         }
     }
-    if topics.is_none()
-        && let Some(v) = toml_get(toml, &["ntfy", "topics"])
-    {
-        if let Some(arr) = v.as_array() {
-            topics = Some(
-                arr.iter()
-                    .filter_map(|t| {
-                        Some(NtfyTopic {
-                            name: t.get("name")?.as_str()?.to_string(),
-                            token: t
-                                .get("token")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            handles: t
-                                .get("handles")
-                                .and_then(|v| v.as_array())
-                                .map(|a| {
-                                    a.iter()
-                                        .filter_map(|x| x.as_str().map(|s| s.to_ascii_lowercase()))
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
-                        })
-                    })
-                    .collect(),
-            );
-        } else if let Some(table) = v.as_table() {
-            topics = Some(vec![
-                NtfyTopic {
-                    name: table
-                        .get("info")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    token: String::new(),
-                    handles: vec!["info".into()],
-                },
-                NtfyTopic {
-                    name: table
-                        .get("warning")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    token: String::new(),
-                    handles: vec!["warning".into()],
-                },
-                NtfyTopic {
-                    name: table
-                        .get("critical")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    token: String::new(),
-                    handles: vec!["critical".into()],
-                },
-            ]);
-        }
+    if topics.is_none() {
+        topics = ntfy_topics_from_toml(toml);
     }
     let mut out = topics.unwrap_or_else(|| {
         vec![
@@ -1174,6 +1131,99 @@ fn load_ntfy_topics(paths: &Paths, toml: &toml::Value) -> Result<Vec<NtfyTopic>>
     Ok(out)
 }
 
+fn ntfy_topics_from_toml(toml: &toml::Value) -> Option<Vec<NtfyTopic>> {
+    let v = toml_get(toml, &["ntfy", "topics"])?;
+    if let Some(arr) = v.as_array() {
+        return Some(
+            arr.iter()
+                .filter_map(|t| {
+                    Some(NtfyTopic {
+                        name: t.get("name")?.as_str()?.to_string(),
+                        token: t
+                            .get("token")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        handles: t
+                            .get("handles")
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| x.as_str().map(|s| s.to_ascii_lowercase()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                })
+                .collect(),
+        );
+    }
+    v.as_table().map(|table| {
+        vec![
+            NtfyTopic {
+                name: table
+                    .get("info")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                token: String::new(),
+                handles: vec!["info".into()],
+            },
+            NtfyTopic {
+                name: table
+                    .get("warning")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                token: String::new(),
+                handles: vec!["warning".into()],
+            },
+            NtfyTopic {
+                name: table
+                    .get("critical")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                token: String::new(),
+                handles: vec!["critical".into()],
+            },
+        ]
+    })
+}
+
+pub fn restore_sidecars_from_toml(paths: &Paths, toml: &toml::Value) -> Result<Vec<&'static str>> {
+    let mut restored = Vec::new();
+    if toml_get(toml, &["render", "component_dashboards"]).is_some() {
+        let dashboards =
+            read_component_dashboards(toml_get(toml, &["render", "component_dashboards"]));
+        if !dashboards.is_empty() {
+            save_render_config(paths, &dashboards)?;
+            restored.push("render");
+        }
+    }
+    if toml_get(toml, &["dedup"]).is_some() {
+        let dedup = dedup_from_toml(toml_get(toml, &["dedup"]));
+        save_dedup(paths, &dedup)?;
+        restored.push("dedup");
+    }
+    if let Some(auth_seed) = toml_get(toml, &["auth"]) {
+        let auth = merge_auth_toml(AuthConfig::default(), auth_seed);
+        save_auth(paths, &auth)?;
+        restored.push("auth");
+    }
+    if let Some(topics) = ntfy_topics_from_toml(toml) {
+        let topics = topics
+            .into_iter()
+            .filter(|t| !t.name.is_empty())
+            .collect::<Vec<_>>();
+        if !topics.is_empty() {
+            save_ntfy_topics(paths, &topics)?;
+            restored.push("ntfy_topics");
+        }
+    }
+    Ok(restored)
+}
+
 fn topic_from_json(v: &serde_json::Value) -> Option<NtfyTopic> {
     Some(NtfyTopic {
         name: v.get("name")?.as_str()?.to_string(),
@@ -1201,4 +1251,114 @@ pub fn save_ntfy_topics(paths: &Paths, topics: &[NtfyTopic]) -> Result<()> {
 pub fn save_toml(paths: &Paths, cfg: &toml::Value) -> Result<()> {
     let text = toml::to_string_pretty(cfg)?;
     atomic_write(&paths.config, text.as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn temp_paths(tmp: &TempDir) -> Paths {
+        let data = tmp.path();
+        Paths {
+            config: data.join("klaxond.toml"),
+            default_config: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("klaxond.default.toml"),
+            render_config: data.join("render-config.json"),
+            ntfy_topics: data.join("ntfy-topics.json"),
+            dedup_config: data.join("dedup-config.json"),
+            dedup_pending_dir: data.join("dedup_pending"),
+            auth_config: data.join("auth-config.json"),
+            auth_session_key: data.join("auth-session.key"),
+            backup_dir: data.join("backups"),
+            static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
+            beszel_db: data.join("missing-beszel.db"),
+        }
+    }
+
+    #[test]
+    fn restore_sidecars_from_toml_replaces_stale_sidecar_values() {
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        save_ntfy_topics(
+            &paths,
+            &[NtfyTopic {
+                name: "stale-topic".into(),
+                token: "stale-token".into(),
+                handles: vec!["critical".into(), "warning".into()],
+            }],
+        )
+        .unwrap();
+        save_auth(
+            &paths,
+            &AuthConfig {
+                mode: "none".into(),
+                ..AuthConfig::default()
+            },
+        )
+        .unwrap();
+        save_render_config(
+            &paths,
+            &HashMap::from([("host".into(), ["Stale".to_string(), "/d/stale".to_string()])]),
+        )
+        .unwrap();
+        save_dedup(
+            &paths,
+            &HashMap::from([(
+                "wud".into(),
+                DedupSetting {
+                    enabled: true,
+                    window_s: 999,
+                    strategy: "key".into(),
+                    override_critical: false,
+                },
+            )]),
+        )
+        .unwrap();
+        let restored_toml: toml::Value = toml::from_str(
+            r#"
+[render.component_dashboards]
+host = ["Restored", "/d/restored"]
+
+[auth]
+mode = "basic"
+session_timeout_hours = 12
+
+[auth.basic]
+username = "restored"
+password_hash = "$2b$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWX"
+realm = "klaxond"
+
+[ntfy]
+topics = [
+  { name = "restored-topic", token = "restored-token", handles = ["critical", "warning"] },
+]
+
+[dedup.wud]
+enabled = false
+window_s = 42
+strategy = "time"
+override_critical = true
+"#,
+        )
+        .unwrap();
+        save_toml(&paths, &restored_toml).unwrap();
+
+        let restored = restore_sidecars_from_toml(&paths, &restored_toml).unwrap();
+        let cfg = load_runtime_config(&paths).unwrap();
+
+        assert_eq!(restored, vec!["render", "dedup", "auth", "ntfy_topics"]);
+        assert_eq!(
+            cfg.component_dashboards.get("host").unwrap(),
+            &["Restored".to_string(), "/d/restored".to_string()]
+        );
+        assert_eq!(cfg.auth.mode, "basic");
+        assert_eq!(cfg.auth.basic.username, "restored");
+        assert_eq!(cfg.topics_for("critical")[0].name, "restored-topic");
+        assert_eq!(cfg.topics_for("critical")[0].token, "restored-token");
+        assert!(!cfg.dedup["wud"].enabled);
+        assert_eq!(cfg.dedup["wud"].window_s, 42);
+        assert_eq!(cfg.dedup["wud"].strategy, "time");
+        assert!(cfg.dedup["wud"].override_critical);
+    }
 }

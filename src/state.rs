@@ -1,10 +1,12 @@
 use crate::config::{Paths, RuntimeConfig, load_runtime_config};
-use crate::util::{atomic_write, random_bytes};
+use crate::util::{atomic_write, random_bytes, tmp_path};
 use anyhow::{Context, Result};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+use std::fs::OpenOptions;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -17,6 +19,7 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub started: Instant,
     pub config: Arc<RwLock<RuntimeConfig>>,
+    pub config_write_lock: Arc<Mutex<()>>,
     pub session_key: Arc<Vec<u8>>,
     pub cascade_runtime_enabled: Arc<AtomicBool>,
     pub delivery_log: Arc<Mutex<VecDeque<DeliveryEntry>>>,
@@ -94,6 +97,7 @@ impl AppState {
                 .context("build reqwest client")?,
             started: Instant::now(),
             config: Arc::new(RwLock::new(cfg)),
+            config_write_lock: Arc::new(Mutex::new(())),
             session_key: Arc::new(session_key),
             cascade_runtime_enabled: Arc::new(AtomicBool::new(cascade_runtime_enabled)),
             delivery_log: Arc::new(Mutex::new(VecDeque::with_capacity(50))),
@@ -120,6 +124,28 @@ impl AppState {
         self.cascade_runtime_enabled
             .store(cfg.cascade_default, Ordering::Relaxed);
         *write_lock(&self.config, "config") = cfg;
+    }
+
+    pub fn with_config_write_lock<R>(&self, f: impl FnOnce() -> R) -> Result<R, String> {
+        let _guard = lock_mutex(&self.config_write_lock, "config writes");
+        if let Some(parent) = self.paths.config.parent() {
+            fs::create_dir_all(parent).map_err(|err| format!("create config dir: {err}"))?;
+        }
+        let lock_path = tmp_path(&self.paths.config, "lock");
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|err| format!("open {}: {err}", lock_path.display()))?;
+        lock.lock_exclusive()
+            .map_err(|err| format!("lock {}: {err}", lock_path.display()))?;
+        let result = f();
+        if let Err(err) = lock.unlock() {
+            tracing::error!("unlock {} failed: {err}", lock_path.display());
+        }
+        Ok(result)
     }
 
     pub fn log_delivery(
