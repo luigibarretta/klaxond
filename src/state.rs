@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -108,18 +108,18 @@ impl AppState {
     }
 
     pub fn cfg(&self) -> RuntimeConfig {
-        self.config.read().expect("config poisoned").clone()
+        read_lock(&self.config, "config").clone()
     }
 
     pub fn with_cfg<R>(&self, f: impl FnOnce(&RuntimeConfig) -> R) -> R {
-        let cfg = self.config.read().expect("config poisoned");
+        let cfg = read_lock(&self.config, "config");
         f(&cfg)
     }
 
     pub fn replace_config(&self, cfg: RuntimeConfig) {
         self.cascade_runtime_enabled
             .store(cfg.cascade_default, Ordering::Relaxed);
-        *self.config.write().expect("config poisoned") = cfg;
+        *write_lock(&self.config, "config") = cfg;
     }
 
     pub fn log_delivery(
@@ -130,7 +130,7 @@ impl AppState {
         channel: &str,
         suppressed_by: &str,
     ) {
-        let mut log = self.delivery_log.lock().expect("delivery log poisoned");
+        let mut log = lock_mutex(&self.delivery_log, "delivery log");
         if log.len() == 50 {
             log.pop_front();
         }
@@ -145,9 +145,7 @@ impl AppState {
     }
 
     pub fn recent_deliveries(&self) -> Vec<DeliveryEntry> {
-        self.delivery_log
-            .lock()
-            .expect("delivery log poisoned")
+        lock_mutex(&self.delivery_log, "delivery log")
             .iter()
             .cloned()
             .collect()
@@ -155,18 +153,35 @@ impl AppState {
 
     pub fn metric_inc(&self, name: &str, labels: &[(&str, &str)], by: i64) {
         let key = metric_key(name, labels);
-        let mut counters = self.metrics.counters.lock().expect("metrics poisoned");
+        let mut counters = lock_mutex(&self.metrics.counters, "metrics counters");
         *counters.entry(key).or_insert(0) += by;
     }
 
     pub fn metric_set(&self, name: &str, labels: &[(&str, &str)], value: f64) {
         let key = metric_key(name, labels);
-        self.metrics
-            .gauges
-            .lock()
-            .expect("metrics poisoned")
-            .insert(key, value);
+        lock_mutex(&self.metrics.gauges, "metrics gauges").insert(key, value);
     }
+}
+
+pub fn lock_mutex<'a, T>(mutex: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        tracing::error!("recovering poisoned mutex: {name}");
+        poisoned.into_inner()
+    })
+}
+
+pub fn read_lock<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockReadGuard<'a, T> {
+    lock.read().unwrap_or_else(|poisoned| {
+        tracing::error!("recovering poisoned rwlock read: {name}");
+        poisoned.into_inner()
+    })
+}
+
+pub fn write_lock<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockWriteGuard<'a, T> {
+    lock.write().unwrap_or_else(|poisoned| {
+        tracing::error!("recovering poisoned rwlock write: {name}");
+        poisoned.into_inner()
+    })
 }
 
 fn metric_key(name: &str, labels: &[(&str, &str)]) -> String {

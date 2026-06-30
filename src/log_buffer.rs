@@ -3,7 +3,7 @@ use regex::{Captures, Regex};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, TryLockError};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
@@ -82,7 +82,9 @@ impl LogBuffer {
             line: meta.line(),
         };
 
-        let mut entries = self.entries.lock().expect("log buffer poisoned");
+        let Some(mut entries) = self.entries_for_push() else {
+            return;
+        };
         if entries.len() == self.capacity {
             entries.pop_front();
         }
@@ -90,13 +92,11 @@ impl LogBuffer {
     }
 
     pub fn query(&self, query: &str, level: &str, limit: usize) -> LogQuery {
-        let query_norm = query.trim().to_ascii_lowercase();
+        let query_norm = query.trim().to_lowercase();
         let level_norm = normalize_level(level);
         let limit = limit.clamp(1, MAX_LIMIT);
         let mut entries = self
-            .entries
-            .lock()
-            .expect("log buffer poisoned")
+            .entries()
             .iter()
             .rev()
             .filter(|entry| level_matches(entry, &level_norm))
@@ -111,6 +111,20 @@ impl LogBuffer {
             limit,
             query: query.trim().to_string(),
             level: level_norm,
+        }
+    }
+
+    fn entries(&self) -> MutexGuard<'_, VecDeque<LogEntry>> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn entries_for_push(&self) -> Option<MutexGuard<'_, VecDeque<LogEntry>>> {
+        match self.entries.try_lock() {
+            Ok(entries) => Some(entries),
+            Err(TryLockError::Poisoned(poisoned)) => Some(poisoned.into_inner()),
+            Err(TryLockError::WouldBlock) => None,
         }
     }
 }
@@ -173,11 +187,12 @@ fn query_matches(entry: &LogEntry, query: &str) -> bool {
     if query.is_empty() {
         return true;
     }
-    entry.message.to_ascii_lowercase().contains(query)
-        || entry.target.to_ascii_lowercase().contains(query)
-        || entry.fields.iter().any(|(k, v)| {
-            k.to_ascii_lowercase().contains(query) || v.to_ascii_lowercase().contains(query)
-        })
+    entry.message.to_lowercase().contains(query)
+        || entry.target.to_lowercase().contains(query)
+        || entry
+            .fields
+            .iter()
+            .any(|(k, v)| k.to_lowercase().contains(query) || v.to_lowercase().contains(query))
 }
 
 fn fields_to_message(fields: &HashMap<String, String>) -> String {
@@ -213,14 +228,25 @@ fn redact_log_text(value: &str) -> String {
         )
         .expect("valid key-value redaction regex")
     });
+    static ENV_SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r#"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|AUTHORIZATION)[A-Z0-9_]*)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)"#,
+        )
+        .expect("valid env-style redaction regex")
+    });
 
     let out = TELEGRAM_BOT_URL_RE.replace_all(value, "bot[REDACTED]");
     let out = AUTH_HEADER_RE.replace_all(&out, "$1[REDACTED]");
     let out = BEARER_RE.replace_all(&out, "$1[REDACTED]");
     let out = QUERY_SECRET_RE.replace_all(&out, "$1[REDACTED]");
-    KV_SECRET_RE
+    let out = KV_SECRET_RE
         .replace_all(&out, |caps: &Captures<'_>| {
             format!("{}=[REDACTED]", &caps[1])
+        })
+        .into_owned();
+    ENV_SECRET_RE
+        .replace_all(&out, |caps: &Captures<'_>| {
+            format!("{}{}[REDACTED]", &caps[1], &caps[2])
         })
         .into_owned()
 }
@@ -233,6 +259,7 @@ fn is_sensitive_key(key: &str) -> bool {
         || key.contains("authorization")
         || key.contains("api_key")
         || key.contains("apikey")
+        || key.ends_with("_key")
 }
 
 #[derive(Default)]
@@ -297,6 +324,9 @@ mod tests {
         assert_eq!(result.total, 1);
         assert_eq!(result.entries[0].id, 3);
 
+        let result = buffer.query("città", "all", 10);
+        assert_eq!(result.total, 0);
+
         let result = buffer.query("", "all", 2);
         assert_eq!(result.total, 3);
         assert_eq!(
@@ -316,7 +346,7 @@ mod tests {
                 target: "test_logs",
                 token = "plain-token-1234567890",
                 url = "https://example.invalid/hook?token=abc123&ok=1",
-                "telegram failed at https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrSTUvwxyz012345678/sendMessage Authorization: Bearer abcdef1234567890"
+                "telegram failed at https://api.telegram.org/bot123456789:ABCdefGHIjklMNOpqrSTUvwxyz012345678/sendMessage Authorization: Bearer abcdef1234567890 KLAXOND_INGEST_SECRET_GRAFANA=feedface AUTH_OIDC_CLIENT_SECRET: verysecret"
             );
             tracing::error!(
                 target: "test_logs",
@@ -338,6 +368,23 @@ mod tests {
         assert!(!all_text.contains("plain-token-1234567890"));
         assert!(!all_text.contains("secret-value"));
         assert!(!all_text.contains("super-secret"));
+        assert!(!all_text.contains("feedface"));
+        assert!(!all_text.contains("verysecret"));
         assert!(all_text.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn query_matching_is_unicode_case_insensitive() {
+        let buffer = LogBuffer::new(1);
+        {
+            let mut entries = buffer.entries.lock().unwrap();
+            entries.push_back(entry(1, "INFO", "klaxond", "Citta aggiornata"));
+            entries[0].message = "Città aggiornata".to_string();
+        }
+
+        let result = buffer.query("città", "all", 10);
+        assert_eq!(result.total, 1);
+        let result = buffer.query("CITTÀ", "all", 10);
+        assert_eq!(result.total, 1);
     }
 }

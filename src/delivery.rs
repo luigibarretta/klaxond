@@ -1,7 +1,7 @@
 use crate::config::{DeliveryPolicy, RuntimeConfig, Tier, default_tiers};
 use crate::inhibition::ack_sign;
 use crate::parsers::Parts;
-use crate::state::{AppState, RenderedImage};
+use crate::state::{AppState, RenderedImage, lock_mutex};
 use crate::util::{html_escape, now_epoch, strip_non_ascii, token_urlsafe};
 use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose};
@@ -48,17 +48,13 @@ pub async fn deliver(
     {
         let tok = token_urlsafe(12);
         let url = format!("{}/img/{tok}.png", cfg.public_url);
-        state
-            .rendered_images
-            .lock()
-            .expect("rendered images poisoned")
-            .insert(
-                tok,
-                RenderedImage {
-                    bytes: png,
-                    expires_at: now_epoch() + cfg.render_image_ttl as f64,
-                },
-            );
+        lock_mutex(&state.rendered_images, "rendered images").insert(
+            tok,
+            RenderedImage {
+                bytes: png,
+                expires_at: now_epoch() + cfg.render_image_ttl as f64,
+            },
+        );
         parts.attach_url = Some(url);
     }
 

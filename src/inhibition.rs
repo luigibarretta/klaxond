@@ -1,5 +1,5 @@
 use crate::config::InhibitionRule;
-use crate::state::{AppState, Suppression};
+use crate::state::{AppState, Suppression, lock_mutex};
 use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch};
 use anyhow::Result;
 use chrono::{Datelike, Local, Timelike};
@@ -10,11 +10,7 @@ use std::collections::HashMap;
 
 pub fn cleanup_expired(state: &AppState) {
     let now = now_epoch();
-    state
-        .suppressions
-        .lock()
-        .expect("suppressions poisoned")
-        .retain(|s| s.expiry > now);
+    lock_mutex(&state.suppressions, "suppressions").retain(|s| s.expiry > now);
 }
 
 pub fn alert_is_source(
@@ -43,7 +39,7 @@ pub fn register_suppression(
         }
         anchor = Some(val);
     }
-    let mut supp = state.suppressions.lock().expect("suppressions poisoned");
+    let mut supp = lock_mutex(&state.suppressions, "suppressions");
     supp.retain(|s| !(s.rule_idx == rule_idx && s.anchor == anchor));
     if !resolved {
         supp.push(Suppression {
@@ -65,11 +61,7 @@ pub fn is_suppressed(
     source: &str,
 ) -> Option<String> {
     cleanup_expired(state);
-    let active = state
-        .suppressions
-        .lock()
-        .expect("suppressions poisoned")
-        .clone();
+    let active = lock_mutex(&state.suppressions, "suppressions").clone();
     if active.is_empty() {
         return None;
     }
@@ -147,10 +139,7 @@ pub fn ack_verify(state: &AppState, token: &str) -> (Option<String>, String) {
 }
 
 pub fn register_ack_suppression(state: &AppState, alertname: &str, ttl_sec: u64) {
-    state
-        .ack_suppressions
-        .lock()
-        .expect("ack suppressions poisoned")
+    lock_mutex(&state.ack_suppressions, "ack suppressions")
         .insert(alertname.to_string(), now_epoch() + ttl_sec as f64);
 }
 
@@ -160,10 +149,7 @@ pub fn ack_match(state: &AppState, labels: &HashMap<String, String>) -> Option<S
         return None;
     }
     let now = now_epoch();
-    let mut acks = state
-        .ack_suppressions
-        .lock()
-        .expect("ack suppressions poisoned");
+    let mut acks = lock_mutex(&state.ack_suppressions, "ack suppressions");
     if let Some(exp) = acks.get(name).copied() {
         if exp > now {
             return Some(name.clone());
@@ -211,10 +197,7 @@ pub fn inhibition_status(state: &AppState) -> Vec<serde_json::Value> {
     cleanup_expired(state);
     let cfg = state.cfg();
     let now = now_epoch();
-    state
-        .suppressions
-        .lock()
-        .expect("suppressions poisoned")
+    lock_mutex(&state.suppressions, "suppressions")
         .iter()
         .filter_map(|s| {
             let rule = cfg.inhibition_rules.get(s.rule_idx)?;
@@ -230,10 +213,7 @@ pub fn inhibition_status(state: &AppState) -> Vec<serde_json::Value> {
 
 pub fn ack_status_snapshot(state: &AppState) -> Vec<serde_json::Value> {
     let now = now_epoch();
-    let mut rows = state
-        .ack_suppressions
-        .lock()
-        .expect("ack suppressions poisoned")
+    let mut rows = lock_mutex(&state.ack_suppressions, "ack suppressions")
         .iter()
         .filter(|(_, exp)| **exp > now)
         .map(|(name, exp)| json!({"alertname": name, "expires_in_seconds": (*exp - now) as i64}))
@@ -313,7 +293,7 @@ pub fn scheduler_tick(state: &AppState) {
     let now_dt = Local::now();
     let now = now_epoch();
     let cfg = state.cfg();
-    let mut active = state.active_mutes.lock().expect("active mutes poisoned");
+    let mut active = lock_mutex(&state.active_mutes, "active mutes");
     active.retain(|name, expiry| {
         let keep = *expiry > now;
         if !keep {
@@ -338,7 +318,7 @@ pub fn scheduled_mute_match(
     source: &str,
 ) -> Option<String> {
     let active_names = {
-        let active = state.active_mutes.lock().expect("active mutes poisoned");
+        let active = lock_mutex(&state.active_mutes, "active mutes");
         if active.is_empty() {
             return None;
         }
@@ -367,10 +347,7 @@ pub fn scheduled_mute_match(
 
 pub fn scheduler_status(state: &AppState) -> serde_json::Value {
     let now = now_epoch();
-    let active = state
-        .active_mutes
-        .lock()
-        .expect("active mutes poisoned")
+    let active = lock_mutex(&state.active_mutes, "active mutes")
         .iter()
         .filter(|(_, exp)| **exp > now)
         .map(|(k, v)| (k.clone(), (*v - now) as i64))

@@ -1,5 +1,5 @@
 use crate::config::AuthConfig;
-use crate::state::AppState;
+use crate::state::{AppState, lock_mutex};
 use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch_i64, token_urlsafe};
 use axum::body::Body;
 use axum::http::header::{AUTHORIZATION, COOKIE, HOST, SET_COOKIE, WWW_AUTHENTICATE};
@@ -216,7 +216,7 @@ pub async fn oidc_login_redirect(
     let redirect_uri = format!("{scheme}://{host}{}", cfg.redirect_path);
     let state_token = token_urlsafe(24);
     {
-        let mut states = state.oidc_states.lock().expect("oidc states poisoned");
+        let mut states = lock_mutex(&state.oidc_states, "oidc states");
         states.insert(state_token.clone(), (crate::util::now_epoch(), return_to));
         let cutoff = crate::util::now_epoch() - 600.0;
         states.retain(|_, (ts, _)| *ts >= cutoff);
@@ -253,7 +253,7 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
         return (StatusCode::BAD_REQUEST, "missing code or state").into_response();
     };
     let return_to = {
-        let mut states = state.oidc_states.lock().expect("oidc states poisoned");
+        let mut states = lock_mutex(&state.oidc_states, "oidc states");
         match states.remove(&state_param) {
             Some((_, ret)) => sanitize_return_to(&ret),
             None => return redirect("/"),

@@ -11,7 +11,7 @@ use crate::parsers::{
     Parts, normalize_labels, parse_beszel_payload, parse_grafana_payload,
     parse_healthchecks_payload, parse_source, parse_wud_payload,
 };
-use crate::state::{AppState, esc_label};
+use crate::state::{AppState, esc_label, lock_mutex};
 use crate::util::{atomic_write, env_string, random_hex, toml_table_mut};
 use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, State};
@@ -600,7 +600,7 @@ fn update_render_config(state: &AppState, body: Bytes) -> Response<Body> {
     }
     let mut cfg = state.cfg();
     cfg.component_dashboards = cleaned.clone();
-    *state.config.write().expect("config poisoned") = cfg;
+    state.replace_config(cfg);
     json_response(json!({"ok": true, "count": cleaned.len()}))
 }
 
@@ -720,7 +720,7 @@ fn update_dedup_config(state: &AppState, body: Bytes) -> Response<Body> {
     }
     let mut cfg = state.cfg();
     cfg.dedup = cleaned.clone();
-    *state.config.write().expect("config poisoned") = cfg;
+    state.replace_config(cfg);
     json_response(json!({"ok": true, "settings": cleaned}))
 }
 
@@ -826,7 +826,7 @@ fn update_auth_config(state: &AppState, body: Bytes) -> Response<Body> {
     {
         redacted["oidc"]["client_secret"] = json!("***SET***");
     }
-    *state.config.write().expect("config poisoned") = cfg;
+    state.replace_config(cfg);
     json_response(json!({"ok": true, "settings": redacted}))
 }
 
@@ -1038,7 +1038,7 @@ fn update_inhibition_rules(state: &AppState, body: Bytes) -> Response<Body> {
         return text(StatusCode::INTERNAL_SERVER_ERROR, &err);
     }
     let cleared = {
-        let mut s = state.suppressions.lock().expect("suppressions poisoned");
+        let mut s = lock_mutex(&state.suppressions, "suppressions");
         let c = s.len();
         s.clear();
         c
@@ -1194,7 +1194,7 @@ fn update_schedules(state: &AppState, body: Bytes) -> Response<Body> {
         return text(StatusCode::INTERNAL_SERVER_ERROR, &err);
     }
     {
-        let mut active = state.active_mutes.lock().expect("active mutes poisoned");
+        let mut active = lock_mutex(&state.active_mutes, "active mutes");
         let names = cleaned
             .iter()
             .map(|s| s.name.clone())
@@ -1254,7 +1254,7 @@ fn clear_acks(state: &AppState, body: Bytes) -> Response<Body> {
         .unwrap_or("")
         .trim()
         .to_string();
-    let mut acks = state.ack_suppressions.lock().expect("acks poisoned");
+    let mut acks = lock_mutex(&state.ack_suppressions, "ack suppressions");
     let before = acks.len();
     if target.is_empty() {
         acks.clear();
@@ -1284,7 +1284,7 @@ fn clear_inhibitions(state: &AppState, body: Bytes) -> Response<Body> {
         .map(|s| if s == "*" { None } else { Some(s.to_string()) })
         .unwrap_or(None);
     let cfg = state.cfg();
-    let mut suppressions = state.suppressions.lock().expect("suppressions poisoned");
+    let mut suppressions = lock_mutex(&state.suppressions, "suppressions");
     let before = suppressions.len();
     if clear_all {
         suppressions.clear();
@@ -1560,10 +1560,7 @@ fn image_response(state: &AppState, path: &str) -> Response<Body> {
     }
     let now = crate::util::now_epoch();
     let img = {
-        let mut imgs = state
-            .rendered_images
-            .lock()
-            .expect("rendered images poisoned");
+        let mut imgs = lock_mutex(&state.rendered_images, "rendered images");
         imgs.retain(|_, img| img.expires_at > now);
         imgs.get(&token).cloned()
     };
@@ -1649,11 +1646,7 @@ fn metrics_response(state: &AppState) -> Response<Body> {
     state.metric_set(
         "klaxond_suppressions_active",
         &[],
-        state
-            .suppressions
-            .lock()
-            .expect("suppressions poisoned")
-            .len() as f64,
+        lock_mutex(&state.suppressions, "suppressions").len() as f64,
     );
     if let Ok(d) = state.dedup.try_lock() {
         for src in DEDUP_SOURCES {
@@ -1672,10 +1665,11 @@ fn metrics_response(state: &AppState) -> Response<Body> {
         "# TYPE klaxond_uptime_seconds counter".to_string(),
         format!("klaxond_uptime_seconds {uptime}"),
     ];
+    let counters = lock_mutex(&state.metrics.counters, "metrics counters");
     emit_metrics(
         &mut lines,
         "counter",
-        &state.metrics.counters.lock().expect("metrics poisoned"),
+        &counters,
         &HashMap::from([
             (
                 "klaxond_deliveries_total",
@@ -1699,7 +1693,7 @@ fn metrics_response(state: &AppState) -> Response<Body> {
             ),
         ]),
     );
-    let gauges = state.metrics.gauges.lock().expect("metrics poisoned");
+    let gauges = lock_mutex(&state.metrics.gauges, "metrics gauges");
     let gauge_i = gauges
         .iter()
         .map(|(k, v)| (k.clone(), *v as i64))

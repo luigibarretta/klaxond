@@ -1,5 +1,15 @@
 # Klaxond — CHANGELOG
 
+## 0.13.1 — 2026-06-30
+
+- Rafforzata la redazione dei log esposti da `/api/logs` per coprire anche
+  variabili stile `*_TOKEN`, `*_SECRET`, `*_PASSWORD` e simili.
+- Resa la ricerca log case-insensitive anche per testo Unicode/non ASCII.
+- Evitati panic a catena da lock poisonati nei principali stati runtime
+  condivisi (config, metriche, inhibition/ack/schedule, immagini renderizzate).
+- Aggiunto test e2e che verifica che `/api/logs` richieda auth admin quando
+  l'autenticazione e' attiva.
+
 ## 0.13.0 — 2026-06-30
 
 - Aggiunta pagina UI Logs con ricerca keyword, filtro livello, limite risultati

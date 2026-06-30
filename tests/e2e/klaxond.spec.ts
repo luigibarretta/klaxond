@@ -187,3 +187,28 @@ test("inhibition rule simulator reports source and suppression matches", async (
     would_arm_suppression: true
   });
 });
+
+test("backend logs require admin auth when auth is enabled", async ({ request }) => {
+  const update = await request.post("/api/auth-config", {
+    data: {
+      settings: {
+        mode: "basic",
+        basic: {
+          username: "admin",
+          password: "test-password"
+        }
+      }
+    }
+  });
+  await expect(update).toBeOK();
+
+  const denied = await request.get("/api/logs?limit=1");
+  expect(denied.status()).toBe(401);
+  expect(denied.headers()["www-authenticate"]).toContain("Basic");
+
+  const token = Buffer.from("admin:test-password").toString("base64");
+  const allowed = await request.get("/api/logs?limit=1", {
+    headers: { Authorization: `Basic ${token}` }
+  });
+  await expect(allowed).toBeOK();
+});
