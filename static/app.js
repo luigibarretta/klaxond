@@ -36,8 +36,9 @@ function _onTabActivated(tabId) {
       case "routing":     if (typeof loadNtfyTopics === "function") loadNtfyTopics(); if (typeof loadIngestAuth === "function") loadIngestAuth(); break;
       case "grouping":    if (typeof loadDedup === "function")       loadDedup(); break;
       case "inhibitions": if (typeof loadInhibRules === "function") loadInhibRules(); if (typeof loadSchedules === "function") loadSchedules(); if (typeof loadAcks === "function") loadAcks(); break;
+      case "logs":        if (typeof loadLogs === "function")        loadLogs(); break;
     }
-  } catch (e) { console.warn("tab init failed:", tabId, e); }
+  } catch (e) { setTimeout(() => notifyError(`tab-${tabId}`, e), 0); }
 }
 
 function syncTabFromHash() {
@@ -130,6 +131,7 @@ async function loadStatusActivity() {
   } catch (e) {
     $("#stat-deliv-total").textContent = "?";
     $("#stat-deliv-breakdown").textContent = tr("status.deliveries_unreachable");
+    fetchError("status-activity-deliveries", e);
   }
   // Active suppressions count
   try {
@@ -137,7 +139,7 @@ async function loadStatusActivity() {
     const n = (inhib || []).length;
     $("#stat-suppr-count").textContent = n;
     setTabBadge("inhibitions", n, n > 0 ? "warn" : "");
-  } catch (e) { $("#stat-suppr-count").textContent = "?"; }
+  } catch (e) { $("#stat-suppr-count").textContent = "?"; fetchError("status-activity-inhibitions", e); }
   // Dedup pending count (sum across all sources)
   try {
     const d = await J("/api/dedup-config");
@@ -145,14 +147,18 @@ async function loadStatusActivity() {
     const total = Object.values(pc).reduce((a, b) => a + (b || 0), 0);
     $("#stat-dedup-count").textContent = total;
     setTabBadge("grouping", total, total > 0 ? "warn" : "");
-  } catch (e) { $("#stat-dedup-count").textContent = "?"; }
+  } catch (e) { $("#stat-dedup-count").textContent = "?"; fetchError("status-activity-dedup", e); }
   // Refresh config backup list (also belongs to the Status pane)
   if (typeof loadConfigBackups === "function") loadConfigBackups();
 }
 
 $("#btn-cascade-toggle").addEventListener("click", async () => {
-  await J("/api/cascade/toggle", { method: "POST", body: "{}" });
-  loadStatus();
+  try {
+    await J("/api/cascade/toggle", { method: "POST", body: "{}" });
+    loadStatus();
+  } catch (e) {
+    notifyError("cascade-toggle", e);
+  }
 });
 
 
@@ -169,7 +175,10 @@ async function loadConfigBackups() {
       const kb = Math.round(b.size / 1024);
       return `<li><code>${escapeHtml(b.name)}</code> · ${kb} KB · ${escapeHtml(b.mtime_iso)}</li>`;
     }).join("");
-  } catch (e) { ul.innerHTML = `<li class='muted'>${escapeHtml(tr("status.backups_unavailable", { message: e.message }))}</li>`; }
+  } catch (e) {
+    ul.innerHTML = `<li class='muted'>${escapeHtml(tr("status.backups_unavailable", { message: errorText(e) }))}</li>`;
+    fetchError("config-backups", e);
+  }
 }
 
 // Download is a plain anchor href — the browser handles content-disposition.
@@ -192,8 +201,8 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       if (!res.ok) {
         const txt = await res.text();
-        status.textContent = `❌ ${res.status} ${txt.slice(0, 200)}`;
-        status.style.color = "var(--red)"; return;
+        notifyResponseError("config-restore", res, txt.slice(0, 200), status);
+        return;
       }
       const j = await res.json();
       status.textContent = tr("status.restored", { bytes: j.bytes_written, backup: j.pre_restore_backup || tr("status.none") });
@@ -201,8 +210,7 @@ document.addEventListener("DOMContentLoaded", () => {
       showToast(tr("config.restored_toast"), "success", 6000);
       loadConfigBackups();
     } catch (err) {
-      status.textContent = "❌ " + err.message;
-      status.style.color = "var(--red)";
+      notifyError("config-restore", err, { status, inlineText: "❌ " + errorText(err) });
     } finally {
       e.target.value = "";
     }
@@ -234,8 +242,8 @@ async function clearSuppression(source, anchor) {
       body: JSON.stringify({source, anchor}),
     });
     if (!res.ok) {
-      status.textContent = "❌ " + (await res.text() || res.statusText);
-      status.style.color = "var(--red)"; return;
+      notifyResponseError("inhibition-clear", res, await res.text(), status);
+      return;
     }
     const r = await res.json();
     status.textContent = tr("inhib.cleared_for_source", { count: r.cleared, source });
@@ -244,8 +252,7 @@ async function clearSuppression(source, anchor) {
     await loadInhib();
     if (typeof loadStatusActivity === "function") loadStatusActivity();
   } catch (e) {
-    status.textContent = "❌ " + e.message;
-    status.style.color = "var(--red)";
+    notifyError("inhibition-clear", e, { status, inlineText: "❌ " + errorText(e) });
   }
 }
 
@@ -264,8 +271,7 @@ async function testInhibitionRule() {
   const status = $("#inhib-test-status");
   const result = $("#inhib-test-result");
   if (errors.length) {
-    status.textContent = "❌ " + errors[0];
-    status.style.color = "var(--red)";
+    notifyValidationError("inhibition-test", errors[0], status);
     result.innerHTML = "";
     return;
   }
@@ -279,8 +285,8 @@ async function testInhibitionRule() {
     });
     if (!res.ok) {
       const txt = await res.text();
-      status.textContent = "❌ " + (txt || res.statusText);
-      status.style.color = "var(--red)"; return;
+      notifyResponseError("inhibition-test", res, txt, status);
+      return;
     }
     const r = await res.json();
     status.textContent = "";
@@ -295,8 +301,7 @@ async function testInhibitionRule() {
       : `<br/><small class="muted">${escapeHtml(tr("inhib.no_rules_apply"))} <code>${escapeHtml(source)}</code>.</small>`;
     result.innerHTML = verdict + arm + considered;
   } catch (e) {
-    status.textContent = "❌ " + e.message;
-    status.style.color = "var(--red)";
+    notifyError("inhibition-test", e, { status, inlineText: "❌ " + errorText(e) });
   }
 }
 
@@ -315,7 +320,7 @@ async function loadAcks() {
       row.querySelector("[data-clear-ack]").addEventListener("click", () => clearAck(a.alertname));
       tb.appendChild(row);
     }
-  } catch (e) { console.warn("acks fetch:", e); }
+  } catch (e) { fetchError("acks", e); }
 }
 
 async function clearAck(alertname) {
@@ -327,13 +332,14 @@ async function clearAck(alertname) {
       body: JSON.stringify({alertname}),
     });
     if (!res.ok) {
-      showToast(`Ack clear failed: ${res.status}`, "error"); return;
+      notifyResponseError("ack-clear", res, await res.text());
+      return;
     }
     const r = await res.json();
     showToast(`✓ Cleared ${r.cleared} ack-snooze${r.cleared === 1 ? "" : "s"}`, "success", 3000);
     loadAcks();
   } catch (e) {
-    showToast(`Ack clear error: ${e.message}`, "error");
+    notifyError("ack-clear", e);
   }
 }
 
@@ -464,7 +470,8 @@ async function saveSchedules() {
   const status = $("#sched-save-status");
   const collected = _collectSchedules();
   if (collected.error) {
-    status.textContent = "❌ " + collected.error; status.style.color = "var(--red)"; return;
+    notifyValidationError("schedules", collected.error, status);
+    return;
   }
   status.textContent = tr("status.saving"); status.style.color = "";
   try {
@@ -474,8 +481,8 @@ async function saveSchedules() {
     });
     if (!res.ok) {
       const txt = await res.text();
-      status.textContent = "❌ " + (txt || res.statusText);
-      status.style.color = "var(--red)"; return;
+      notifyResponseError("schedules", res, txt, status);
+      return;
     }
     const r = await res.json();
     status.textContent = tr("sched.saved", { count: r.count });
@@ -483,8 +490,7 @@ async function saveSchedules() {
     _markTabDirty("inhibitions", false);
     await loadSchedules();
   } catch (e) {
-    status.textContent = "❌ " + e.message;
-    status.style.color = "var(--red)";
+    notifyError("schedules", e, { status, inlineText: "❌ " + errorText(e) });
   }
 }
 
@@ -510,8 +516,8 @@ async function clearAllSuppressions() {
       body: JSON.stringify({all: true}),
     });
     if (!res.ok) {
-      status.textContent = "❌ " + (await res.text() || res.statusText);
-      status.style.color = "var(--red)"; return;
+      notifyResponseError("inhibitions-clear-all", res, await res.text(), status);
+      return;
     }
     const r = await res.json();
     status.textContent = tr("inhib.cleared_all", { count: r.cleared });
@@ -520,8 +526,7 @@ async function clearAllSuppressions() {
     await loadInhib();
     if (typeof loadStatusActivity === "function") loadStatusActivity();
   } catch (e) {
-    status.textContent = "❌ " + e.message;
-    status.style.color = "var(--red)";
+    notifyError("inhibitions-clear-all", e, { status, inlineText: "❌ " + errorText(e) });
   }
 }
 
@@ -760,7 +765,10 @@ function _collectInhibRules() {
 async function saveInhibRules() {
   const collected = _collectInhibRules();
   const status = $("#inhib-save-status");
-  if (collected.error) { status.textContent = "❌ " + collected.error; status.style.color = "#e57373"; return; }
+  if (collected.error) {
+    notifyValidationError("inhibition-rules", collected.error, status);
+    return;
+  }
   status.textContent = tr("status.saving"); status.style.color = "";
   try {
     const res = await fetch("/api/inhibition-rules", {
@@ -770,8 +778,8 @@ async function saveInhibRules() {
     });
     if (!res.ok) {
       const txt = await res.text();
-      status.textContent = "❌ " + (txt || res.statusText);
-      status.style.color = "#e57373"; return;
+      notifyResponseError("inhibition-rules", res, txt, status);
+      return;
     }
     const r = await res.json();
     status.textContent = tr("inhib.rules_saved", { count: r.count, cleared: r.cleared_suppressions });
@@ -780,8 +788,7 @@ async function saveInhibRules() {
     await loadInhibRules();
     await loadInhib();
   } catch (e) {
-    status.textContent = "❌ " + e.message;
-    status.style.color = "#e57373";
+    notifyError("inhibition-rules", e, { status, inlineText: "❌ " + errorText(e) });
   }
 }
 
@@ -930,6 +937,90 @@ function exportDeliveriesCsv() {
   showToast(tr("deliveries.exported", { count: rows.length }), "success", 3000);
 }
 
+// ---- Backend logs ----
+let _logsCache = { entries: [], total: 0 };
+let _logsFilterTimer = null;
+let _logsAutoTimer = null;
+let _logsRequestSeq = 0;
+
+async function loadLogs() {
+  const params = new URLSearchParams();
+  const q = ($("#logs-filter")?.value || "").trim();
+  const level = $("#logs-level")?.value || "all";
+  const limit = $("#logs-limit")?.value || "200";
+  if (q) params.set("q", q);
+  if (level && level !== "all") params.set("level", level);
+  params.set("limit", limit);
+  const requestSeq = ++_logsRequestSeq;
+  try {
+    const payload = await J("/api/logs?" + params.toString());
+    if (requestSeq !== _logsRequestSeq) return;
+    _logsCache = payload;
+    fetchOk("logs");
+    renderLogs();
+  } catch (e) {
+    if (requestSeq !== _logsRequestSeq) return;
+    fetchError("logs", e);
+    const tb = $("#t-logs tbody");
+    if (tb) tb.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(tr("common.error"))}: ${escapeHtml(errorText(e))}</td></tr>`;
+    const count = $("#logs-count");
+    if (count) count.textContent = "";
+  }
+}
+
+function renderLogs() {
+  const tb = $("#t-logs tbody"); if (!tb) return;
+  const entries = _logsCache.entries || [];
+  tb.innerHTML = "";
+  for (const entry of entries) {
+    const row = document.createElement("tr");
+    const level = (entry.level || "").toLowerCase();
+    const fields = entry.fields && Object.keys(entry.fields).length
+      ? "\n" + Object.entries(entry.fields)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([k, v]) => `${k}=${v}`)
+          .join(" ")
+      : "";
+    const target = entry.line ? `${entry.target}:${entry.line}` : entry.target;
+    row.innerHTML = `
+      <td class="log-time">${escapeHtml(new Date((entry.ts || 0) * 1000).toLocaleString())}</td>
+      <td><span class="log-level ${escapeHtml(level)}">${escapeHtml(entry.level || "")}</span></td>
+      <td class="log-target">${escapeHtml(target || "")}</td>
+      <td class="log-message">${escapeHtml((entry.message || "") + fields)}</td>`;
+    tb.appendChild(row);
+  }
+  if (!entries.length) {
+    tb.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(tr("logs.empty"))}</td></tr>`;
+  }
+  const count = $("#logs-count");
+  if (count) count.textContent = tr("logs.showing", { shown: entries.length, total: _logsCache.total || 0 });
+}
+
+function scheduleLogsLoad() {
+  _logsRequestSeq++;
+  clearTimeout(_logsFilterTimer);
+  _logsFilterTimer = setTimeout(loadLogs, 250);
+}
+
+function updateLogsAutorefresh() {
+  clearInterval(_logsAutoTimer);
+  _logsAutoTimer = null;
+  if ($("#logs-autorefresh")?.checked) {
+    _logsAutoTimer = setInterval(() => {
+      if ($("#tab-logs")?.classList.contains("active")) loadLogs();
+    }, 5000);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  $("#logs-refresh")?.addEventListener("click", loadLogs);
+  $("#logs-filter")?.addEventListener("input", scheduleLogsLoad);
+  $("#logs-level")?.addEventListener("change", loadLogs);
+  $("#logs-limit")?.addEventListener("change", loadLogs);
+  $("#logs-autorefresh")?.addEventListener("change", updateLogsAutorefresh);
+  updateLogsAutorefresh();
+});
+
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
 // ---- Render config ----
@@ -995,7 +1086,7 @@ $("#btn-rc-save").addEventListener("click", async () => {
     _markTabDirty("render", false);
     rcData = out;
     populateTestComponentSelect();
-  } catch (e) { $("#rc-status").textContent = tr("common.error") + ": " + e.message; }
+  } catch (e) { notifyError("render-config-save", e, { status: "#rc-status" }); }
 });
 
 // ---- Render preview ----
@@ -1078,7 +1169,8 @@ async function _runPreviewRender() {
     $("#pv-output").textContent = JSON.stringify(r, null, 2);
     renderNtfyMock(r);
   } catch (e) {
-    $("#pv-output").textContent = tr("common.error") + ": " + e.message;
+    notifyError("render-preview", e);
+    $("#pv-output").textContent = tr("common.error") + ": " + errorText(e);
     $("#pv-vis-body").textContent = tr("preview.error_rendering");
   }
 }
@@ -1174,8 +1266,8 @@ $("#btn-test-fire").addEventListener("click", async () => {
     $("#t-result").textContent = JSON.stringify(r, null, 2);
     setTimeout(loadDeliv, 1000);
   } catch (e) {
-    $("#t-result").textContent = tr("common.error") + ": " + e.message;
-    showToast(tr("test.send_failed", { message: e.message }), "error");
+    $("#t-result").textContent = tr("common.error") + ": " + errorText(e);
+    showToast(tr("test.send_failed", { message: errorText(e) }), "error");
   } finally {
     button.disabled = false;
   }
@@ -1262,8 +1354,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
     });
     if (!r.ok) {
       const txt = await r.text();
-      $("#ntfy-topics-status").style.color = "#c44";
-      $("#ntfy-topics-status").textContent = `Error ${r.status}: ${txt.slice(0, 200)}`;
+      notifyResponseError("ntfy-topics-save", r, txt.slice(0, 200), "#ntfy-topics-status");
       return;
     }
     const j = await r.json();
@@ -1276,8 +1367,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
     // Reload to refresh badges
     setTimeout(() => loadNtfyTopics(), 500);
   } catch (e) {
-    $("#ntfy-topics-status").style.color = "#c44";
-    $("#ntfy-topics-status").textContent = tr("common.error") + ": " + e.message;
+    notifyError("ntfy-topics-save", e, { status: "#ntfy-topics-status" });
   }
 });
 
@@ -1323,7 +1413,7 @@ $("#btn-routing-save").addEventListener("click", async () => {
     setTimeout(() => $("#routing-msg").textContent = "", 4000);
     _markTabDirty("routing", false);
     loadStatus();
-  } catch (e) { $("#routing-msg").textContent = tr("common.error") + ": " + e.message; }
+  } catch (e) { notifyError("routing-save", e, { status: "#routing-msg" }); }
 });
 
 
@@ -1359,7 +1449,7 @@ async function loadIngestAuth() {
     tb.querySelectorAll("button[data-act]").forEach(btn => {
       btn.addEventListener("click", () => _ingestAuthAction(btn.dataset.src, btn.dataset.act));
     });
-  } catch (e) { console.warn("ingest-auth fetch:", e); }
+  } catch (e) { fetchError("ingest-auth", e); }
 }
 
 async function _ingestAuthAction(src, action) {
@@ -1381,7 +1471,7 @@ async function _ingestAuthAction(src, action) {
     });
     if (!res.ok) {
       const txt = await res.text();
-      showToast(`Ingest-auth ${action} failed: ${res.status} ${txt.slice(0, 200)}`, "error");
+      notifyResponseError(`ingest-auth-${action}`, res, txt.slice(0, 200));
       return;
     }
     const r = await res.json();
@@ -1396,7 +1486,7 @@ async function _ingestAuthAction(src, action) {
     }
     loadIngestAuth();
   } catch (e) {
-    showToast(`Ingest-auth ${action} error: ${e.message}`, "error");
+    notifyError(`ingest-auth-${action}`, e);
   }
 }
 
@@ -1468,7 +1558,7 @@ $("#btn-cas-save").addEventListener("click", async () => {
     setTimeout(() => $("#cas-status").textContent = "", 3000);
     _markTabDirty("cascade", false);
     loadStatus();
-  } catch (e) { $("#cas-status").textContent = tr("common.error") + ": " + e.message; }
+  } catch (e) { notifyError("cascade-save", e, { status: "#cas-status" }); }
 });
 
 
@@ -1595,7 +1685,7 @@ $("#btn-delivery-save").addEventListener("click", async () => {
     $("#delivery-status").textContent = tr("delivery.saved", { policies: policies.length, rules: rules.length });
     setTimeout(() => $("#delivery-status").textContent = "", 4000);
     _markTabDirty("delivery", false);
-  } catch (e) { $("#delivery-status").textContent = tr("common.error") + ": " + e.message; }
+  } catch (e) { notifyError("delivery-save", e, { status: "#delivery-status" }); }
 });
 
 
@@ -1627,6 +1717,7 @@ async function loadDedup() {
   } catch (e) {
     const c = $("#dedup-cards");
     if (c) c.innerHTML = '<p class="muted">Error loading dedup config: ' + e.message + "</p>";
+    fetchError("dedup", e);
   }
 }
 
@@ -1692,10 +1783,10 @@ $("#dedup-save")?.addEventListener("click", async () => {
       setTimeout(() => { $("#dedup-status").textContent = ""; }, 3000);
       _markTabDirty("grouping", false);
     } else {
-      $("#dedup-status").textContent = tr("common.error") + ": " + (r.error || "unknown");
+      notifyError("dedup-save", new Error(r.error || "unknown"), { status: "#dedup-status" });
     }
   } catch (e) {
-    $("#dedup-status").textContent = tr("common.error") + ": " + e.message;
+    notifyError("dedup-save", e, { status: "#dedup-status" });
   }
 });
 
@@ -1769,7 +1860,7 @@ async function loadAuth() {
     $("#auth-tp-gheader").value = tp.groups_header || "X-Forwarded-Groups";
     $("#auth-tp-cidrs").value = (tp.trusted_cidrs || []).join(", ");
   } catch (e) {
-    $("#auth-status").textContent = tr("auth.error_loading", { message: e.message });
+    notifyError("auth", e, { status: "#auth-status", inlineText: tr("auth.error_loading", { message: errorText(e) }) });
   }
 }
 
@@ -1820,10 +1911,10 @@ $("#auth-save")?.addEventListener("click", async () => {
       authData.settings = r.settings;
       _showSubcard(r.settings.mode);
     } else {
-      $("#auth-status").textContent = tr("common.error") + ": " + (r.error || "unknown");
+      notifyError("auth-save", new Error(r.error || "unknown"), { status: "#auth-status" });
     }
   } catch (e) {
-    $("#auth-status").textContent = tr("common.error") + ": " + e.message;
+    notifyError("auth-save", e, { status: "#auth-status" });
   }
 });
 
@@ -2061,7 +2152,7 @@ async function loadFlow() {
     cfgs = { channel, cascade, ntfy, dedup, auth };
     stats = _aggregateDeliveries24h(deliveries);
   } catch (e) {
-    $("#flow-status").textContent = tr("flow.config_fetch_failed", { message: e.message });
+    notifyError("flow-config", e, { status: "#flow-status", inlineText: tr("flow.config_fetch_failed", { message: errorText(e) }) });
     return;
   }
   const src = buildMermaidDiagram(cfgs, stats);
@@ -2076,7 +2167,8 @@ async function loadFlow() {
     _pulseRecentActivityNodes(stats);
     $("#flow-status").textContent = tr("flow.rendered_at", { time: new Date().toLocaleTimeString() });
   } catch (e) {
-    $("#flow-diagram").innerHTML = `<pre style="color:#c44">Mermaid render error: ${e.message}</pre>`;
+    notifyError("flow-render", e, { status: "#flow-status", inlineText: tr("flow.render_failed") });
+    $("#flow-diagram").innerHTML = `<pre style="color:#c44">Mermaid render error: ${escapeHtml(errorText(e))}</pre>`;
     $("#flow-status").textContent = tr("flow.render_failed");
   }
 }
@@ -2116,7 +2208,7 @@ async function refreshFlowStats() {
     const ts = $("#flow-status");
     if (ts) ts.textContent = tr("flow.stats_refreshed", { time: new Date().toLocaleTimeString() });
   } catch (e) {
-    // silent
+    fetchError("flow-stats", e);
   }
 }
 
@@ -2177,6 +2269,7 @@ document.addEventListener("klaxond:languagechange", () => {
   if (!_dirtyTabs.has("grouping")) renderDedupCards();
   if (!_dirtyTabs.has("auth")) loadAuth();
   if (document.querySelector("#tab-flow.active")) loadFlow();
+  if (document.querySelector("#tab-logs.active")) loadLogs();
 });
 
 
@@ -2226,13 +2319,50 @@ function showToast(msg, kind = "error", durationMs = 10000) {
 // same key within DEDUP_MS are silent (logged to console only).
 const _TOAST_DEDUP_MS = 60000;
 const _toastErrLast = new Map();
-function fetchError(key, e) {
+function errorText(e) {
+  if (!e) return "unknown";
+  if (typeof e === "string") return e;
+  return e.message || String(e);
+}
+
+function setInlineStatus(target, text, kind = "") {
+  const el = typeof target === "string" ? $(target) : target;
+  if (!el) return;
+  el.textContent = text;
+  if (kind === "error") el.style.color = "var(--red)";
+  else if (kind === "success") el.style.color = "var(--green)";
+  else el.style.color = "";
+}
+
+function notifyError(key, e, opts = {}) {
   console.warn(key + ":", e);
+  const msg = errorText(e);
+  if (opts.status) {
+    setInlineStatus(opts.status, opts.inlineText || `${tr("common.error")}: ${msg}`, "error");
+  }
+  if (!opts.dedup) {
+    showToast(`${key}: ${msg}`, "error", opts.durationMs || 10000);
+    return;
+  }
   const now = Date.now();
   const last = _toastErrLast.get(key) || 0;
   if (now - last < _TOAST_DEDUP_MS) return;
   _toastErrLast.set(key, now);
-  showToast(`${key}: ${e.message || e}`, "error");
+  showToast(`${key}: ${msg}`, "error");
+}
+
+function notifyResponseError(key, res, bodyText = "", statusTarget = null) {
+  const body = (bodyText || "").trim();
+  const msg = `${res.status} ${body || res.statusText}`;
+  notifyError(key, new Error(msg), { status: statusTarget });
+}
+
+function notifyValidationError(key, message, statusTarget = null) {
+  notifyError(key, new Error(message), { status: statusTarget, inlineText: "❌ " + message });
+}
+
+function fetchError(key, e) {
+  notifyError(key, e, { dedup: true });
 }
 function fetchOk(key) { _toastErrLast.delete(key); }
 

@@ -1,5 +1,15 @@
 # Klaxond — CHANGELOG
 
+## 0.13.0 — 2026-06-30
+
+- Aggiunta pagina UI Logs con ricerca keyword, filtro livello, limite risultati
+  e auto-refresh, alimentata da un ring buffer in-process agganciato a
+  `tracing` via endpoint admin `/api/logs`; token, secret e URL sensibili
+  vengono redatti prima di essere esposti.
+- Uniformata la gestione errori frontend: le failure dei loader, dei salvataggi
+  e delle azioni utente mostrano sempre un toast, mantenendo il messaggio inline
+  vicino al form quando presente.
+
 ## 0.12.1 — 2026-06-30
 
 - Corretto il callback OIDC del backend Rust: `jsonwebtoken` ora viene

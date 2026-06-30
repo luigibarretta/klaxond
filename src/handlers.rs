@@ -6,6 +6,7 @@ use crate::config::{
 use crate::dedup;
 use crate::delivery::deliver;
 use crate::inhibition;
+use crate::log_buffer;
 use crate::parsers::{
     Parts, normalize_labels, parse_beszel_payload, parse_grafana_payload,
     parse_healthchecks_payload, parse_source, parse_wud_payload,
@@ -81,7 +82,7 @@ pub async fn dispatch(
 async fn handle_get(
     state: &AppState,
     path: &str,
-    _full_path: &str,
+    full_path: &str,
     authed_user: Option<User>,
 ) -> Response<Body> {
     match path {
@@ -91,6 +92,7 @@ async fn handle_get(
         "/inhibitions" | "/api/inhibitions" => json_response(inhibition::inhibition_status(state)),
         "/api/status" => json_response(status_payload(state).await),
         "/api/deliveries" => json_response(state.recent_deliveries()),
+        "/api/logs" => json_response(logs_payload(full_path)),
         "/api/render-config" => {
             let cfg = state.cfg();
             json_response(
@@ -1809,6 +1811,17 @@ fn config_backups_payload(state: &AppState) -> Value {
             .cmp(&a.get("mtime_iso").and_then(|v| v.as_str()))
     });
     json!({"backups": backups, "keep_max": 10, "dir": state.paths.backup_dir})
+}
+
+fn logs_payload(full_path: &str) -> log_buffer::LogQuery {
+    let qs = parse_query(full_path);
+    let limit = qs
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(200);
+    let query = qs.get("q").map(String::as_str).unwrap_or("");
+    let level = qs.get("level").map(String::as_str).unwrap_or("all");
+    log_buffer::query_global(query, level, limit)
 }
 
 fn config_auto_backup(state: &AppState) -> anyhow::Result<Option<String>> {

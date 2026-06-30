@@ -59,6 +59,7 @@
     <button class="tab" data-tab="flow" data-i18n="tab.flow">Flow</button>
     <button class="tab" data-tab="inhibitions" data-i18n="tab.inhibitions">Inhibitions</button>
     <button class="tab" data-tab="deliveries" data-i18n="tab.deliveries">Recent deliveries</button>
+    <button class="tab" data-tab="logs" data-i18n="tab.logs">Logs</button>
   </div>
   <div class="tab-group" data-group="settings">
     <span class="tab-group-label" data-i18n="nav.settings">Settings</span>
@@ -290,6 +291,51 @@
   <div class="table-scroll">
     <table id="t-deliv">
       <thead><tr><th data-i18n="common.time">Time</th><th data-i18n="common.source">Source</th><th data-i18n="common.severity">Severity</th><th data-i18n="common.title">Title</th><th data-i18n="deliveries.channel_or_suppressed">Channel / Suppressed by</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-logs" class="tabpane">
+  <h2><span data-i18n="logs.title">Backend logs</span> <small class="muted" data-i18n="logs.sub">(in-memory, newest first)</small></h2>
+  <div class="logs-toolbar">
+    <label>
+      <span data-i18n="logs.keyword">Keyword</span>
+      <input type="search" id="logs-filter" placeholder="Search message, target or fields…" autocomplete="off" data-i18n-placeholder="logs.search_placeholder">
+    </label>
+    <label>
+      <span data-i18n="logs.level">Level</span>
+      <select id="logs-level">
+        <option value="all" data-i18n="logs.level_all">All</option>
+        <option value="ERROR">ERROR</option>
+        <option value="WARN">WARN</option>
+        <option value="INFO">INFO</option>
+        <option value="DEBUG">DEBUG</option>
+        <option value="TRACE">TRACE</option>
+      </select>
+    </label>
+    <label>
+      <span data-i18n="logs.limit">Limit</span>
+      <select id="logs-limit">
+        <option>50</option>
+        <option selected>200</option>
+        <option>500</option>
+      </select>
+    </label>
+    <button id="logs-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
+    <label class="inline-check"><input type="checkbox" id="logs-autorefresh" checked> <span data-i18n="logs.auto_refresh">Auto-refresh</span></label>
+    <span id="logs-count" class="muted"></span>
+  </div>
+  <div class="table-scroll">
+    <table id="t-logs" class="logs-table">
+      <thead>
+        <tr>
+          <th data-i18n="common.time">Time</th>
+          <th data-i18n="logs.level">Level</th>
+          <th data-i18n="logs.target">Target</th>
+          <th data-i18n="logs.message">Message</th>
+        </tr>
+      </thead>
       <tbody></tbody>
     </table>
   </div>
@@ -627,7 +673,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.12.1</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.13.0</span></small>
 </footer>
 
 <!--

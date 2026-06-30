@@ -9,8 +9,59 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page).toHaveURL(/\/ui\/index\.html$/);
   await expect(page.locator("h1")).toContainText("klaxond");
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
+  await expect(page.locator('[data-tab="logs"]')).toBeVisible();
   await expect(page.locator('[data-tab="preview"]')).toBeVisible();
-  await expect(page.locator("#footer-version")).toContainText(/^v0\.12\./);
+  await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
+});
+
+test("backend logs page searches captured errors", async ({ page, request }) => {
+  const bad = await request.post("/webhook/warning", {
+    data: {
+      status: "firing",
+      commonLabels: { alertname: "UnauthorizedProbe" }
+    }
+  });
+  expect(bad.status()).toBe(401);
+
+  const logs = await request.get("/api/logs?q=auth%20rejected&level=WARN&limit=10");
+  await expect(logs).toBeOK();
+  const payload = await logs.json();
+  expect(payload.entries.length).toBeGreaterThan(0);
+  expect(payload.entries[0].message).toContain("webhook auth rejected");
+
+  await page.goto("/ui/index.html#logs");
+  await page.fill("#logs-filter", "auth rejected");
+  await page.selectOption("#logs-level", "WARN");
+  await expect(page.locator("#t-logs tbody tr").first()).toContainText("webhook auth rejected");
+  await expect(page.locator("#logs-count")).toContainText(/1 \/ \d+ log line/);
+});
+
+test("backend logs fetch failure clears stale count", async ({ page }) => {
+  await page.goto("/ui/index.html#logs");
+  await expect(page.locator("#logs-count")).toContainText(/log line/);
+
+  await page.route(/\/api\/logs\?/, async route => {
+    await route.fulfill({ status: 500, body: "forced logs failure" });
+  });
+
+  await page.click("#logs-refresh");
+  await expect(page.locator("#t-logs tbody tr").first()).toContainText("500 Internal Server Error");
+  await expect(page.locator("#logs-count")).toHaveText("");
+});
+
+test("save errors show both inline status and toast", async ({ page }) => {
+  await page.route("**/api/render-config", async route => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 500, body: "forced render-config failure" });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/ui/index.html#render");
+  await page.click("#btn-rc-save");
+  await expect(page.locator("#rc-status")).toContainText("500");
+  await expect(page.locator(".toast-error")).toContainText("render-config-save");
 });
 
 test("inhibition applies-to checkboxes stay compact and aligned", async ({ page }) => {

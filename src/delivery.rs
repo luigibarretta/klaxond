@@ -269,7 +269,7 @@ pub async fn post_to_telegram(
     {
         Ok(resp) => resp.status().is_success(),
         Err(err) => {
-            tracing::warn!("telegram POST failed: {}", err);
+            tracing::warn!("telegram POST failed: {}", err.without_url());
             false
         }
     }

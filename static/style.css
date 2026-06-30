@@ -441,6 +441,35 @@ a:hover { text-decoration: underline; }
 }
 .toast-close:hover { color: var(--text); background: transparent; }
 
+.logs-toolbar {
+  display: flex;
+  gap: 0.8em;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-bottom: 0.8em;
+}
+.logs-toolbar label { margin: 0; }
+.logs-toolbar input[type="search"] { min-width: 260px; }
+.inline-check { display: inline-flex; align-items: center; gap: 0.35em; }
+.logs-table td { vertical-align: top; }
+.logs-table .log-time { white-space: nowrap; color: var(--muted); font-size: 12px; }
+.logs-table .log-target { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
+.logs-table .log-message { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.log-level {
+  display: inline-block;
+  min-width: 48px;
+  text-align: center;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+}
+.log-level.error { color: var(--red); }
+.log-level.warn { color: var(--yellow); }
+.log-level.info { color: var(--accent); }
+.log-level.debug, .log-level.trace { color: var(--muted); }
+
 /* Keyboard shortcut help overlay (toggled by '?') */
 #shortcut-help {
   position: fixed;
