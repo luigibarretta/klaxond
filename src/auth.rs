@@ -82,11 +82,12 @@ pub async fn authenticate(
             None,
         );
     }
-    if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok())
-        && let Some(value) = cookie_value(cookie, AUTH_SESSION_COOKIE)
-        && let Some(user) = verify_session(state, value)
-    {
-        return AuthOutcome::Authorized(user, None);
+    if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
+        for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
+            if let Some(user) = verify_session(state, value) {
+                return AuthOutcome::Authorized(user, None);
+            }
+        }
     }
     match cfg.mode.as_str() {
         "basic" => authenticate_basic(state, &cfg, headers),
@@ -197,6 +198,7 @@ pub async fn oidc_login_redirect(
                 .map(|(_, v)| v.to_string())
         })
         .unwrap_or_else(|| "/".into());
+    let return_to = sanitize_return_to(&return_to);
     let host = headers
         .get(HOST)
         .and_then(|v| v.to_str().ok())
@@ -253,7 +255,7 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
     let return_to = {
         let mut states = state.oidc_states.lock().expect("oidc states poisoned");
         match states.remove(&state_param) {
-            Some((_, ret)) => ret,
+            Some((_, ret)) => sanitize_return_to(&ret),
             None => return redirect("/"),
         }
     };
@@ -400,12 +402,13 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
     resp
 }
 
-pub fn logout() -> Response<Body> {
+pub fn logout(headers: &HeaderMap) -> Response<Body> {
     let mut resp = redirect("/");
-    resp.headers_mut().insert(
-        SET_COOKIE,
-        HeaderValue::from_static("klaxond_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"),
-    );
+    for cookie in expired_session_cookies(headers) {
+        if let Ok(value) = HeaderValue::from_str(&cookie) {
+            resp.headers_mut().append(SET_COOKIE, value);
+        }
+    }
     resp
 }
 
@@ -435,14 +438,79 @@ fn verify_session(state: &AppState, cookie_value: &str) -> Option<User> {
     Some(user)
 }
 
-fn cookie_value<'a>(cookie: &'a str, name: &str) -> Option<&'a str> {
-    for c in cookie.split(';') {
-        let c = c.trim();
-        if let Some(rest) = c.strip_prefix(&format!("{name}=")) {
-            return Some(rest);
+fn cookie_values<'a>(cookie: &'a str, name: &str) -> Vec<&'a str> {
+    cookie
+        .split(';')
+        .filter_map(|part| {
+            let (key, value) = part.trim().split_once('=')?;
+            (key == name).then_some(value)
+        })
+        .collect()
+}
+
+fn sanitize_return_to(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty()
+        || !value.starts_with('/')
+        || value.starts_with("//")
+        || value.starts_with("/\\")
+        || value.contains(['\r', '\n'])
+        || value == "/auth"
+        || value.starts_with("/auth/")
+    {
+        "/".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn expired_session_cookies(headers: &HeaderMap) -> Vec<String> {
+    let mut cookies = Vec::new();
+    let domains = logout_domain_candidates(headers);
+    for path in ["/", "/auth", "/auth/", "/auth/login", "/auth/callback"] {
+        cookies.push(expired_session_cookie(path, None));
+        for domain in &domains {
+            cookies.push(expired_session_cookie(path, Some(domain)));
         }
     }
-    None
+    cookies
+}
+
+fn expired_session_cookie(path: &str, domain: Option<&str>) -> String {
+    let mut cookie = format!(
+        "{AUTH_SESSION_COOKIE}=; HttpOnly; Path={path}; SameSite=Lax; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    );
+    if let Some(domain) = domain {
+        cookie.push_str("; Domain=");
+        cookie.push_str(domain);
+    }
+    cookie
+}
+
+fn logout_domain_candidates(headers: &HeaderMap) -> Vec<String> {
+    let Some(host) = headers
+        .get(HOST)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(':').next())
+        .map(|v| v.trim().trim_end_matches('.'))
+        .filter(|v| !v.is_empty())
+    else {
+        return Vec::new();
+    };
+    if host.parse::<IpAddr>().is_ok() || host.contains(['/', '\\']) {
+        return Vec::new();
+    }
+
+    let mut domains = vec![host.to_string(), format!(".{host}")];
+    let labels = host.split('.').collect::<Vec<_>>();
+    if labels.len() > 2 {
+        let parent = labels[labels.len() - 2..].join(".");
+        domains.push(parent.clone());
+        domains.push(format!(".{parent}"));
+    }
+    domains.sort();
+    domains.dedup();
+    domains
 }
 
 fn cidr_match(ip: IpAddr, cidrs: &[String]) -> bool {
@@ -523,4 +591,89 @@ async fn verify_id_token(
         .unwrap_or(issuer)]);
     let data = decode::<Value>(id_token, &key, &validation)?;
     Ok(data.claims)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{EncodingKey, Header};
+
+    #[test]
+    fn jwt_crypto_provider_is_available() {
+        let claims = serde_json::json!({
+            "sub": "probe",
+            "exp": 4_102_444_800_i64
+        });
+        let token = jsonwebtoken::encode(
+            &Header::new(Algorithm::HS256),
+            &claims,
+            &EncodingKey::from_secret(b"secret"),
+        )
+        .expect("JWT encode should have a crypto provider");
+        let data = decode::<Value>(
+            &token,
+            &DecodingKey::from_secret(b"secret"),
+            &Validation::new(Algorithm::HS256),
+        )
+        .expect("JWT decode should have a crypto provider");
+
+        assert_eq!(
+            data.claims.get("sub").and_then(Value::as_str),
+            Some("probe")
+        );
+    }
+
+    #[test]
+    fn cookie_values_keeps_duplicate_session_cookies_in_order() {
+        let values = cookie_values(
+            "klaxond_session=stale; theme=dark; klaxond_session=fresh",
+            AUTH_SESSION_COOKIE,
+        );
+
+        assert_eq!(values, vec!["stale", "fresh"]);
+    }
+
+    #[test]
+    fn sanitize_return_to_allows_only_local_non_auth_paths() {
+        assert_eq!(
+            sanitize_return_to("/ui/index.html#inhibitions"),
+            "/ui/index.html#inhibitions"
+        );
+        assert_eq!(sanitize_return_to("https://example.test/"), "/");
+        assert_eq!(sanitize_return_to("//example.test/"), "/");
+        assert_eq!(sanitize_return_to("/ui\r\nLocation: //example.test"), "/");
+        assert_eq!(sanitize_return_to("/auth/login?return_to=%2F"), "/");
+        assert_eq!(sanitize_return_to("/auth"), "/");
+        assert_eq!(sanitize_return_to(""), "/");
+    }
+
+    #[test]
+    fn logout_clears_host_and_parent_domain_cookie_variants() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static("klaxond.luigibarretta.com"));
+        let resp = logout(&headers);
+        let cookies = resp
+            .headers()
+            .get_all(SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect::<Vec<_>>();
+
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.starts_with("klaxond_session=;") && c.contains("Path=/;"))
+        );
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.contains("Domain=luigibarretta.com"))
+        );
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.contains("Domain=.luigibarretta.com"))
+        );
+        assert!(cookies.iter().any(|c| c.contains("Path=/auth/callback;")));
+    }
 }

@@ -50,7 +50,7 @@ pub async fn dispatch(
         return auth::oidc_callback(&state, headers, &full_path).await;
     }
     if method == Method::GET && path.starts_with("/auth/logout") {
-        return auth::logout();
+        return auth::logout(&headers);
     }
 
     let mut authed_user: Option<User> = None;

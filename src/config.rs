@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const VERSION: &str = "0.12.0";
+pub const VERSION: &str = "0.12.1";
 pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",

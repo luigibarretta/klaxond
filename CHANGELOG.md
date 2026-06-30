@@ -1,5 +1,15 @@
 # Klaxond — CHANGELOG
 
+## 0.12.1 — 2026-06-30
+
+- Corretto il callback OIDC del backend Rust: `jsonwebtoken` ora viene
+  compilato con provider crypto RustCrypto, evitando panic durante la verifica
+  dell'`id_token` e il conseguente loop di redirect dopo login Authentik.
+- Reso piu' robusto il flusso auth contro cookie sessione duplicati e
+  `return_to` non sicuri o puntati a `/auth/*`, prevenendo ulteriori loop.
+- Logout rafforzato: cancella varianti plausibili del cookie sessione per
+  Path/Domain, evitando sessioni sticky quando il browser ha cookie duplicati.
+
 ## 0.12.0 — 2026-06-29
 
 - Aggiunta UI bilingue inglese/italiano con preferenza persistita nel browser
