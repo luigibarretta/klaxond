@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.14.3 — 2026-07-01
+
+- Centralizzata la gestione dei feedback UI con helper condivisi per status
+  inline e toast di successo/errore.
+- Resi uniformi i toast sulle azioni server-side di salvataggio, cancellazione,
+  revoca, registrazione passkey, restore config e aggiornamenti routing/cascade.
+- Aggiunto test E2E per verificare che i salvataggi riusciti mostrino sia status
+  inline sia toast.
+
 ## 0.14.2 — 2026-07-01
 
 - Migrata la UI da hash routing (`/ui/index.html#deliveries`) a path routing

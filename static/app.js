@@ -428,6 +428,7 @@ async function loadStatusActivity() {
 $("#btn-cascade-toggle").addEventListener("click", async () => {
   try {
     await J("/api/cascade/toggle", { method: "POST", body: "{}" });
+    notifySuccess(tr("cascade.runtime_toggled"), { durationMs: 3000 });
     loadStatus();
   } catch (e) {
     notifyError("cascade-toggle", e);
@@ -468,7 +469,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!confirm(tr("config.restore_confirm", { name: f.name, size: f.size }))) {
       e.target.value = ""; return;
     }
-    status.textContent = tr("status.uploading"); status.style.color = "";
+    setInlineStatus(status, tr("status.uploading"));
     try {
       const raw = await f.text();
       const isJson = raw.trimStart().startsWith("{");
@@ -481,9 +482,11 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       const j = await res.json();
-      status.textContent = tr("status.restored", { bytes: j.bytes_written, backup: j.pre_restore_backup || tr("status.none") });
-      status.style.color = "var(--green)";
-      showToast(tr("config.restored_toast"), "success", 6000);
+      notifySuccess(tr("config.restored_toast"), {
+        status,
+        inlineText: tr("status.restored", { bytes: j.bytes_written, backup: j.pre_restore_backup || tr("status.none") }),
+        durationMs: 6000,
+      });
       loadConfigBackups();
     } catch (err) {
       notifyError("config-restore", err, { status, inlineText: "❌ " + errorText(err) });
@@ -527,9 +530,7 @@ async function clearSuppression(source, anchor) {
       return;
     }
     const r = await res.json();
-    status.textContent = tr("inhib.cleared_for_source", { count: r.cleared, source });
-    status.style.color = "var(--green)";
-    setTimeout(() => { status.textContent = ""; }, 3000);
+    notifySuccess(tr("inhib.cleared_for_source", { count: r.cleared, source }), { status, clearMs: 3000 });
     await loadInhib();
     if (typeof loadStatusActivity === "function") loadStatusActivity();
   } catch (e) {
@@ -556,8 +557,7 @@ async function testInhibitionRule() {
     result.innerHTML = "";
     return;
   }
-  status.textContent = "Testing…";
-  status.style.color = "";
+  setInlineStatus(status, tr("status.testing"));
   try {
     const res = await fetch("/api/inhibition-rules/test", {
       method: "POST",
@@ -570,7 +570,7 @@ async function testInhibitionRule() {
       return;
     }
     const r = await res.json();
-    status.textContent = "";
+    setInlineStatus(status, "");
     const verdict = r.would_send
       ? `<span style="color:var(--green)"><b>${escapeHtml(tr("inhib.would_deliver"))}</b></span> (${escapeHtml(tr("inhib.reason"))}: <code>${escapeHtml(r.reason)}</code>)`
       : `<span style="color:var(--red)"><b>${escapeHtml(tr("inhib.would_suppress"))}</b></span> ${escapeHtml(tr("inhib.by_rule"))} <code>${escapeHtml(r.matched_rule || "")}</code>`;
@@ -622,7 +622,7 @@ async function clearAck(alertname) {
       return;
     }
     const r = await res.json();
-    showToast(`✓ Cleared ${r.cleared} ack-snooze${r.cleared === 1 ? "" : "s"}`, "success", 3000);
+    notifySuccess(tr("inhib.ack_cleared", { count: r.cleared }), { durationMs: 3000 });
     loadAcks();
   } catch (e) {
     notifyError("ack-clear", e);
@@ -763,7 +763,7 @@ async function saveSchedules() {
     notifyValidationError("schedules", collected.error, status);
     return;
   }
-  status.textContent = tr("status.saving"); status.style.color = "";
+  setInlineStatus(status, tr("status.saving"));
   try {
     const res = await fetch("/api/schedules", {
       method: "POST", headers: {"Content-Type": "application/json"},
@@ -775,10 +775,10 @@ async function saveSchedules() {
       return;
     }
     const r = await res.json();
-    status.textContent = tr("sched.saved", { count: r.count });
-    status.style.color = "var(--green)";
+    const savedMessage = tr("sched.saved", { count: r.count });
     _markTabDirty("inhibitions", false);
     await loadSchedules();
+    notifySuccess(savedMessage, { status });
   } catch (e) {
     notifyError("schedules", e, { status, inlineText: "❌ " + errorText(e) });
   }
@@ -811,9 +811,7 @@ async function clearAllSuppressions() {
       return;
     }
     const r = await res.json();
-    status.textContent = tr("inhib.cleared_all", { count: r.cleared });
-    status.style.color = "var(--green)";
-    setTimeout(() => { status.textContent = ""; }, 3000);
+    notifySuccess(tr("inhib.cleared_all", { count: r.cleared }), { status, clearMs: 3000 });
     await loadInhib();
     if (typeof loadStatusActivity === "function") loadStatusActivity();
   } catch (e) {
@@ -1065,7 +1063,7 @@ async function saveInhibRules() {
     notifyValidationError("inhibition-rules", collected.error, status);
     return;
   }
-  status.textContent = tr("status.saving"); status.style.color = "";
+  setInlineStatus(status, tr("status.saving"));
   try {
     const res = await fetch("/api/inhibition-rules", {
       method: "POST",
@@ -1078,11 +1076,11 @@ async function saveInhibRules() {
       return;
     }
     const r = await res.json();
-    status.textContent = tr("inhib.rules_saved", { count: r.count, cleared: r.cleared_suppressions });
-    status.style.color = "#81c784";
+    const savedMessage = tr("inhib.rules_saved", { count: r.count, cleared: r.cleared_suppressions });
     _markTabDirty("inhibitions", false);
     await loadInhibRules();
     await loadInhib();
+    notifySuccess(savedMessage, { status });
   } catch (e) {
     notifyError("inhibition-rules", e, { status, inlineText: "❌ " + errorText(e) });
   }
@@ -1427,8 +1425,7 @@ $("#btn-rc-save").addEventListener("click", async () => {
   });
   try {
     const r = await J("/api/render-config", { method: "POST", body: JSON.stringify({component_dashboards: out}), headers: {"Content-Type": "application/json"} });
-    $("#rc-status").textContent = tr("render.saved_mappings", { count: r.count });
-    setTimeout(() => $("#rc-status").textContent = "", 3000);
+    notifySuccess(tr("render.saved_mappings", { count: r.count }), { status: "#rc-status", clearMs: 3000 });
     _markTabDirty("render", false);
     rcData = out;
     populateTestComponentSelect();
@@ -1690,8 +1687,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
     if (!name) return;  // skip empty rows on save (use Delete instead)
     out.push({ name, token: tokenRaw, handles });
   });
-  $("#ntfy-topics-status").textContent = tr("status.saving");
-  $("#ntfy-topics-status").style.color = "";
+  setInlineStatus("#ntfy-topics-status", tr("status.saving"));
   try {
     const r = await fetch("/api/ntfy-topics", {
       method: "POST",
@@ -1704,11 +1700,10 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
       return;
     }
     const j = await r.json();
-    $("#ntfy-topics-status").style.color = "#2c8a47";
-    $("#ntfy-topics-status").textContent = tr("routing.saved_topics", {
+    notifySuccess(tr("routing.saved_topics", {
       count: j.topics.length,
       severities: (j.known_severities || []).filter(s => s !== "resolved").join(", ")
-    });
+    }), { status: "#ntfy-topics-status" });
     _markTabDirty("routing", false);
     // Reload to refresh badges
     setTimeout(() => loadNtfyTopics(), 500);
@@ -1755,8 +1750,7 @@ $("#btn-routing-save").addEventListener("click", async () => {
   };
   try {
     await J("/api/channel-config", { method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" } });
-    $("#routing-msg").textContent = tr("routing.saved");
-    setTimeout(() => $("#routing-msg").textContent = "", 4000);
+    notifySuccess(tr("routing.saved"), { status: "#routing-msg", clearMs: 4000 });
     _markTabDirty("routing", false);
     loadStatus();
   } catch (e) { notifyError("routing-save", e, { status: "#routing-msg" }); }
@@ -1803,7 +1797,7 @@ async function _ingestAuthAction(src, action) {
   if (action === "set") {
     const sec = prompt(`Paste the secret to use for source "${src}":\n\n(min 16 chars; will be shown to emitter ONCE here)`);
     if (!sec) return;
-    if (sec.length < 16) { showToast("Secret must be ≥16 chars", "error"); return; }
+    if (sec.length < 16) { notifyError(`ingest-auth-${action}`, new Error(tr("ingest.secret_too_short"))); return; }
     body.secret = sec;
   }
   if (action === "clear") {
@@ -1827,8 +1821,9 @@ async function _ingestAuthAction(src, action) {
         `✓ Secret generated for source "${src}".\n\nCopy it now and paste it into the emitter configuration — it WON'T be shown again. (klaxond stores only this value; once you close this dialog you can't retrieve it from the UI.)`,
         r.secret
       );
+      notifySuccess(tr("ingest.generated", { source: src }), { durationMs: 4000 });
     } else {
-      showToast(`✓ Ingest-auth ${action} OK for ${src}`, "success", 4000);
+      notifySuccess(tr("ingest.action_ok", { action, source: src }), { durationMs: 4000 });
     }
     loadIngestAuth();
   } catch (e) {
@@ -1908,8 +1903,7 @@ $("#btn-cas-save").addEventListener("click", async () => {
       body: JSON.stringify({ tiers, default_enabled_for_webhook: $("#cas-default").checked }),
       headers: { "Content-Type": "application/json" }
     });
-    $("#cas-status").textContent = tr("cascade.saved", { count: tiers.length });
-    setTimeout(() => $("#cas-status").textContent = "", 3000);
+    notifySuccess(tr("cascade.saved", { count: tiers.length }), { status: "#cas-status", clearMs: 3000 });
     _markTabDirty("cascade", false);
     loadStatus();
   } catch (e) { notifyError("cascade-save", e, { status: "#cas-status" }); }
@@ -2048,8 +2042,10 @@ $("#btn-delivery-save").addEventListener("click", async () => {
       body: JSON.stringify(payload),
       headers: { "Content-Type": "application/json" }
     });
-    $("#delivery-status").textContent = tr("delivery.saved", { policies: policies.length, rules: rules.length });
-    setTimeout(() => $("#delivery-status").textContent = "", 4000);
+    notifySuccess(tr("delivery.saved", { policies: policies.length, rules: rules.length }), {
+      status: "#delivery-status",
+      clearMs: 4000,
+    });
     _markTabDirty("delivery", false);
   } catch (e) { notifyError("delivery-save", e, { status: "#delivery-status" }); }
 });
@@ -2136,7 +2132,7 @@ $("#dedup-save")?.addEventListener("click", async () => {
       override_critical: card.querySelector(".d-override").checked,
     };
   }
-  $("#dedup-status").textContent = tr("status.saving");
+  setInlineStatus("#dedup-status", tr("status.saving"));
   try {
     const r = await J("/api/dedup-config", {
       method: "POST",
@@ -2145,8 +2141,7 @@ $("#dedup-save")?.addEventListener("click", async () => {
     });
     if (r.ok) {
       dedupData.settings = r.settings;
-      $("#dedup-status").textContent = tr("dedup.saved");
-      setTimeout(() => { $("#dedup-status").textContent = ""; }, 3000);
+      notifySuccess(tr("dedup.saved"), { status: "#dedup-status", clearMs: 3000 });
       _markTabDirty("grouping", false);
     } else {
       notifyError("dedup-save", new Error(r.error || "unknown"), { status: "#dedup-status" });
@@ -2396,7 +2391,7 @@ $("#auth-save")?.addEventListener("click", async () => {
       rp_id: $("#auth-webauthn-rp-id").value.trim(),
     },
   };
-  $("#auth-status").textContent = tr("status.saving");
+  setInlineStatus("#auth-status", tr("status.saving"));
   try {
     const r = await J("/api/auth-config", {
       method: "POST",
@@ -2404,7 +2399,7 @@ $("#auth-save")?.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
     });
     if (r.ok) {
-      $("#auth-status").textContent = tr("auth.saved", { mode: r.settings.mode });
+      notifySuccess(tr("auth.saved", { mode: r.settings.mode }), { status: "#auth-status" });
       _markTabDirty("auth", false);
       authData.settings = r.settings;
       _showSubcard(r.settings.mode);
@@ -2425,7 +2420,7 @@ async function createAuthToken() {
     expires_in_days: parseInt($("#token-expires-days").value, 10) || null,
     scopes: selectedTokenScopes(),
   };
-  status.textContent = tr("status.saving");
+  setInlineStatus(status, tr("status.saving"));
   try {
     const r = await J("/api/auth/tokens", {
       method: "POST",
@@ -2435,8 +2430,8 @@ async function createAuthToken() {
     const once = $("#token-once");
     once.classList.remove("hidden");
     once.textContent = tr("auth.token_once") + "\n" + r.token;
-    status.textContent = tr("auth.token_created");
     await loadAuth();
+    notifySuccess(tr("auth.token_created"), { status });
   } catch (e) {
     notifyError("auth-token-create", e, { status });
   }
@@ -2451,6 +2446,7 @@ async function revokeAuthToken(id) {
       headers: {"Content-Type": "application/json"},
     });
     await loadAuth();
+    notifySuccess(tr("auth.token_revoked"), { status: "#token-status", clearMs: 3000 });
   } catch (e) {
     notifyError("auth-token-revoke", e, { status: "#token-status" });
   }
@@ -2462,7 +2458,7 @@ async function registerPasskey() {
     return;
   }
   const status = $("#passkey-status");
-  status.textContent = tr("status.saving");
+  setInlineStatus(status, tr("status.saving"));
   try {
     const start = await J("/api/auth/passkeys/register/start", {
       method: "POST",
@@ -2475,8 +2471,8 @@ async function registerPasskey() {
       body: JSON.stringify({ request_id: start.request_id, credential: webauthnCreatePayload(credential) }),
       headers: {"Content-Type": "application/json"},
     });
-    status.textContent = tr("auth.passkey_registered");
     await loadAuth();
+    notifySuccess(tr("auth.passkey_registered"), { status });
   } catch (e) {
     notifyError("passkey-register", e, { status });
   }
@@ -2491,6 +2487,7 @@ async function deletePasskey(id) {
       headers: {"Content-Type": "application/json"},
     });
     await loadAuth();
+    notifySuccess(tr("auth.passkey_deleted"), { status: "#passkey-status", clearMs: 3000 });
   } catch (e) {
     notifyError("passkey-delete", e, { status: "#passkey-status" });
   }
@@ -2903,13 +2900,37 @@ function errorText(e) {
   return e.message || String(e);
 }
 
-function setInlineStatus(target, text, kind = "") {
-  const el = typeof target === "string" ? $(target) : target;
+function statusElement(target) {
+  return typeof target === "string" ? $(target) : target;
+}
+
+function setInlineStatus(target, text, opts = {}) {
+  const el = statusElement(target);
   if (!el) return;
+  const options = typeof opts === "string" ? { kind: opts } : opts;
+  const kind = options.kind || "";
   el.textContent = text;
-  if (kind === "error") el.style.color = "var(--red)";
+  if (options.color !== undefined) el.style.color = options.color;
+  else if (kind === "error") el.style.color = "var(--red)";
   else if (kind === "success") el.style.color = "var(--green)";
   else el.style.color = "";
+  if (options.clearMs) {
+    setTimeout(() => {
+      if (el.textContent === text) el.textContent = "";
+    }, options.clearMs);
+  }
+}
+
+function notifySuccess(message, opts = {}) {
+  const text = message || tr("status.saved");
+  if (opts.status) {
+    setInlineStatus(opts.status, opts.inlineText || text, {
+      kind: "success",
+      clearMs: opts.clearMs,
+      color: opts.color,
+    });
+  }
+  showToast(text, "success", opts.durationMs || 4000);
 }
 
 function notifyError(key, e, opts = {}) {

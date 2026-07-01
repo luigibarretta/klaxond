@@ -185,6 +185,47 @@ test("save errors show both inline status and toast", async ({ page }) => {
   await expect(page.locator(".toast-error")).toContainText("render-config-save");
 });
 
+test("save successes show both inline status and toast", async ({ page }) => {
+  await page.goto("/ui/render");
+  await page.click("#btn-rc-save");
+  await expect(page.locator("#rc-status")).toContainText("Saved");
+  await expect(page.locator(".toast-success").last()).toContainText("Saved");
+});
+
+test("reload-backed editor saves keep inline success visible", async ({ page }) => {
+  await page.route("**/api/schedules", async route => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0 }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+  await page.route("**/api/inhibition-rules", async route => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ count: 0, cleared_suppressions: 0 }),
+      });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/ui/inhibitions");
+  await page.click("#sched-save");
+  await expect(page.locator("#sched-save-status")).toContainText("Saved");
+  await expect(page.locator(".toast-success").last()).toContainText("Saved");
+
+  await page.click("#inhib-save");
+  await expect(page.locator("#inhib-save-status")).toContainText("Saved");
+  await expect(page.locator(".toast-success").last()).toContainText("Saved");
+});
+
 test("inhibition applies-to checkboxes stay compact and aligned", async ({ page }) => {
   await page.goto("/ui/inhibitions");
   const firstCheckbox = page.locator('#t-inhib-rules [data-k="applies_to"] input[type="checkbox"]').first();

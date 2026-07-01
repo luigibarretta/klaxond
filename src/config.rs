@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.2";
+pub const VERSION: &str = "0.14.3";
 pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",
