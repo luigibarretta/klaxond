@@ -11,9 +11,34 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
   await expect(page.locator('[data-tab="logs"]')).toBeVisible();
   await expect(page.locator('[data-tab="preview"]')).toBeVisible();
+  await expect(page.locator(".brand-logo")).toBeVisible();
+  await expect(page.locator(".brand-name")).toHaveText("klaxond");
+  await expect(page.locator('[data-tab="status"] .tab-icon')).toBeVisible();
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Status");
+  await expect(page.locator('[data-language-option="it"]')).toBeVisible();
+  await expect(page.locator('[data-theme-mode-option="system"]')).toBeVisible();
   await expect(page.locator("#sidebar-user-card")).toBeVisible();
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      setTabBadge: (tabId: string, count: number, kind?: string) => void;
+      _markTabDirty: (tabId: string, dirty?: boolean) => void;
+    };
+    w.setTabBadge("logs", 7, "warn");
+    w._markTabDirty("routing", true);
+  });
   await page.click("#sidebar-toggle");
   await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await expect(page.locator(".brand-logo")).toBeVisible();
+  await expect(page.locator(".brand-name")).toBeHidden();
+  await expect(page.locator('[data-tab="status"] .tab-icon')).toBeVisible();
+  await expect(page.locator('[data-tab="status"] .tab-label')).toBeHidden();
+  await expect(page.locator('[data-tab="logs"] .tab-badge')).toBeVisible();
+  await expect(page.locator('[data-tab="logs"] .tab-badge')).toHaveText("7");
+  await expect(page.locator('[data-tab="logs"]')).toHaveAttribute("aria-label", /Logs, 7 active indicator/);
+  await expect(page.locator('[data-tab="routing"] .tab-dirty')).toBeVisible();
+  await expect(page.locator('[data-tab="routing"]')).toHaveAttribute("aria-label", /Routing, Unsaved changes/);
+  await expect(page.locator("#sidebar-avatar")).toBeVisible();
+  await expect(page.locator(".sidebar-user-meta")).toBeHidden();
   await page.click("#sidebar-toggle");
   await expect(page.locator("body")).not.toHaveClass(/sidebar-collapsed/);
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
@@ -159,37 +184,41 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
 
-  await page.selectOption("#language-select", "it");
+  await page.click('[data-language-option="it"]');
   await expect(page.locator("html")).toHaveAttribute("lang", "it");
-  await expect(page.locator('[data-tab="status"]')).toHaveText("Stato");
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Stato");
   await expect(page.locator('[data-tab="deliveries"]')).toContainText("Consegne recenti");
   await expect(page).toHaveTitle(/demone notifiche/);
   await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.lang"))).toBe("it");
+  await expect(page.locator('[data-language-option="it"]')).toHaveAttribute("aria-pressed", "true");
 
-  await page.selectOption("#theme-mode", "light");
+  await page.click('[data-theme-mode-option="light"]');
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "light");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(page.locator('[data-theme-mode-option="light"]')).toHaveAttribute("aria-pressed", "true");
 
-  await page.selectOption("#theme-mode", "dark");
+  await page.click('[data-theme-mode-option="dark"]');
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await expect(page.locator('[data-theme-mode-option="dark"]')).toHaveAttribute("aria-pressed", "true");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.themeMode"))).toBe("dark");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.theme"))).toBeNull();
 
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "it");
-  await expect(page.locator('[data-tab="status"]')).toHaveText("Stato");
-  await expect(page.locator("#theme-mode")).toHaveValue("dark");
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Stato");
+  await expect(page.locator('[data-theme-mode-option="dark"]')).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
-  await page.selectOption("#theme-mode", "system");
+  await page.click('[data-theme-mode-option="system"]');
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "system");
   await expect(page.locator("html")).toHaveAttribute("data-theme", /^(light|dark)$/);
 
-  await page.selectOption("#language-select", "en");
+  await page.click('[data-language-option="en"]');
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
-  await expect(page.locator('[data-tab="status"]')).toHaveText("Status");
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Status");
+  await expect(page.locator('[data-language-option="en"]')).toHaveAttribute("aria-pressed", "true");
 });
 
 test("render-preview returns ntfy-compatible headers without delivery", async ({ request }) => {

@@ -34,54 +34,57 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-head">
       <div class="brand-lockup">
-        <h1><span class="dot dot-running"></span> klaxond</h1>
+        <h1>
+          <img class="brand-logo" src="favicon.svg" alt="" aria-hidden="true">
+          <span class="brand-name">klaxond</span>
+        </h1>
         <small id="footer-tag" data-i18n="app.tagline">klaxond — cascade • inhibition • render</small>
       </div>
       <button id="sidebar-toggle" class="icon-btn" data-i18n-title="nav.toggle_sidebar" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
     </div>
 
-    <div class="prefs" aria-label="Preferences">
-      <label class="pref-control">
-        <span data-i18n="prefs.language">Language</span>
-        <select id="language-select" autocomplete="off">
-          <option value="en" data-i18n="lang.en">English</option>
-          <option value="it" data-i18n="lang.it">Italiano</option>
-        </select>
-      </label>
-      <label class="pref-control">
-        <span data-i18n="prefs.theme">Theme</span>
-        <select id="theme-mode" autocomplete="off">
-          <option value="system" data-i18n="theme.system">System</option>
-          <option value="light" data-i18n="theme.light">Light</option>
-          <option value="dark" data-i18n="theme.dark">Dark</option>
-        </select>
-      </label>
-    </div>
-
     <nav class="tabs" aria-label="Main navigation">
       <div class="tab-group" data-group="operations">
         <span class="tab-group-label" data-i18n="nav.operations">Operations</span>
-        <button class="tab active" data-tab="status" data-i18n="tab.status">Status</button>
-        <button class="tab" data-tab="flow" data-i18n="tab.flow">Flow</button>
-        <button class="tab" data-tab="inhibitions" data-i18n="tab.inhibitions">Inhibitions</button>
-        <button class="tab" data-tab="deliveries" data-i18n="tab.deliveries">Recent deliveries</button>
-        <button class="tab" data-tab="logs" data-i18n="tab.logs">Logs</button>
+        <button class="tab active" data-tab="status" data-i18n-title="tab.status" title="Status" aria-label="Status"><span class="tab-icon" aria-hidden="true">●</span><span class="tab-label" data-i18n="tab.status">Status</span></button>
+        <button class="tab" data-tab="flow" data-i18n-title="tab.flow" title="Flow" aria-label="Flow"><span class="tab-icon" aria-hidden="true">↔</span><span class="tab-label" data-i18n="tab.flow">Flow</span></button>
+        <button class="tab" data-tab="inhibitions" data-i18n-title="tab.inhibitions" title="Inhibitions" aria-label="Inhibitions"><span class="tab-icon" aria-hidden="true">⊘</span><span class="tab-label" data-i18n="tab.inhibitions">Inhibitions</span></button>
+        <button class="tab" data-tab="deliveries" data-i18n-title="tab.deliveries" title="Recent deliveries" aria-label="Recent deliveries"><span class="tab-icon" aria-hidden="true">⇢</span><span class="tab-label" data-i18n="tab.deliveries">Recent deliveries</span></button>
+        <button class="tab" data-tab="logs" data-i18n-title="tab.logs" title="Logs" aria-label="Logs"><span class="tab-icon" aria-hidden="true">≡</span><span class="tab-label" data-i18n="tab.logs">Logs</span></button>
       </div>
       <div class="tab-group" data-group="settings">
         <span class="tab-group-label" data-i18n="nav.settings">Settings</span>
-        <button class="tab" data-tab="render" data-i18n="tab.render">Render config</button>
-        <button class="tab" data-tab="routing" data-i18n="tab.routing">Routing</button>
-        <button class="tab" data-tab="cascade" data-i18n="tab.cascade">Cascade</button>
-        <button class="tab" data-tab="delivery" data-i18n="tab.delivery">Delivery rules</button>
-        <button class="tab" data-tab="grouping" data-i18n="tab.grouping">Grouping</button>
-        <button class="tab" data-tab="auth" data-i18n="tab.auth">Authentication</button>
+        <button class="tab" data-tab="render" data-i18n-title="tab.render" title="Render config" aria-label="Render config"><span class="tab-icon" aria-hidden="true">▣</span><span class="tab-label" data-i18n="tab.render">Render config</span></button>
+        <button class="tab" data-tab="routing" data-i18n-title="tab.routing" title="Routing" aria-label="Routing"><span class="tab-icon" aria-hidden="true">⎇</span><span class="tab-label" data-i18n="tab.routing">Routing</span></button>
+        <button class="tab" data-tab="cascade" data-i18n-title="tab.cascade" title="Cascade" aria-label="Cascade"><span class="tab-icon" aria-hidden="true">⇣</span><span class="tab-label" data-i18n="tab.cascade">Cascade</span></button>
+        <button class="tab" data-tab="delivery" data-i18n-title="tab.delivery" title="Delivery rules" aria-label="Delivery rules"><span class="tab-icon" aria-hidden="true">▤</span><span class="tab-label" data-i18n="tab.delivery">Delivery rules</span></button>
+        <button class="tab" data-tab="grouping" data-i18n-title="tab.grouping" title="Grouping" aria-label="Grouping"><span class="tab-icon" aria-hidden="true">∑</span><span class="tab-label" data-i18n="tab.grouping">Grouping</span></button>
+        <button class="tab" data-tab="auth" data-i18n-title="tab.auth" title="Authentication" aria-label="Authentication"><span class="tab-icon" aria-hidden="true">⌑</span><span class="tab-label" data-i18n="tab.auth">Authentication</span></button>
       </div>
       <div class="tab-group" data-group="tools">
         <span class="tab-group-label" data-i18n="nav.tools">Tools</span>
-        <button class="tab" data-tab="preview" data-i18n="tab.preview">Render preview</button>
-        <button class="tab" data-tab="test" data-i18n="tab.test">Send test</button>
+        <button class="tab" data-tab="preview" data-i18n-title="tab.preview" title="Render preview" aria-label="Render preview"><span class="tab-icon" aria-hidden="true">◉</span><span class="tab-label" data-i18n="tab.preview">Render preview</span></button>
+        <button class="tab" data-tab="test" data-i18n-title="tab.test" title="Send test" aria-label="Send test"><span class="tab-icon" aria-hidden="true">✓</span><span class="tab-label" data-i18n="tab.test">Send test</span></button>
       </div>
     </nav>
+
+    <div class="prefs" aria-label="Preferences">
+      <div class="pref-control">
+        <span class="pref-label" data-i18n="prefs.language">Language</span>
+        <div class="segmented-control" role="group" data-i18n-aria-label="prefs.language" aria-label="Language">
+          <button type="button" class="seg-btn" data-language-option="it" aria-pressed="false">IT</button>
+          <button type="button" class="seg-btn" data-language-option="en" aria-pressed="true">EN</button>
+        </div>
+      </div>
+      <div class="pref-control">
+        <span class="pref-label" data-i18n="prefs.theme">Theme</span>
+        <div class="segmented-control theme-segment" role="group" data-i18n-aria-label="prefs.theme" aria-label="Theme">
+          <button type="button" class="seg-btn icon-seg" data-theme-mode-option="system" data-i18n-title="theme.system" title="System" aria-label="System" aria-pressed="true"><span aria-hidden="true">◐</span></button>
+          <button type="button" class="seg-btn icon-seg" data-theme-mode-option="light" data-i18n-title="theme.light" title="Light" aria-label="Light" aria-pressed="false"><span aria-hidden="true">☼</span></button>
+          <button type="button" class="seg-btn icon-seg" data-theme-mode-option="dark" data-i18n-title="theme.dark" title="Dark" aria-label="Dark" aria-pressed="false"><span aria-hidden="true">☾</span></button>
+        </div>
+      </div>
+    </div>
 
     <div class="sidebar-user" id="sidebar-user-card">
       <div class="sidebar-avatar" id="sidebar-avatar">?</div>
@@ -757,7 +760,7 @@
     </main>
 
     <footer>
-      <small>klaxond · <span id="footer-version" class="muted">v0.14.0</span></small>
+      <small>klaxond · <span id="footer-version" class="muted">v0.14.1</span></small>
     </footer>
   </div>
 </div>

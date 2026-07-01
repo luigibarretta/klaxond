@@ -1,5 +1,16 @@
 # Klaxond — CHANGELOG
 
+## 0.14.1 — 2026-07-01
+
+- Rifinita la sidebar: brand con logo, nome nascosto in collapsed e icone per
+  ogni voce menu, che restano l'unico elemento visibile della voce collassata.
+- Spostati i controlli lingua/tema sotto alla navigazione, sopra alla card
+  utente, con lingua IT/EN e tema system/light/dark come tab button.
+- Resa la card utente collassata solo-avatar e corretta la vista mobile
+  collassata per mantenere logo e hamburger pienamente visibili.
+- Conservati badge conteggio e dot dirty come overlay in sidebar collassata,
+  con aria-label dinamici che includono conteggi e modifiche non salvate.
+
 ## 0.14.0 — 2026-07-01
 
 - Sostituita la top navigation con una sidebar responsive e collassabile,

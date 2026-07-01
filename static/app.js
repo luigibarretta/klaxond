@@ -41,6 +41,27 @@ function _onTabActivated(tabId) {
   } catch (e) { setTimeout(() => notifyError(`tab-${tabId}`, e), 0); }
 }
 
+function tabBaseLabel(tab) {
+  const key = tab?.dataset?.i18nTitle;
+  if (key) return tr(key);
+  return tab?.querySelector(".tab-label")?.textContent?.trim() || tab?.textContent?.trim() || "";
+}
+
+function updateTabAccessibleLabel(tab) {
+  if (!tab) return;
+  const parts = [tabBaseLabel(tab)];
+  const badge = tab.querySelector(".tab-badge");
+  if (badge?.textContent?.trim()) {
+    parts.push(tr("tab.badge_count", { count: badge.textContent.trim() }));
+  }
+  if (tab.querySelector(".tab-dirty")) parts.push(tr("shortcut.unsaved"));
+  tab.setAttribute("aria-label", parts.filter(Boolean).join(", "));
+}
+
+function updateAllTabAccessibleLabels() {
+  document.querySelectorAll(".tab").forEach(updateTabAccessibleLabel);
+}
+
 function syncTabFromHash() {
   const h = (location.hash || "").replace(/^#/, "");
   if (h && activateTab(h)) return;
@@ -55,6 +76,11 @@ $$(".tab").forEach(t => {
 
 window.addEventListener("hashchange", syncTabFromHash);
 syncTabFromHash();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", updateAllTabAccessibleLabels);
+} else {
+  updateAllTabAccessibleLabels();
+}
 
 // ---- Status ----
 async function loadStatus() {
@@ -114,6 +140,7 @@ function setTabBadge(tabId, count, kind = "") {
   let badge = tab.querySelector(".tab-badge");
   if (!count || count <= 0) {
     if (badge) badge.remove();
+    updateTabAccessibleLabel(tab);
     return;
   }
   if (!badge) {
@@ -123,6 +150,7 @@ function setTabBadge(tabId, count, kind = "") {
   }
   badge.className = "tab-badge" + (kind ? " " + kind : "");
   badge.textContent = count > 99 ? "99+" : String(count);
+  updateTabAccessibleLabel(tab);
 }
 
 function displayUserName(user = {}) {
@@ -2752,6 +2780,7 @@ refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
 
 document.addEventListener("klaxond:languagechange", () => {
+  updateAllTabAccessibleLabels();
   loadStatus();
   loadConfigBackups();
   renderDeliv();
@@ -2879,6 +2908,7 @@ function _markTabDirty(tabId, dirty = true) {
   } else if (!dirty && dot) {
     dot.remove();
   }
+  updateTabAccessibleLabel(tab);
 }
 
 // Bind change/input listeners to every form field inside each tabpane so

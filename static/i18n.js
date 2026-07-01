@@ -36,6 +36,7 @@
       "tab.auth": "Authentication",
       "tab.preview": "Render preview",
       "tab.test": "Send test",
+      "tab.badge_count": "{count} active indicator(s)",
 
       "common.actions": "Actions",
       "common.applies_to": "Applies to",
@@ -479,6 +480,7 @@
       "tab.auth": "Autenticazione",
       "tab.preview": "Anteprima rendering",
       "tab.test": "Invia test",
+      "tab.badge_count": "{count} indicatori attivi",
 
       "common.actions": "Azioni",
       "common.applies_to": "Si applica a",
@@ -955,9 +957,17 @@
       el.setAttribute("title", text);
       if (el.hasAttribute("aria-label")) el.setAttribute("aria-label", text);
     });
+    document.querySelectorAll("[data-i18n-aria-label]").forEach(el => {
+      el.setAttribute("aria-label", t(el.dataset.i18nAriaLabel));
+    });
 
     const select = document.getElementById("language-select");
     if (select) select.value = next;
+    document.querySelectorAll("[data-language-option]").forEach(btn => {
+      const active = normalizeLang(btn.dataset.languageOption) === next;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
   }
 
   function setLanguage(lang) {
@@ -998,6 +1008,11 @@
     document.documentElement.style.colorScheme = theme;
     const select = document.getElementById("theme-mode");
     if (select) select.value = next;
+    document.querySelectorAll("[data-theme-mode-option]").forEach(btn => {
+      const active = normalizeThemeMode(btn.dataset.themeModeOption) === next;
+      btn.classList.toggle("active", active);
+      btn.setAttribute("aria-pressed", active ? "true" : "false");
+    });
   }
 
   function setThemeMode(mode) {
@@ -1018,6 +1033,12 @@
 
     document.getElementById("language-select")?.addEventListener("change", e => setLanguage(e.target.value));
     document.getElementById("theme-mode")?.addEventListener("change", e => setThemeMode(e.target.value));
+    document.querySelectorAll("[data-language-option]").forEach(btn => {
+      btn.addEventListener("click", () => setLanguage(btn.dataset.languageOption));
+    });
+    document.querySelectorAll("[data-theme-mode-option]").forEach(btn => {
+      btn.addEventListener("click", () => setThemeMode(btn.dataset.themeModeOption));
+    });
 
     try {
       const media = window.matchMedia("(prefers-color-scheme: light)");
