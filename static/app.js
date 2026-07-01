@@ -11,7 +11,18 @@ const J = async (url, opts) => {
 };
 const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key, vars) : key;
 
-// ---- Tab switching (with URL hash routing) ----
+// ---- Tab switching (with URL path routing) ----
+const UI_TABS = new Set(Array.from(document.querySelectorAll(".tab[data-tab]"), t => t.dataset.tab));
+const DEFAULT_TAB = "status";
+
+function isKnownTab(tabId) {
+  return UI_TABS.has(tabId);
+}
+
+function canonicalUiPath(tabId) {
+  return `/ui/${isKnownTab(tabId) ? tabId : DEFAULT_TAB}`;
+}
+
 function activateTab(tabId) {
   $$(".tab").forEach(x => x.classList.remove("active"));
   $$(".tabpane").forEach(x => x.classList.remove("active"));
@@ -26,7 +37,7 @@ function activateTab(tabId) {
   return false;
 }
 
-// Per-tab initializer hook — called on EVERY activation (click OR hash route).
+// Per-tab initializer hook — called on EVERY activation (click OR path route).
 // Loaders are idempotent (re-fetching is cheap). Add `case` here for new tabs.
 function _onTabActivated(tabId) {
   try {
@@ -62,20 +73,68 @@ function updateAllTabAccessibleLabels() {
   document.querySelectorAll(".tab").forEach(updateTabAccessibleLabel);
 }
 
-function syncTabFromHash() {
-  const h = (location.hash || "").replace(/^#/, "");
-  if (h && activateTab(h)) return;
-  activateTab("status");  // default
+function tabFromLocation() {
+  const legacyHash = (location.hash || "").replace(/^#/, "");
+  if (isKnownTab(legacyHash)) return { tabId: legacyHash, canonicalize: true };
+
+  const pathname = location.pathname.replace(/\/+$/, "") || "/";
+  if (pathname === "/" || pathname === "/ui" || pathname === "/ui/index.html") {
+    return { tabId: DEFAULT_TAB, canonicalize: true };
+  }
+
+  const match = pathname.match(/^\/ui\/([^/]+)$/);
+  if (match && isKnownTab(match[1])) {
+    return { tabId: match[1], canonicalize: pathname !== canonicalUiPath(match[1]) || !!location.hash };
+  }
+
+  return { tabId: DEFAULT_TAB, canonicalize: true };
+}
+
+function syncTabFromPath({ replace = false } = {}) {
+  const { tabId, canonicalize } = tabFromLocation();
+  const ok = (window.activateTab || activateTab)(tabId);
+  if (!ok) {
+    const active = document.querySelector(".tabpane.active");
+    const activeId = active ? active.id.replace(/^tab-/, "") : DEFAULT_TAB;
+    history.replaceState({ tabId: activeId }, "", canonicalUiPath(activeId));
+    return false;
+  }
+  if (ok && (replace || canonicalize)) {
+    history.replaceState({ tabId }, "", canonicalUiPath(tabId));
+  }
+  return ok;
+}
+
+function navigateToTab(tabId, { replace = false } = {}) {
+  if (!isKnownTab(tabId)) return false;
+  if (!(window.activateTab || activateTab)(tabId)) return false;
+  const url = canonicalUiPath(tabId);
+  if (location.pathname !== url || location.hash) {
+    history[replace ? "replaceState" : "pushState"]({ tabId }, "", url);
+  }
+  return true;
 }
 
 $$(".tab").forEach(t => {
-  t.addEventListener("click", () => {
-    location.hash = "#" + t.dataset.tab;  // triggers hashchange
+  t.addEventListener("click", e => {
+    e.preventDefault();
+    navigateToTab(t.dataset.tab);
   });
 });
 
-window.addEventListener("hashchange", syncTabFromHash);
-syncTabFromHash();
+document.addEventListener("click", e => {
+  const link = e.target.closest?.('a[href^="/ui/"]');
+  if (!link || link.target || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const url = new URL(link.href);
+  if (url.origin !== location.origin) return;
+  const tabId = url.pathname.replace(/^\/ui\//, "").replace(/\/+$/, "");
+  if (!isKnownTab(tabId)) return;
+  e.preventDefault();
+  navigateToTab(tabId);
+});
+
+window.addEventListener("popstate", () => syncTabFromPath());
+syncTabFromPath({ replace: true });
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", updateAllTabAccessibleLabels);
 } else {
@@ -2453,14 +2512,9 @@ document.querySelectorAll('[data-tab="routing"]').forEach(btn => {
 // Stats overlay reads /api/deliveries (24h window).
 
 // Make tab-switcher callable from outside (mermaid click handlers).
-// Use the existing tab button's click handler so location.hash stays in sync
-// with the active pane — direct DOM manipulation would leave URL stale and
-// break subsequent tab navigation (clicking the same hash = no hashchange).
+// Use the SPA router so the path stays in sync with the active pane.
 function switchToTab(name) {
-  const btn = document.querySelector(`.tab[data-tab="${name}"]`);
-  if (btn) {
-    btn.click();  // delegates to the existing hashchange-aware handler
-  } else {
+  if (!navigateToTab(name)) {
     // Fallback: direct DOM update if the button doesn't exist (defensive)
     document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
     document.querySelectorAll(".tabpane").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));

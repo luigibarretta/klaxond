@@ -99,7 +99,7 @@ async fn handle_get(
     match path {
         "/healthz" => text(StatusCode::OK, "OK"),
         "/metrics" => metrics_response(state),
-        "/" | "/ui" | "/ui/" => redirect("/ui/index.html"),
+        "/" | "/ui" | "/ui/" => redirect("/ui/status"),
         "/inhibitions" | "/api/inhibitions" => json_response(inhibition::inhibition_status(state)),
         "/api/status" => json_response(status_payload(state).await),
         "/api/deliveries" => json_response(state.recent_deliveries()),
@@ -239,7 +239,7 @@ async fn handle_get(
         })),
         "/auth/passkey" | "/auth/passkey/" => passkey_login_page(),
         _ if path.starts_with("/img/") => image_response(state, path),
-        _ if path.starts_with("/ui/") => static_response(state, path.trim_start_matches("/ui/")),
+        _ if path.starts_with("/ui/") => ui_response(state, path.trim_start_matches("/ui/")),
         _ if path.starts_with("/api/ack/") => ack_response(state, path),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
@@ -1509,13 +1509,13 @@ fn passkey_login_page() -> Response<Body> {
 <body><main class="passkey-login"><section class="card"><h1>klaxond</h1><h2>Passkey login</h2>
 <label>User, email or subject <input id="user" autocomplete="username webauthn"></label>
 <button id="login" class="primary">Use passkey</button><p id="status" class="muted"></p>
-<p><a href="/ui/index.html">Back to UI</a></p></section></main>
+<p><a href="/ui/status">Back to UI</a></p></section></main>
 <script>
 const b64uToBuf=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');s+='==='.slice((s.length+3)%4);const b=atob(s);const a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a.buffer};
 const bufToB64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 function publicKeyGetOptions(pk){pk.challenge=b64uToBuf(pk.challenge);(pk.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));return pk}
 function credentialGetPayload(c){return {id:c.id,rawId:bufToB64u(c.rawId),type:c.type,response:{authenticatorData:bufToB64u(c.response.authenticatorData),clientDataJSON:bufToB64u(c.response.clientDataJSON),signature:bufToB64u(c.response.signature),userHandle:c.response.userHandle?bufToB64u(c.response.userHandle):null},extensions:c.getClientExtensionResults?c.getClientExtensionResults():{}}}
-document.getElementById('login').onclick=async()=>{const s=document.getElementById('status');try{const user=document.getElementById('user').value.trim();const a=await fetch('/auth/passkey/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});if(!a.ok)throw new Error(await a.text());const ch=await a.json();const cred=await navigator.credentials.get({publicKey:publicKeyGetOptions(ch.publicKey)});const f=await fetch('/auth/passkey/finish',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request_id:ch.request_id,credential:credentialGetPayload(cred)})});if(!f.ok)throw new Error(await f.text());location.href='/ui/index.html'}catch(e){s.textContent=e.message||String(e);s.style.color='var(--red)'}};
+document.getElementById('login').onclick=async()=>{const s=document.getElementById('status');try{const user=document.getElementById('user').value.trim();const a=await fetch('/auth/passkey/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});if(!a.ok)throw new Error(await a.text());const ch=await a.json();const cred=await navigator.credentials.get({publicKey:publicKeyGetOptions(ch.publicKey)});const f=await fetch('/auth/passkey/finish',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request_id:ch.request_id,credential:credentialGetPayload(cred)})});if(!f.ok)throw new Error(await f.text());location.href='/ui/status'}catch(e){s.textContent=e.message||String(e);s.style.color='var(--red)'}};
 </script></body></html>"#;
     Response::builder()
         .status(StatusCode::OK)
@@ -2436,13 +2436,42 @@ fn image_response(state: &AppState, path: &str) -> Response<Body> {
         .unwrap()
 }
 
-fn static_response(state: &AppState, rel: &str) -> Response<Body> {
-    let safe = rel
+const UI_ROUTES: &[&str] = &[
+    "status",
+    "flow",
+    "inhibitions",
+    "deliveries",
+    "logs",
+    "render",
+    "routing",
+    "cascade",
+    "delivery",
+    "grouping",
+    "auth",
+    "preview",
+    "test",
+];
+
+fn sanitize_static_rel(rel: &str) -> String {
+    rel
         .trim_start_matches('/')
         .split('/')
         .filter(|p| *p != "..")
         .collect::<Vec<_>>()
-        .join("/");
+        .join("/")
+}
+
+fn ui_response(state: &AppState, rel: &str) -> Response<Body> {
+    let safe = sanitize_static_rel(rel);
+    let route = safe.trim_matches('/');
+    if route.is_empty() || route == "index.html" || UI_ROUTES.contains(&route) {
+        return static_response(state, "index.html");
+    }
+    static_response(state, &safe)
+}
+
+fn static_response(state: &AppState, rel: &str) -> Response<Body> {
+    let safe = sanitize_static_rel(rel);
     let full = state
         .paths
         .static_dir

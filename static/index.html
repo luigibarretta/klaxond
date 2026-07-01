@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark light">
 <title>klaxond — notification daemon</title>
-<link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="style.css">
+<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
+<link rel="stylesheet" href="/ui/style.css">
 <script>
   // Inline preferences bootstrap — runs before deferred scripts to avoid a
   // flash of the wrong theme and expose the preferred language early.
@@ -35,7 +35,7 @@
     <div class="sidebar-head">
       <div class="brand-lockup">
         <h1>
-          <img class="brand-logo" src="favicon.svg" alt="" aria-hidden="true">
+          <img class="brand-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
           <span class="brand-name">klaxond</span>
         </h1>
         <small id="footer-tag" data-i18n="app.tagline">klaxond — cascade • inhibition • render</small>
@@ -117,18 +117,18 @@
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.active_suppressions">Active suppressions</div>
       <div class="stat-value" id="stat-suppr-count">—</div>
-      <div class="stat-sub muted"><a href="#inhibitions" id="stat-suppr-link" data-i18n="status.view_inhibitions">View inhibitions →</a></div>
+      <div class="stat-sub muted"><a href="/ui/inhibitions" id="stat-suppr-link" data-i18n="status.view_inhibitions">View inhibitions →</a></div>
     </div>
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.dedup_pending">Dedup pending</div>
       <div class="stat-value" id="stat-dedup-count">—</div>
-      <div class="stat-sub muted"><a href="#grouping" id="stat-dedup-link" data-i18n="status.view_grouping">View grouping →</a></div>
+      <div class="stat-sub muted"><a href="/ui/grouping" id="stat-dedup-link" data-i18n="status.view_grouping">View grouping →</a></div>
     </div>
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.log_buffer">Log buffer</div>
       <div class="stat-value" id="stat-log-retained">—</div>
       <div class="stat-sub muted" id="stat-log-severity">WARN/ERROR: —</div>
-      <div class="stat-sub muted"><a href="#logs" id="stat-log-link" data-i18n="status.view_logs">View logs →</a></div>
+      <div class="stat-sub muted"><a href="/ui/logs" id="stat-log-link" data-i18n="status.view_logs">View logs →</a></div>
     </div>
   </div>
 
@@ -760,7 +760,7 @@
     </main>
 
     <footer>
-      <small>klaxond · <span id="footer-version" class="muted">v0.14.1</span></small>
+      <small>klaxond · <span id="footer-version" class="muted">v0.14.2</span></small>
     </footer>
   </div>
 </div>
@@ -770,8 +770,8 @@
   app.js (also deferred) polls window.mermaid before calling render (see
   _waitForMermaid). 'defer' preserves order: mermaid first, then app.
 -->
-<script src="mermaid.min.js" defer></script>
-<script src="i18n.js" defer></script>
-<script src="app.js" defer></script>
+<script src="/ui/mermaid.min.js" defer></script>
+<script src="/ui/i18n.js" defer></script>
+<script src="/ui/app.js" defer></script>
 </body>
 </html>

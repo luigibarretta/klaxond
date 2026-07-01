@@ -787,8 +787,8 @@ mod tests {
     #[test]
     fn sanitize_return_to_allows_only_local_non_auth_paths() {
         assert_eq!(
-            sanitize_return_to("/ui/index.html#inhibitions"),
-            "/ui/index.html#inhibitions"
+            sanitize_return_to("/ui/inhibitions"),
+            "/ui/inhibitions"
         );
         assert_eq!(sanitize_return_to("https://example.test/"), "/");
         assert_eq!(sanitize_return_to("//example.test/"), "/");

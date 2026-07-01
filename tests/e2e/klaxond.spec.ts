@@ -6,7 +6,7 @@ test("serves health and admin UI", async ({ page, request }) => {
   expect(await health.text()).toBe("OK");
 
   await page.goto("/ui/");
-  await expect(page).toHaveURL(/\/ui\/index\.html$/);
+  await expect(page).toHaveURL(/\/ui\/status$/);
   await expect(page.locator("h1")).toContainText("klaxond");
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
   await expect(page.locator('[data-tab="logs"]')).toBeVisible();
@@ -41,9 +41,32 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator(".sidebar-user-meta")).toBeHidden();
   await page.click("#sidebar-toggle");
   await expect(page.locator("body")).not.toHaveClass(/sidebar-collapsed/);
+  await page.click('[data-tab="deliveries"]');
+  await expect(page).toHaveURL(/\/ui\/deliveries$/);
+  await expect(page.locator("#tab-deliveries")).toHaveClass(/active/);
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
   await expect(page.locator("#stat-log-retained")).toContainText(/\/500/);
   await expect(page.locator("#stat-log-severity")).toContainText(/WARN \d+ \/ ERROR \d+/);
+});
+
+test("legacy hash UI URLs migrate to path routes", async ({ page, request }) => {
+  const tabRoute = await request.get("/ui/deliveries");
+  await expect(tabRoute).toBeOK();
+  expect(await tabRoute.text()).toContain("klaxond");
+
+  const asset = await request.get("/ui/style.css");
+  await expect(asset).toBeOK();
+
+  const missing = await request.get("/ui/not-a-tab");
+  expect(missing.status()).toBe(404);
+
+  await page.goto("/ui/index.html#logs");
+  await expect(page).toHaveURL(/\/ui\/logs$/);
+  await expect(page.locator("#tab-logs")).toHaveClass(/active/);
+
+  await page.goto("/ui/status#deliveries");
+  await expect(page).toHaveURL(/\/ui\/deliveries$/);
+  await expect(page.locator("#tab-deliveries")).toHaveClass(/active/);
 });
 
 test("backend logs page searches captured errors", async ({ page, request }) => {
@@ -61,7 +84,7 @@ test("backend logs page searches captured errors", async ({ page, request }) => 
   expect(payload.entries.length).toBeGreaterThan(0);
   expect(payload.entries[0].message).toContain("webhook auth rejected");
 
-  await page.goto("/ui/index.html#logs");
+  await page.goto("/ui/logs");
   await page.fill("#logs-filter", "auth rejected");
   await page.selectOption("#logs-level", "WARN");
   await expect(page.locator("#t-logs tbody tr").first()).toContainText("webhook auth rejected");
@@ -87,7 +110,7 @@ test("backend logs are paginated in the UI and API", async ({ page, request }) =
   expect(payload.entries.length).toBe(5);
   expect(payload.total).toBeGreaterThanOrEqual(32);
 
-  await page.goto("/ui/index.html#logs");
+  await page.goto("/ui/logs");
   await page.fill("#logs-filter", "auth rejected");
   await page.selectOption("#logs-level", "WARN");
   await page.selectOption("#logs-limit", "25");
@@ -120,7 +143,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
     await expect(res).toBeOK();
   }
 
-  await page.goto("/ui/index.html#deliveries");
+  await page.goto("/ui/deliveries");
   const pager = page.locator('[data-table-pager="t-deliv"]');
   await expect(pager).toBeVisible();
   await page.selectOption('[data-table-pager="t-deliv"] [data-pager-size]', "10");
@@ -135,7 +158,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
 });
 
 test("backend logs fetch failure clears stale count", async ({ page }) => {
-  await page.goto("/ui/index.html#logs");
+  await page.goto("/ui/logs");
   await expect(page.locator("#logs-count")).toContainText(/log line/);
 
   await page.route(/\/api\/logs\?/, async route => {
@@ -156,14 +179,14 @@ test("save errors show both inline status and toast", async ({ page }) => {
     await route.continue();
   });
 
-  await page.goto("/ui/index.html#render");
+  await page.goto("/ui/render");
   await page.click("#btn-rc-save");
   await expect(page.locator("#rc-status")).toContainText("500");
   await expect(page.locator(".toast-error")).toContainText("render-config-save");
 });
 
 test("inhibition applies-to checkboxes stay compact and aligned", async ({ page }) => {
-  await page.goto("/ui/index.html#inhibitions");
+  await page.goto("/ui/inhibitions");
   const firstCheckbox = page.locator('#t-inhib-rules [data-k="applies_to"] input[type="checkbox"]').first();
   await expect(firstCheckbox).toBeVisible();
 
@@ -291,7 +314,7 @@ test("inhibition rule simulator reports source and suppression matches", async (
 });
 
 test("full config export includes TOML sidecars and runtime settings", async ({ page, request }) => {
-  await page.goto("/ui/index.html#status");
+  await page.goto("/ui/status");
   await expect(page.locator("#cfg-backup-download")).toHaveAttribute("href", "/api/config/backup");
   await expect(page.locator("#cfg-full-export-download")).toHaveAttribute("href", "/api/config/export");
 

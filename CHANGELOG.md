@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.14.2 — 2026-07-01
+
+- Migrata la UI da hash routing (`/ui/index.html#deliveries`) a path routing
+  canonico (`/ui/deliveries`, `/ui/logs`, `/ui/auth`, ecc.).
+- Aggiunto fallback server-side per servire l'app su ogni tab path e
+  normalizzazione client-side dei vecchi bookmark con `#`.
+- Aggiornati link interni, passkey redirect e test E2E per non usare piu' URL
+  con frammenti hash.
+
 ## 0.14.1 — 2026-07-01
 
 - Rifinita la sidebar: brand con logo, nome nascosto in collapsed e icone per
