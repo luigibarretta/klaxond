@@ -170,6 +170,23 @@ test("backend logs fetch failure clears stale count", async ({ page }) => {
   await expect(page.locator("#logs-count")).toHaveText("");
 });
 
+test("expired UI session redirects to login without toast storm", async ({ page }) => {
+  await page.route("**/auth/login?**", async route => {
+    await route.fulfill({ status: 200, contentType: "text/html", body: "<title>login</title>" });
+  });
+  await page.route("**/api/status", async route => {
+    await route.fulfill({
+      status: 401,
+      headers: { "X-Klaxond-Login": "/auth/login?return_to=%2Fapi%2Fstatus" },
+      body: "",
+    });
+  });
+
+  await page.goto("/ui/status");
+  await expect(page).toHaveURL(/\/auth\/login\?return_to=%2Fui%2Fstatus/);
+  await expect(page.locator(".toast-error")).toHaveCount(0);
+});
+
 test("save errors show both inline status and toast", async ({ page }) => {
   await page.route("**/api/render-config", async route => {
     if (route.request().method() === "POST") {

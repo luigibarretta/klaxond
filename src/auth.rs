@@ -118,10 +118,21 @@ pub async fn authenticate(
         "trusted-proxy" => authenticate_trusted_proxy(&cfg, headers, peer),
         "oidc" => {
             let location = format!("/auth/login?return_to={}", urlencoding::encode(path));
-            AuthOutcome::Rejected(redirect(&location))
+            if is_ui_fetch(headers) {
+                AuthOutcome::Rejected(auth_required(&location))
+            } else {
+                AuthOutcome::Rejected(redirect(&location))
+            }
         }
         _ => AuthOutcome::Rejected(StatusCode::FORBIDDEN.into_response()),
     }
+}
+
+fn is_ui_fetch(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-klaxond-request")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.eq_ignore_ascii_case("fetch"))
 }
 
 fn authenticate_api_token(
@@ -686,6 +697,15 @@ fn redirect(location: &str) -> Response<Body> {
         .unwrap()
 }
 
+fn auth_required(location: &str) -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("X-Klaxond-Login", location)
+        .header("Cache-Control", "no-store")
+        .body(Body::empty())
+        .unwrap()
+}
+
 async fn oidc_discovery(state: &AppState, issuer: &str) -> anyhow::Result<Value> {
     let url = format!(
         "{}/.well-known/openid-configuration",
@@ -796,6 +816,28 @@ mod tests {
         assert_eq!(sanitize_return_to("/auth/login?return_to=%2F"), "/");
         assert_eq!(sanitize_return_to("/auth"), "/");
         assert_eq!(sanitize_return_to(""), "/");
+    }
+
+    #[test]
+    fn ui_fetch_auth_required_is_machine_readable() {
+        let mut headers = HeaderMap::new();
+        headers.insert("X-Klaxond-Request", HeaderValue::from_static("fetch"));
+        assert!(is_ui_fetch(&headers));
+
+        let resp = auth_required("/auth/login?return_to=%2Fui%2Fstatus");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers()
+                .get("X-Klaxond-Login")
+                .and_then(|v| v.to_str().ok()),
+            Some("/auth/login?return_to=%2Fui%2Fstatus")
+        );
+        assert_eq!(
+            resp.headers()
+                .get("Cache-Control")
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
     }
 
     #[test]

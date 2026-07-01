@@ -1,5 +1,12 @@
 # Klaxond — CHANGELOG
 
+## 0.14.4 — 2026-07-01
+
+- Corretta la gestione delle sessioni UI scadute: le fetch admin ora ricevono
+  un 401 machine-readable e il frontend reindirizza alla login una sola volta.
+- Evitata la cascata di toast `Failed to fetch` prodotta dai poller quando la
+  sessione OIDC scade mentre la pagina resta aperta.
+
 ## 0.14.3 — 2026-07-01
 
 - Centralizzata la gestione dei feedback UI con helper condivisi per status

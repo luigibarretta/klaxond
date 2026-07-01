@@ -3,8 +3,76 @@
 const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
 
+let _authRedirectStarted = false;
+
+class AuthRedirectError extends Error {
+  constructor() {
+    super("auth redirect");
+    this.name = "AuthRedirectError";
+    this.silent = true;
+  }
+}
+
+function isAuthRedirectError(e) {
+  return e?.silent === true || e?.name === "AuthRedirectError";
+}
+
+function currentReturnToPath() {
+  const path = `${location.pathname || "/"}${location.search || ""}`;
+  if (!path || path === "/" || path.startsWith("/auth/")) return "/ui/status";
+  return path;
+}
+
+function loginUrlForCurrentPage(loginHint = "") {
+  const fallback = new URL("/auth/login", location.origin);
+  fallback.searchParams.set("return_to", currentReturnToPath());
+  if (!loginHint) return fallback.pathname + fallback.search;
+  try {
+    const hinted = new URL(loginHint, location.origin);
+    if (hinted.origin !== location.origin || hinted.pathname !== "/auth/login") {
+      return fallback.pathname + fallback.search;
+    }
+    hinted.searchParams.set("return_to", currentReturnToPath());
+    return hinted.pathname + hinted.search;
+  } catch (e) {
+    return fallback.pathname + fallback.search;
+  }
+}
+
+function beginAuthRedirect(loginHint = "") {
+  if (_authRedirectStarted) return;
+  _authRedirectStarted = true;
+  try { showToast(tr("auth.session_expired"), "warn", 2500); } catch (e) {}
+  setTimeout(() => {
+    location.assign(loginUrlForCurrentPage(loginHint));
+  }, 0);
+}
+
+function shouldApiFetch(url) {
+  try {
+    const u = new URL(url, location.origin);
+    return u.origin === location.origin;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function apiFetch(url, opts = {}) {
+  if (!shouldApiFetch(url)) return fetch(url, opts);
+  const headers = new Headers(opts.headers || {});
+  headers.set("X-Klaxond-Request", "fetch");
+  const res = await fetch(url, { ...opts, headers, redirect: "manual" });
+  const loginHint = res.headers.get("X-Klaxond-Login") || res.headers.get("Location") || "";
+  const isLoginRedirect = res.status >= 300 && res.status < 400 && loginHint.includes("/auth/login");
+  if ((res.status === 401 && loginHint) || isLoginRedirect || res.type === "opaqueredirect") {
+    beginAuthRedirect(loginHint);
+    throw new AuthRedirectError();
+  }
+  return res;
+}
+
 const J = async (url, opts) => {
-  const r = await fetch(url, opts);
+  const r = await apiFetch(url, opts);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   const ct = r.headers.get("content-type") || "";
   return ct.includes("json") ? r.json() : r.text();
@@ -473,7 +541,7 @@ document.addEventListener("DOMContentLoaded", () => {
     try {
       const raw = await f.text();
       const isJson = raw.trimStart().startsWith("{");
-      const res = await fetch("/api/config/restore", {
+      const res = await apiFetch("/api/config/restore", {
         method: "POST", headers: {"Content-Type": isJson ? "application/json" : "application/toml"}, body: raw,
       });
       if (!res.ok) {
@@ -520,7 +588,7 @@ async function loadInhib() {
 async function clearSuppression(source, anchor) {
   const status = $("#inhib-clear-status");
   try {
-    const res = await fetch("/api/inhibitions/clear", {
+    const res = await apiFetch("/api/inhibitions/clear", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({source, anchor}),
@@ -559,7 +627,7 @@ async function testInhibitionRule() {
   }
   setInlineStatus(status, tr("status.testing"));
   try {
-    const res = await fetch("/api/inhibition-rules/test", {
+    const res = await apiFetch("/api/inhibition-rules/test", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({source, labels}),
@@ -612,7 +680,7 @@ async function loadAcks() {
 async function clearAck(alertname) {
   if (!confirm(`Force-clear ack-snooze for "${alertname}"?\n\nFuture alerts with this alertname will resume normal delivery.`)) return;
   try {
-    const res = await fetch("/api/acks/clear", {
+    const res = await apiFetch("/api/acks/clear", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({alertname}),
@@ -765,7 +833,7 @@ async function saveSchedules() {
   }
   setInlineStatus(status, tr("status.saving"));
   try {
-    const res = await fetch("/api/schedules", {
+    const res = await apiFetch("/api/schedules", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ schedules: collected.schedules }),
     });
@@ -801,7 +869,7 @@ async function clearAllSuppressions() {
   // Native confirm — appropriate for a force-clear action that bypasses TTL.
   if (!confirm("Force-clear ALL active suppressions? Suppressions will re-arm on the next source alert. Continue?")) return;
   try {
-    const res = await fetch("/api/inhibitions/clear", {
+    const res = await apiFetch("/api/inhibitions/clear", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({all: true}),
@@ -1065,7 +1133,7 @@ async function saveInhibRules() {
   }
   setInlineStatus(status, tr("status.saving"));
   try {
-    const res = await fetch("/api/inhibition-rules", {
+    const res = await apiFetch("/api/inhibition-rules", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ rules: collected.rules }),
@@ -1512,6 +1580,7 @@ async function _runPreviewRender() {
     $("#pv-output").textContent = JSON.stringify(r, null, 2);
     renderNtfyMock(r);
   } catch (e) {
+    if (isAuthRedirectError(e)) return;
     notifyError("render-preview", e);
     $("#pv-output").textContent = tr("common.error") + ": " + errorText(e);
     $("#pv-vis-body").textContent = tr("preview.error_rendering");
@@ -1609,6 +1678,7 @@ $("#btn-test-fire").addEventListener("click", async () => {
     $("#t-result").textContent = JSON.stringify(r, null, 2);
     setTimeout(loadDeliv, 1000);
   } catch (e) {
+    if (isAuthRedirectError(e)) return;
     $("#t-result").textContent = tr("common.error") + ": " + errorText(e);
     showToast(tr("test.send_failed", { message: errorText(e) }), "error");
   } finally {
@@ -1689,7 +1759,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
   });
   setInlineStatus("#ntfy-topics-status", tr("status.saving"));
   try {
-    const r = await fetch("/api/ntfy-topics", {
+    const r = await apiFetch("/api/ntfy-topics", {
       method: "POST",
       body: JSON.stringify({ topics: out }),
       headers: { "Content-Type": "application/json" },
@@ -1804,7 +1874,7 @@ async function _ingestAuthAction(src, action) {
     if (!confirm(`Clear webhook secret for "${src}"?\n\nSource will return to permissive mode (any caller accepted). Confirm?`)) return;
   }
   try {
-    const res = await fetch("/api/ingest-auth", {
+    const res = await apiFetch("/api/ingest-auth", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify(body),
@@ -2934,6 +3004,7 @@ function notifySuccess(message, opts = {}) {
 }
 
 function notifyError(key, e, opts = {}) {
+  if (isAuthRedirectError(e) || _authRedirectStarted) return;
   console.warn(key + ":", e);
   const msg = errorText(e);
   if (opts.status) {
@@ -2961,6 +3032,7 @@ function notifyValidationError(key, message, statusTarget = null) {
 }
 
 function fetchError(key, e) {
+  if (isAuthRedirectError(e) || _authRedirectStarted) return;
   notifyError(key, e, { dedup: true });
 }
 function fetchOk(key) { _toastErrLast.delete(key); }

@@ -427,6 +427,7 @@
       "auth.not_set": "not set",
       "auth.error_loading": "Error loading: {message}",
       "auth.saved": "Saved ✓ (mode={mode}). Reload page to apply.",
+      "auth.session_expired": "Session expired. Redirecting to login…",
 
       "test.title": "Send synthetic alert",
       "test.desc": "Fires a real alert through the cascade (ntfy → Telegram → SMTP) with the runtime cascade flag. Counts toward \"Recent deliveries\".",
@@ -879,6 +880,7 @@
       "auth.not_set": "non impostato",
       "auth.error_loading": "Errore caricamento: {message}",
       "auth.saved": "Salvato ✓ (mode={mode}). Ricarica la pagina per applicare.",
+      "auth.session_expired": "Sessione scaduta. Reindirizzamento al login…",
 
       "test.title": "Invia alert sintetico",
       "test.desc": "Invia un alert reale attraverso la cascata (ntfy → Telegram → SMTP) con il flag runtime della cascata. Conta in \"Consegne recenti\".",
