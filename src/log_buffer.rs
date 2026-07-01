@@ -31,8 +31,18 @@ pub struct LogQuery {
     pub entries: Vec<LogEntry>,
     pub total: usize,
     pub limit: usize,
+    pub offset: usize,
     pub query: String,
     pub level: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct LogStats {
+    pub capacity: usize,
+    pub retained: usize,
+    pub warn: usize,
+    pub error: usize,
+    pub newest_timestamp: Option<String>,
 }
 
 #[derive(Debug)]
@@ -91,11 +101,11 @@ impl LogBuffer {
         entries.push_back(entry);
     }
 
-    pub fn query(&self, query: &str, level: &str, limit: usize) -> LogQuery {
+    pub fn query(&self, query: &str, level: &str, limit: usize, offset: usize) -> LogQuery {
         let query_norm = query.trim().to_lowercase();
         let level_norm = normalize_level(level);
         let limit = limit.clamp(1, MAX_LIMIT);
-        let mut entries = self
+        let matching = self
             .entries()
             .iter()
             .rev()
@@ -103,14 +113,30 @@ impl LogBuffer {
             .filter(|entry| query_matches(entry, &query_norm))
             .cloned()
             .collect::<Vec<_>>();
-        let total = entries.len();
-        entries.truncate(limit);
+        let total = matching.len();
+        let offset = clamped_offset(offset, limit, total);
+        let entries = matching.into_iter().skip(offset).take(limit).collect();
         LogQuery {
             entries,
             total,
             limit,
+            offset,
             query: query.trim().to_string(),
             level: level_norm,
+        }
+    }
+
+    pub fn stats(&self) -> LogStats {
+        let entries = self.entries();
+        LogStats {
+            capacity: self.capacity,
+            retained: entries.len(),
+            warn: entries.iter().filter(|entry| entry.level == "WARN").count(),
+            error: entries
+                .iter()
+                .filter(|entry| entry.level == "ERROR")
+                .count(),
+            newest_timestamp: entries.back().map(|entry| entry.timestamp.clone()),
         }
     }
 
@@ -155,17 +181,39 @@ pub fn init_global(capacity: usize) -> Arc<LogBuffer> {
         .clone()
 }
 
-pub fn query_global(query: &str, level: &str, limit: usize) -> LogQuery {
+pub fn query_global(query: &str, level: &str, limit: usize, offset: usize) -> LogQuery {
     GLOBAL_LOGS
         .get()
-        .map(|buffer| buffer.query(query, level, limit))
+        .map(|buffer| buffer.query(query, level, limit, offset))
         .unwrap_or_else(|| LogQuery {
             entries: Vec::new(),
             total: 0,
             limit: limit.clamp(1, MAX_LIMIT),
+            offset: 0,
             query: query.trim().to_string(),
             level: normalize_level(level),
         })
+}
+
+pub fn stats_global() -> LogStats {
+    GLOBAL_LOGS
+        .get()
+        .map(|buffer| buffer.stats())
+        .unwrap_or(LogStats {
+            capacity: 0,
+            retained: 0,
+            warn: 0,
+            error: 0,
+            newest_timestamp: None,
+        })
+}
+
+fn clamped_offset(offset: usize, limit: usize, total: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        offset.min(((total - 1) / limit) * limit)
+    }
 }
 
 fn normalize_level(level: &str) -> String {
@@ -320,18 +368,66 @@ mod tests {
             entries.push_back(entry(3, "ERROR", "smtp", "send failed"));
         }
 
-        let result = buffer.query("failed", "error", 10);
+        let result = buffer.query("failed", "error", 10, 0);
         assert_eq!(result.total, 1);
         assert_eq!(result.entries[0].id, 3);
 
-        let result = buffer.query("città", "all", 10);
+        let result = buffer.query("città", "all", 10, 0);
         assert_eq!(result.total, 0);
 
-        let result = buffer.query("", "all", 2);
+        let result = buffer.query("", "all", 2, 0);
         assert_eq!(result.total, 3);
         assert_eq!(
             result.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
             vec![3, 2]
+        );
+    }
+
+    #[test]
+    fn query_supports_offset_and_clamps_to_last_page() {
+        let buffer = LogBuffer::new(5);
+        {
+            let mut entries = buffer.entries.lock().unwrap();
+            for id in 1..=5 {
+                entries.push_back(entry(id, "INFO", "klaxond", "line"));
+            }
+        }
+
+        let result = buffer.query("", "all", 2, 2);
+        assert_eq!(result.total, 5);
+        assert_eq!(result.limit, 2);
+        assert_eq!(result.offset, 2);
+        assert_eq!(
+            result.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![3, 2]
+        );
+
+        let result = buffer.query("", "all", 2, 99);
+        assert_eq!(result.offset, 4);
+        assert_eq!(
+            result.entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![1]
+        );
+    }
+
+    #[test]
+    fn stats_reports_retained_capacity_and_warning_counts() {
+        let buffer = LogBuffer::new(5);
+        {
+            let mut entries = buffer.entries.lock().unwrap();
+            entries.push_back(entry(1, "INFO", "klaxond", "started"));
+            entries.push_back(entry(2, "WARN", "delivery", "retry"));
+            entries.push_back(entry(3, "ERROR", "smtp", "failed"));
+        }
+
+        let stats = buffer.stats();
+        assert_eq!(stats.capacity, 5);
+        assert_eq!(stats.retained, 3);
+        assert_eq!(stats.warn, 1);
+        assert_eq!(stats.error, 1);
+        assert_eq!(
+            stats.newest_timestamp.as_deref(),
+            Some("2026-06-30T00:00:03.000Z")
         );
     }
 
@@ -355,7 +451,7 @@ mod tests {
             );
         });
 
-        let result = buffer.query("", "all", 10);
+        let result = buffer.query("", "all", 10, 0);
         assert_eq!(result.total, 2);
         assert_eq!(result.entries[0].level, "ERROR");
         assert_eq!(result.entries[1].level, "WARN");
@@ -382,9 +478,9 @@ mod tests {
             entries[0].message = "Città aggiornata".to_string();
         }
 
-        let result = buffer.query("città", "all", 10);
+        let result = buffer.query("città", "all", 10, 0);
         assert_eq!(result.total, 1);
-        let result = buffer.query("CITTÀ", "all", 10);
+        let result = buffer.query("CITTÀ", "all", 10, 0);
         assert_eq!(result.total, 1);
     }
 }

@@ -12,6 +12,8 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator('[data-tab="logs"]')).toBeVisible();
   await expect(page.locator('[data-tab="preview"]')).toBeVisible();
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
+  await expect(page.locator("#stat-log-retained")).toContainText(/\/500/);
+  await expect(page.locator("#stat-log-severity")).toContainText(/WARN \d+ \/ ERROR \d+/);
 });
 
 test("backend logs page searches captured errors", async ({ page, request }) => {
@@ -33,7 +35,43 @@ test("backend logs page searches captured errors", async ({ page, request }) => 
   await page.fill("#logs-filter", "auth rejected");
   await page.selectOption("#logs-level", "WARN");
   await expect(page.locator("#t-logs tbody tr").first()).toContainText("webhook auth rejected");
-  await expect(page.locator("#logs-count")).toContainText(/1 \/ \d+ log line/);
+  await expect(page.locator("#logs-count")).toContainText(/\d+-\d+ \/ \d+ log line/);
+});
+
+test("backend logs are paginated in the UI and API", async ({ page, request }) => {
+  for (let i = 0; i < 32; i++) {
+    const bad = await request.post("/webhook/warning", {
+      data: {
+        status: "firing",
+        commonLabels: { alertname: `UnauthorizedPaginationProbe${i}` }
+      }
+    });
+    expect(bad.status()).toBe(401);
+  }
+
+  const apiPage = await request.get("/api/logs?q=auth%20rejected&level=WARN&limit=5&offset=5");
+  await expect(apiPage).toBeOK();
+  const payload = await apiPage.json();
+  expect(payload.limit).toBe(5);
+  expect(payload.offset).toBe(5);
+  expect(payload.entries.length).toBe(5);
+  expect(payload.total).toBeGreaterThanOrEqual(32);
+
+  await page.goto("/ui/index.html#logs");
+  await page.fill("#logs-filter", "auth rejected");
+  await page.selectOption("#logs-level", "WARN");
+  await page.selectOption("#logs-limit", "25");
+  await expect(page.locator("#logs-page-info")).toContainText(/Page 1 \/ [2-9]\d*/);
+  await expect(page.locator("#logs-count")).toContainText(/1-25 \/ \d+ log line/);
+  await expect(page.locator("#logs-next")).toBeEnabled();
+
+  await page.click("#logs-next");
+  await expect(page.locator("#logs-page-info")).toContainText(/Page 2 \/ [2-9]\d*/);
+  await expect(page.locator("#logs-count")).toContainText(/26-\d+ \/ \d+ log line/);
+  await expect(page.locator("#logs-prev")).toBeEnabled();
+
+  await page.click("#logs-prev");
+  await expect(page.locator("#logs-page-info")).toContainText(/Page 1 \/ [2-9]\d*/);
 });
 
 test("backend logs fetch failure clears stale count", async ({ page }) => {

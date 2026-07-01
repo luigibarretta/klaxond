@@ -1634,6 +1634,7 @@ async fn status_payload(state: &AppState) -> Value {
         "ntfy_url": cfg.ntfy_url,
         "smtp_host": cfg.smtp_host,
         "telegram_configured": !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
+        "logs": log_buffer::stats_global(),
     })
 }
 
@@ -2092,9 +2093,13 @@ fn logs_payload(full_path: &str) -> log_buffer::LogQuery {
         .get("limit")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(200);
+    let offset = qs
+        .get("offset")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
     let query = qs.get("q").map(String::as_str).unwrap_or("");
     let level = qs.get("level").map(String::as_str).unwrap_or("all");
-    log_buffer::query_global(query, level, limit)
+    log_buffer::query_global(query, level, limit, offset)
 }
 
 fn config_auto_backup(state: &AppState) -> anyhow::Result<Option<String>> {

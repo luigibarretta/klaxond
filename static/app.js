@@ -85,8 +85,25 @@ async function loadStatus() {
     if (footerVersion && s.version) footerVersion.textContent = `v${s.version}`;
     $("#cas-default").textContent = s.cascade_enabled_default;
     $("#cas-runtime").textContent = s.cascade_enabled_runtime;
+    updateStatusLogWidget(s.logs || {});
   } catch (e) { fetchError("status", e); }
   loadStatusActivity();
+}
+
+function updateStatusLogWidget(logs) {
+  const retained = Number.isFinite(logs.retained) ? logs.retained : 0;
+  const capacity = Number.isFinite(logs.capacity) ? logs.capacity : 0;
+  const warn = Number.isFinite(logs.warn) ? logs.warn : 0;
+  const error = Number.isFinite(logs.error) ? logs.error : 0;
+  const retainedEl = $("#stat-log-retained");
+  if (retainedEl) retainedEl.textContent = capacity ? `${retained}/${capacity}` : String(retained);
+  const severityEl = $("#stat-log-severity");
+  if (severityEl) {
+    const newest = logs.newest_timestamp ? new Date(logs.newest_timestamp).toLocaleString() : tr("status.no_activity");
+    severityEl.innerHTML = `${escapeHtml(tr("status.warn_error", { warn, error }))}<br>${escapeHtml(tr("status.latest_log", { time: newest }))}`;
+  }
+  const noisy = warn + error;
+  setTabBadge("logs", noisy, error > 0 ? "crit" : noisy > 0 ? "warn" : "");
 }
 
 // Update the small count chip next to a tab label.
@@ -941,24 +958,36 @@ function exportDeliveriesCsv() {
 }
 
 // ---- Backend logs ----
-let _logsCache = { entries: [], total: 0 };
+let _logsCache = { entries: [], total: 0, limit: 100, offset: 0 };
+let _logsOffset = 0;
 let _logsFilterTimer = null;
 let _logsAutoTimer = null;
 let _logsRequestSeq = 0;
 
-async function loadLogs() {
+function logsPageSize() {
+  const raw = parseInt($("#logs-limit")?.value || "100", 10);
+  if (!Number.isFinite(raw)) return 100;
+  return Math.max(1, Math.min(raw, 500));
+}
+
+async function loadLogs(opts = {}) {
+  clearTimeout(_logsFilterTimer);
+  _logsFilterTimer = null;
+  if (opts.reset) _logsOffset = 0;
   const params = new URLSearchParams();
   const q = ($("#logs-filter")?.value || "").trim();
   const level = $("#logs-level")?.value || "all";
-  const limit = $("#logs-limit")?.value || "200";
+  const limit = logsPageSize();
   if (q) params.set("q", q);
   if (level && level !== "all") params.set("level", level);
-  params.set("limit", limit);
+  params.set("limit", String(limit));
+  params.set("offset", String(Math.max(0, _logsOffset)));
   const requestSeq = ++_logsRequestSeq;
   try {
     const payload = await J("/api/logs?" + params.toString());
     if (requestSeq !== _logsRequestSeq) return;
     _logsCache = payload;
+    _logsOffset = payload.offset || 0;
     fetchOk("logs");
     renderLogs();
   } catch (e) {
@@ -968,6 +997,7 @@ async function loadLogs() {
     if (tb) tb.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(tr("common.error"))}: ${escapeHtml(errorText(e))}</td></tr>`;
     const count = $("#logs-count");
     if (count) count.textContent = "";
+    updateLogsPager();
   }
 }
 
@@ -996,13 +1026,46 @@ function renderLogs() {
     tb.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(tr("logs.empty"))}</td></tr>`;
   }
   const count = $("#logs-count");
-  if (count) count.textContent = tr("logs.showing", { shown: entries.length, total: _logsCache.total || 0 });
+  const total = _logsCache.total || 0;
+  const offset = _logsCache.offset || 0;
+  const from = entries.length ? offset + 1 : 0;
+  const to = entries.length ? offset + entries.length : 0;
+  if (count) count.textContent = tr("logs.showing_range", { from, to, total });
+  updateLogsPager();
+}
+
+function updateLogsPager() {
+  const total = _logsCache.total || 0;
+  const limit = _logsCache.limit || logsPageSize();
+  const offset = _logsCache.offset || 0;
+  const pageCount = total ? Math.ceil(total / limit) : 1;
+  const page = total ? Math.floor(offset / limit) + 1 : 0;
+  const info = $("#logs-page-info");
+  if (info) info.textContent = total ? tr("logs.page_info", { page, pages: pageCount }) : tr("logs.page_info_empty");
+  const atStart = offset <= 0;
+  const atEnd = !total || offset + limit >= total;
+  $("#logs-first") && ($("#logs-first").disabled = atStart);
+  $("#logs-prev") && ($("#logs-prev").disabled = atStart);
+  $("#logs-next") && ($("#logs-next").disabled = atEnd);
+  $("#logs-last") && ($("#logs-last").disabled = atEnd);
 }
 
 function scheduleLogsLoad() {
   _logsRequestSeq++;
   clearTimeout(_logsFilterTimer);
-  _logsFilterTimer = setTimeout(loadLogs, 250);
+  _logsFilterTimer = setTimeout(() => loadLogs({ reset: true }), 250);
+}
+
+function changeLogsPage(direction) {
+  const total = _logsCache.total || 0;
+  const limit = _logsCache.limit || logsPageSize();
+  if (!total) return;
+  const lastOffset = Math.floor((total - 1) / limit) * limit;
+  if (direction === "first") _logsOffset = 0;
+  if (direction === "prev") _logsOffset = Math.max(0, (_logsCache.offset || 0) - limit);
+  if (direction === "next") _logsOffset = Math.min(lastOffset, (_logsCache.offset || 0) + limit);
+  if (direction === "last") _logsOffset = lastOffset;
+  loadLogs();
 }
 
 function updateLogsAutorefresh() {
@@ -1016,10 +1079,14 @@ function updateLogsAutorefresh() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("#logs-refresh")?.addEventListener("click", loadLogs);
+  $("#logs-refresh")?.addEventListener("click", () => loadLogs());
   $("#logs-filter")?.addEventListener("input", scheduleLogsLoad);
-  $("#logs-level")?.addEventListener("change", loadLogs);
-  $("#logs-limit")?.addEventListener("change", loadLogs);
+  $("#logs-level")?.addEventListener("change", () => loadLogs({ reset: true }));
+  $("#logs-limit")?.addEventListener("change", () => loadLogs({ reset: true }));
+  $("#logs-first")?.addEventListener("click", () => changeLogsPage("first"));
+  $("#logs-prev")?.addEventListener("click", () => changeLogsPage("prev"));
+  $("#logs-next")?.addEventListener("click", () => changeLogsPage("next"));
+  $("#logs-last")?.addEventListener("click", () => changeLogsPage("last"));
   $("#logs-autorefresh")?.addEventListener("change", updateLogsAutorefresh);
   updateLogsAutorefresh();
 });
@@ -2396,6 +2463,7 @@ function _wireDirtyTracking() {
   document.querySelectorAll(".tabpane").forEach(pane => {
     const tabId = pane.id.replace(/^tab-/, "");
     if (!tabId) return;
+    if (tabId === "logs") return;
     pane.addEventListener("input", e => {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;

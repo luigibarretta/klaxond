@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.13.4 — 2026-07-01
+
+- Aggiunta paginazione reale a `/api/logs` con `limit` + `offset` e metadata
+  coerenti per evitare liste log troppo lunghe in UI.
+- La pagina Logs ora ha page size, controlli prima/precedente/successiva/ultima
+  e range visibile dei risultati.
+- Aggiunto widget Status "Log buffer" con righe trattenute, WARN/ERROR nel
+  buffer corrente e link diretto ai log.
+
 ## 0.13.3 — 2026-06-30
 
 - Aggiunto export completo impostazioni (`/api/config/export`) in formato JSON:

@@ -88,7 +88,7 @@
   </div>
 
   <h2><span data-i18n="status.activity">Activity</span> <small class="muted" data-i18n="status.activity_sub">(last 24h, in-memory ring buffer)</small></h2>
-  <div class="grid3">
+  <div class="grid4">
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.deliveries_24h">Deliveries 24h</div>
       <div class="stat-value" id="stat-deliv-total">—</div>
@@ -103,6 +103,12 @@
       <div class="stat-label" data-i18n="status.dedup_pending">Dedup pending</div>
       <div class="stat-value" id="stat-dedup-count">—</div>
       <div class="stat-sub muted"><a href="#grouping" id="stat-dedup-link" data-i18n="status.view_grouping">View grouping →</a></div>
+    </div>
+    <div class="card stat-card">
+      <div class="stat-label" data-i18n="status.log_buffer">Log buffer</div>
+      <div class="stat-value" id="stat-log-retained">—</div>
+      <div class="stat-sub muted" id="stat-log-severity">WARN/ERROR: —</div>
+      <div class="stat-sub muted"><a href="#logs" id="stat-log-link" data-i18n="status.view_logs">View logs →</a></div>
     </div>
   </div>
 
@@ -316,16 +322,25 @@
       </select>
     </label>
     <label>
-      <span data-i18n="logs.limit">Limit</span>
+      <span data-i18n="logs.page_size">Page size</span>
       <select id="logs-limit">
+        <option>25</option>
         <option>50</option>
-        <option selected>200</option>
+        <option selected>100</option>
+        <option>200</option>
         <option>500</option>
       </select>
     </label>
     <button id="logs-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
     <label class="inline-check"><input type="checkbox" id="logs-autorefresh" checked> <span data-i18n="logs.auto_refresh">Auto-refresh</span></label>
     <span id="logs-count" class="muted"></span>
+  </div>
+  <div class="logs-pager">
+    <button id="logs-first" class="btn" data-i18n-title="logs.first_page" title="First page" aria-label="First page">&lt;&lt;</button>
+    <button id="logs-prev" class="btn" data-i18n-title="logs.previous_page" title="Previous page" aria-label="Previous page">&lt;</button>
+    <span id="logs-page-info" class="muted">—</span>
+    <button id="logs-next" class="btn" data-i18n-title="logs.next_page" title="Next page" aria-label="Next page">&gt;</button>
+    <button id="logs-last" class="btn" data-i18n-title="logs.last_page" title="Last page" aria-label="Last page">&gt;&gt;</button>
   </div>
   <div class="table-scroll">
     <table id="t-logs" class="logs-table">
@@ -674,7 +689,7 @@
 </main>
 
 <footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.13.3</span></small>
+  <small>klaxond · <span id="footer-version" class="muted">v0.13.4</span></small>
 </footer>
 
 <!--
