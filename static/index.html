@@ -30,54 +30,71 @@
 </script>
 </head>
 <body>
-<header>
-  <h1><span class="dot dot-running"></span> klaxond</h1>
-  <small id="footer-tag" data-i18n="app.tagline">klaxond — cascade • inhibition • render</small>
-  <div class="prefs" aria-label="Preferences">
-    <label class="pref-control">
-      <span data-i18n="prefs.language">Language</span>
-      <select id="language-select" autocomplete="off">
-        <option value="en" data-i18n="lang.en">English</option>
-        <option value="it" data-i18n="lang.it">Italiano</option>
-      </select>
-    </label>
-    <label class="pref-control">
-      <span data-i18n="prefs.theme">Theme</span>
-      <select id="theme-mode" autocomplete="off">
-        <option value="system" data-i18n="theme.system">System</option>
-        <option value="light" data-i18n="theme.light">Light</option>
-        <option value="dark" data-i18n="theme.dark">Dark</option>
-      </select>
-    </label>
-  </div>
-</header>
+<div class="app-shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <div class="brand-lockup">
+        <h1><span class="dot dot-running"></span> klaxond</h1>
+        <small id="footer-tag" data-i18n="app.tagline">klaxond — cascade • inhibition • render</small>
+      </div>
+      <button id="sidebar-toggle" class="icon-btn" data-i18n-title="nav.toggle_sidebar" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
+    </div>
 
-<nav class="tabs">
-  <div class="tab-group" data-group="operations">
-    <span class="tab-group-label" data-i18n="nav.operations">Operations</span>
-    <button class="tab active" data-tab="status" data-i18n="tab.status">Status</button>
-    <button class="tab" data-tab="flow" data-i18n="tab.flow">Flow</button>
-    <button class="tab" data-tab="inhibitions" data-i18n="tab.inhibitions">Inhibitions</button>
-    <button class="tab" data-tab="deliveries" data-i18n="tab.deliveries">Recent deliveries</button>
-    <button class="tab" data-tab="logs" data-i18n="tab.logs">Logs</button>
-  </div>
-  <div class="tab-group" data-group="settings">
-    <span class="tab-group-label" data-i18n="nav.settings">Settings</span>
-    <button class="tab" data-tab="render" data-i18n="tab.render">Render config</button>
-    <button class="tab" data-tab="routing" data-i18n="tab.routing">Routing</button>
-    <button class="tab" data-tab="cascade" data-i18n="tab.cascade">Cascade</button>
-    <button class="tab" data-tab="delivery" data-i18n="tab.delivery">Delivery rules</button>
-    <button class="tab" data-tab="grouping" data-i18n="tab.grouping">Grouping</button>
-    <button class="tab" data-tab="auth" data-i18n="tab.auth">Authentication</button>
-  </div>
-  <div class="tab-group" data-group="tools">
-    <span class="tab-group-label" data-i18n="nav.tools">Tools</span>
-    <button class="tab" data-tab="preview" data-i18n="tab.preview">Render preview</button>
-    <button class="tab" data-tab="test" data-i18n="tab.test">Send test</button>
-  </div>
-</nav>
+    <div class="prefs" aria-label="Preferences">
+      <label class="pref-control">
+        <span data-i18n="prefs.language">Language</span>
+        <select id="language-select" autocomplete="off">
+          <option value="en" data-i18n="lang.en">English</option>
+          <option value="it" data-i18n="lang.it">Italiano</option>
+        </select>
+      </label>
+      <label class="pref-control">
+        <span data-i18n="prefs.theme">Theme</span>
+        <select id="theme-mode" autocomplete="off">
+          <option value="system" data-i18n="theme.system">System</option>
+          <option value="light" data-i18n="theme.light">Light</option>
+          <option value="dark" data-i18n="theme.dark">Dark</option>
+        </select>
+      </label>
+    </div>
 
-<main>
+    <nav class="tabs" aria-label="Main navigation">
+      <div class="tab-group" data-group="operations">
+        <span class="tab-group-label" data-i18n="nav.operations">Operations</span>
+        <button class="tab active" data-tab="status" data-i18n="tab.status">Status</button>
+        <button class="tab" data-tab="flow" data-i18n="tab.flow">Flow</button>
+        <button class="tab" data-tab="inhibitions" data-i18n="tab.inhibitions">Inhibitions</button>
+        <button class="tab" data-tab="deliveries" data-i18n="tab.deliveries">Recent deliveries</button>
+        <button class="tab" data-tab="logs" data-i18n="tab.logs">Logs</button>
+      </div>
+      <div class="tab-group" data-group="settings">
+        <span class="tab-group-label" data-i18n="nav.settings">Settings</span>
+        <button class="tab" data-tab="render" data-i18n="tab.render">Render config</button>
+        <button class="tab" data-tab="routing" data-i18n="tab.routing">Routing</button>
+        <button class="tab" data-tab="cascade" data-i18n="tab.cascade">Cascade</button>
+        <button class="tab" data-tab="delivery" data-i18n="tab.delivery">Delivery rules</button>
+        <button class="tab" data-tab="grouping" data-i18n="tab.grouping">Grouping</button>
+        <button class="tab" data-tab="auth" data-i18n="tab.auth">Authentication</button>
+      </div>
+      <div class="tab-group" data-group="tools">
+        <span class="tab-group-label" data-i18n="nav.tools">Tools</span>
+        <button class="tab" data-tab="preview" data-i18n="tab.preview">Render preview</button>
+        <button class="tab" data-tab="test" data-i18n="tab.test">Send test</button>
+      </div>
+    </nav>
+
+    <div class="sidebar-user" id="sidebar-user-card">
+      <div class="sidebar-avatar" id="sidebar-avatar">?</div>
+      <div class="sidebar-user-meta">
+        <strong id="sidebar-user-name">anonymous</strong>
+        <span id="sidebar-user-mode" class="muted">mode=none</span>
+      </div>
+      <a href="/auth/logout" data-i18n-title="auth.logout" title="Logout" aria-label="Logout">↪</a>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <main>
 
 <section id="tab-status" class="tabpane active">
   <h2 data-i18n="status.channels">Channels</h2>
@@ -646,6 +663,57 @@
     </label>
   </div>
 
+  <div id="auth-guard" class="notice warn hidden"></div>
+
+  <h3 data-i18n="auth.webauthn_title">WebAuthn / passkeys</h3>
+  <div class="card">
+    <label><input type="checkbox" id="auth-webauthn-enabled" checked> <span data-i18n="auth.webauthn_enabled">Enable passkeys</span></label>
+    <div class="grid2">
+      <label><span data-i18n="auth.webauthn_origin">Origin</span>
+        <input type="url" id="auth-webauthn-origin" placeholder="https://klaxond.example.com">
+      </label>
+      <label><span data-i18n="auth.webauthn_rp_id">Relying party ID</span>
+        <input type="text" id="auth-webauthn-rp-id" placeholder="klaxond.example.com">
+      </label>
+    </div>
+    <p class="muted"><small data-i18n="auth.webauthn_hint">Leave empty to use KLAXOND_PUBLIC_URL. RP ID must match the browser origin domain.</small></p>
+    <div class="row">
+      <label style="margin:0"><span data-i18n="auth.passkey_name">Passkey name</span> <input type="text" id="passkey-name" placeholder="MacBook Touch ID"></label>
+      <button id="passkey-register" class="btn" data-i18n="auth.passkey_register">Register passkey</button>
+      <a class="btn" href="/auth/passkey" data-i18n="auth.passkey_login_link">Passkey login page</a>
+      <span id="passkey-status" class="muted"></span>
+    </div>
+    <div class="table-scroll">
+      <table id="t-passkeys">
+        <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.user">User</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.actions">Actions</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <h3 data-i18n="auth.tokens_title">API keys and PATs</h3>
+  <div class="card">
+    <div class="grid3">
+      <label><span data-i18n="common.name">Name</span> <input type="text" id="token-name" placeholder="grafana-admin-script"></label>
+      <label><span data-i18n="auth.token_kind">Kind</span>
+        <select id="token-kind"><option value="api-key">API key</option><option value="pat">PAT</option></select>
+      </label>
+      <label><span data-i18n="auth.expires_days">Expires in days</span> <input type="number" id="token-expires-days" min="1" max="3650" placeholder="never"></label>
+    </div>
+    <div id="token-scopes" class="scope-grid"></div>
+    <div class="row">
+      <button id="token-create" class="btn primary" data-i18n="auth.token_create">Create token</button>
+      <span id="token-status" class="muted"></span>
+    </div>
+    <pre id="token-once" class="hidden"></pre>
+    <div class="table-scroll">
+      <table id="t-tokens">
+        <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.token_kind">Kind</th><th data-i18n="auth.scopes">Scopes</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.status">Status</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
   <p>
     <button id="auth-save" class="primary" data-i18n="common.save">Save</button>
     <span id="auth-status" class="muted" style="margin-left:1em"></span>
@@ -686,11 +754,13 @@
   <pre id="t-result">—</pre>
 </section>
 
-</main>
+    </main>
 
-<footer>
-  <small>klaxond · <span id="footer-version" class="muted">v0.13.4</span></small>
-</footer>
+    <footer>
+      <small>klaxond · <span id="footer-version" class="muted">v0.14.0</span></small>
+    </footer>
+  </div>
+</div>
 
 <!--
   Mermaid is 3.3MB minified — load deferred so it doesn't block page parse.

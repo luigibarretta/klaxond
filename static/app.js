@@ -125,6 +125,175 @@ function setTabBadge(tabId, count, kind = "") {
   badge.textContent = count > 99 ? "99+" : String(count);
 }
 
+function displayUserName(user = {}) {
+  return user.name || user.email || user.sub || "anonymous";
+}
+
+function updateCurrentUserUI(user = {}) {
+  const name = displayUserName(user);
+  const mode = user.mode || "none";
+  const initials = name
+    .split(/[\s@._-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0])
+    .join("")
+    .toUpperCase() || "?";
+  const nameEl = $("#sidebar-user-name");
+  const modeEl = $("#sidebar-user-mode");
+  const avatar = $("#sidebar-avatar");
+  if (nameEl) nameEl.textContent = name;
+  if (modeEl) modeEl.textContent = `mode=${mode}`;
+  if (avatar) avatar.textContent = initials;
+  const authUser = $("#auth-current-user");
+  if (authUser) authUser.textContent = `${user.sub || "?"} (mode=${mode})`;
+}
+
+async function loadCurrentUser() {
+  try {
+    updateCurrentUserUI(await J("/auth/me"));
+  } catch (e) {
+    updateCurrentUserUI({ sub: "anonymous", mode: "none" });
+  }
+}
+
+(function setupSidebar() {
+  const collapsed = (() => {
+    try { return localStorage.getItem("klaxond.sidebarCollapsed") === "1"; } catch (e) { return false; }
+  })();
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+  document.addEventListener("DOMContentLoaded", () => {
+    $("#sidebar-toggle")?.addEventListener("click", () => {
+      const next = !document.body.classList.contains("sidebar-collapsed");
+      document.body.classList.toggle("sidebar-collapsed", next);
+      try { localStorage.setItem("klaxond.sidebarCollapsed", next ? "1" : "0"); } catch (e) {}
+    });
+  });
+})();
+
+// Client-side pagination for finite UI tables. The rows stay in the DOM so
+// save/export routines that collect from table inputs still see every row.
+const _TABLE_PAGER_SIZES = [10, 25, 50, 100, 200];
+const _TABLE_PAGER_CONFIG = {
+  "t-deliv": { pageSize: 25, collapseDetails: true },
+  "t-inhib-rules": { pageSize: 10 },
+  "t-inhib": { pageSize: 10 },
+  "t-acks": { pageSize: 10 },
+  "t-schedules": { pageSize: 10 },
+  "t-cas": { pageSize: 10 },
+  "t-rc": { pageSize: 10 },
+  "t-pol": { pageSize: 10 },
+  "t-rules": { pageSize: 10 },
+  "t-tokens": { pageSize: 10 },
+  "t-passkeys": { pageSize: 10 },
+};
+const _tablePagerState = new Map();
+
+function _tablePagerStateFor(tableId) {
+  if (!_tablePagerState.has(tableId)) {
+    const cfg = _TABLE_PAGER_CONFIG[tableId] || {};
+    _tablePagerState.set(tableId, { page: 1, pageSize: cfg.pageSize || 25 });
+  }
+  return _tablePagerState.get(tableId);
+}
+
+function ensureTablePager(tableId) {
+  const table = document.getElementById(tableId);
+  if (!table) return null;
+  const state = _tablePagerStateFor(tableId);
+  let pager = document.querySelector(`[data-table-pager="${tableId}"]`);
+  if (!pager) {
+    pager = document.createElement("div");
+    pager.className = "table-pager";
+    pager.dataset.tablePager = tableId;
+    pager.innerHTML = `
+      <label class="table-pager-size">
+        <span data-i18n="pager.page_size">${escapeHtml(tr("pager.page_size"))}</span>
+        <select data-pager-size>
+          ${_TABLE_PAGER_SIZES.map(size => `<option value="${size}">${size}</option>`).join("")}
+        </select>
+      </label>
+      <span data-pager-range class="muted"></span>
+      <button class="btn" data-pager-first data-i18n-title="pager.first_page" title="${escapeHtml(tr("pager.first_page"))}" aria-label="${escapeHtml(tr("pager.first_page"))}">&lt;&lt;</button>
+      <button class="btn" data-pager-prev data-i18n-title="pager.previous_page" title="${escapeHtml(tr("pager.previous_page"))}" aria-label="${escapeHtml(tr("pager.previous_page"))}">&lt;</button>
+      <span data-pager-info class="muted"></span>
+      <button class="btn" data-pager-next data-i18n-title="pager.next_page" title="${escapeHtml(tr("pager.next_page"))}" aria-label="${escapeHtml(tr("pager.next_page"))}">&gt;</button>
+      <button class="btn" data-pager-last data-i18n-title="pager.last_page" title="${escapeHtml(tr("pager.last_page"))}" aria-label="${escapeHtml(tr("pager.last_page"))}">&gt;&gt;</button>`;
+    const insertAfter = table.closest(".table-scroll") || table;
+    insertAfter.insertAdjacentElement("afterend", pager);
+    pager.querySelector("[data-pager-size]").addEventListener("change", e => {
+      state.pageSize = parseInt(e.target.value, 10) || state.pageSize;
+      state.page = 1;
+      applyTablePager(tableId);
+    });
+    pager.querySelector("[data-pager-first]").addEventListener("click", () => { state.page = 1; applyTablePager(tableId); });
+    pager.querySelector("[data-pager-prev]").addEventListener("click", () => { state.page -= 1; applyTablePager(tableId); });
+    pager.querySelector("[data-pager-next]").addEventListener("click", () => { state.page += 1; applyTablePager(tableId); });
+    pager.querySelector("[data-pager-last]").addEventListener("click", () => { state.page = Number.MAX_SAFE_INTEGER; applyTablePager(tableId); });
+  }
+  const size = pager.querySelector("[data-pager-size]");
+  if (size) size.value = String(state.pageSize);
+  return { table, pager, state };
+}
+
+function applyTablePager(tableId, opts = {}) {
+  const ctx = ensureTablePager(tableId);
+  if (!ctx) return;
+  const { table, pager, state } = ctx;
+  const body = table.tBodies[0];
+  if (!body) return;
+  const cfg = _TABLE_PAGER_CONFIG[tableId] || {};
+  if (cfg.collapseDetails) {
+    body.querySelectorAll("tr.deliv-detail").forEach(row => row.remove());
+    body.querySelectorAll("tr.expanded").forEach(row => row.classList.remove("expanded"));
+  }
+  const rows = Array.from(body.querySelectorAll("tr"));
+  const emptyOnly = rows.length === 1
+    && rows[0].children.length === 1
+    && rows[0].children[0].hasAttribute("colspan");
+  const total = emptyOnly ? 0 : rows.length;
+  if (opts.reset) state.page = 1;
+  if (opts.page === "last") state.page = Number.MAX_SAFE_INTEGER;
+  if (total <= state.pageSize) {
+    rows.forEach(row => { row.style.display = ""; });
+    pager.hidden = true;
+    return;
+  }
+  const pageCount = Math.max(1, Math.ceil(total / state.pageSize));
+  state.page = Math.min(Math.max(1, state.page), pageCount);
+  const start = (state.page - 1) * state.pageSize;
+  const end = Math.min(start + state.pageSize, total);
+  rows.forEach((row, idx) => {
+    row.style.display = idx >= start && idx < end ? "" : "none";
+  });
+  pager.hidden = false;
+  const range = pager.querySelector("[data-pager-range]");
+  const info = pager.querySelector("[data-pager-info]");
+  if (range) range.textContent = tr("pager.range", { from: start + 1, to: end, total });
+  if (info) info.textContent = tr("pager.page_info", { page: state.page, pages: pageCount });
+  pager.querySelector("[data-pager-first]").disabled = state.page <= 1;
+  pager.querySelector("[data-pager-prev]").disabled = state.page <= 1;
+  pager.querySelector("[data-pager-next]").disabled = state.page >= pageCount;
+  pager.querySelector("[data-pager-last]").disabled = state.page >= pageCount;
+}
+
+function refreshTablePagers() {
+  document.querySelectorAll("[data-table-pager]").forEach(pager => {
+    if (pager.dataset.tablePager) applyTablePager(pager.dataset.tablePager);
+  });
+}
+
+function showTableRowPage(tableId, row) {
+  const table = document.getElementById(tableId);
+  if (!table || !row) return;
+  const rows = Array.from(table.tBodies[0]?.querySelectorAll("tr") || []);
+  const idx = rows.indexOf(row);
+  if (idx < 0) return;
+  const state = _tablePagerStateFor(tableId);
+  state.page = Math.floor(idx / state.pageSize) + 1;
+  applyTablePager(tableId);
+}
+
 // Aggregate 24h activity from existing endpoints (no new backend needed).
 // Also updates the tab badges (deliveries24h / suppressions / dedup-pending).
 async function loadStatusActivity() {
@@ -242,7 +411,11 @@ async function loadInhib() {
   try {
     const rows = await J("/api/inhibitions");
     const tb = $("#t-inhib tbody"); tb.innerHTML = "";
-    if (!rows.length) { tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("inhib.no_active"))}</td></tr>`; return; }
+    if (!rows.length) {
+      tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("inhib.no_active"))}</td></tr>`;
+      applyTablePager("t-inhib", { reset: true });
+      return;
+    }
     for (const r of rows) {
       const row = document.createElement("tr");
       const scope = Array.isArray(r.applies_to) ? r.applies_to.join(", ") : "*";
@@ -250,6 +423,7 @@ async function loadInhib() {
       row.querySelector("[data-clear-suppression]").addEventListener("click", () => clearSuppression(r.source, r.anchor));
       tb.appendChild(row);
     }
+    applyTablePager("t-inhib");
   } catch (e) { fetchError("inhibitions", e); }
 }
 
@@ -331,7 +505,11 @@ async function loadAcks() {
   try {
     const acks = await J("/api/acks");
     tb.innerHTML = "";
-    if (!acks.length) { tb.innerHTML = `<tr><td colspan="3" class="muted">${escapeHtml(tr("inhib.no_acks"))}</td></tr>`; return; }
+    if (!acks.length) {
+      tb.innerHTML = `<tr><td colspan="3" class="muted">${escapeHtml(tr("inhib.no_acks"))}</td></tr>`;
+      applyTablePager("t-acks", { reset: true });
+      return;
+    }
     for (const a of acks) {
       const row = document.createElement("tr");
       row.innerHTML = `<td><code>${escapeHtml(a.alertname)}</code></td><td>${fmtSecs(a.expires_in_seconds)}</td><td>
@@ -340,6 +518,7 @@ async function loadAcks() {
       row.querySelector("[data-clear-ack]").addEventListener("click", () => clearAck(a.alertname));
       tb.appendChild(row);
     }
+    applyTablePager("t-acks");
   } catch (e) { fetchError("acks", e); }
 }
 
@@ -439,7 +618,10 @@ function _renderSchedRow(s) {
   const del = document.createElement("button");
   del.className = "btn"; del.textContent = "✕"; del.title = tr("sched.delete_title");
   del.style.color = "var(--red)"; del.style.padding = "2px 8px";
-  del.addEventListener("click", () => row.remove());
+  del.addEventListener("click", () => {
+    row.remove();
+    applyTablePager("t-schedules");
+  });
   tdDel.appendChild(del); row.appendChild(tdDel);
 
   return row;
@@ -453,6 +635,7 @@ async function loadSchedules() {
     tb.innerHTML = "";
     for (const s of (data.schedules || [])) tb.appendChild(_renderSchedRow(s));
     $("#sched-save-status").textContent = "";
+    applyTablePager("t-schedules", { reset: true });
   } catch (e) { fetchError("schedules", e); }
 }
 
@@ -520,6 +703,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (add) add.addEventListener("click", () => {
     const tb = $("#t-schedules tbody");
     tb.appendChild(_renderSchedRow({name:"", cron:"", duration_minutes:30, match:{}, applies_to:[]}));
+    applyTablePager("t-schedules", { page: "last" });
   });
   if (save) save.addEventListener("click", saveSchedules);
 });
@@ -703,12 +887,16 @@ function _renderInhibRuleRow(r) {
     } else snapshot.match_all = true;
     const clone = _renderInhibRuleRow(snapshot);
     row.parentNode.insertBefore(clone, row.nextSibling);
+    showTableRowPage("t-inhib-rules", clone);
   });
   const btn = document.createElement("button");
   btn.type = "button"; btn.className = "btn";
   btn.textContent = "✕"; btn.title = tr("inhib.delete_rule_title");
   btn.style.color = "var(--red)"; btn.style.padding = "2px 8px";
-  btn.addEventListener("click", () => row.remove());
+  btn.addEventListener("click", () => {
+    row.remove();
+    applyTablePager("t-inhib-rules");
+  });
   tdAct.appendChild(dup); tdAct.appendChild(btn);
   row.appendChild(tdAct);
 
@@ -750,6 +938,7 @@ async function loadInhibRules() {
     const tb = $("#t-inhib-rules tbody"); tb.innerHTML = "";
     for (const r of (data.rules || [])) tb.appendChild(_renderInhibRuleRow(r));
     $("#inhib-save-status").textContent = "";
+    applyTablePager("t-inhib-rules", { reset: true });
   } catch (e) { fetchError("inhibition-rules", e); }
 }
 
@@ -819,6 +1008,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (add) add.addEventListener("click", () => {
     const tb = $("#t-inhib-rules tbody");
     tb.appendChild(_renderInhibRuleRow({source: "", ttl_seconds: 900, applies_to: [], match_by: ""}));
+    applyTablePager("t-inhib-rules", { page: "last" });
   });
   if (save) save.addEventListener("click", saveInhibRules);
   if (clearAll) clearAll.addEventListener("click", clearAllSuppressions);
@@ -845,20 +1035,13 @@ async function loadDeliv() {
   renderDeliv();
 }
 
-function renderDeliv() {
+function renderDeliv(opts = {}) {
   const tb = $("#t-deliv tbody"); if (!tb) return;
   tb.innerHTML = "";
-  const filter = ($("#deliv-filter")?.value || "").trim().toLowerCase();
-  const showSuppressed = $("#deliv-show-suppressed")?.checked !== false;
-  const rows = (_delivCache || []).slice().reverse();
-  let shown = 0, total = rows.length;
+  const total = (_delivCache || []).length;
+  const rows = _filteredDelivRows();
+  let shown = rows.length;
   for (const r of rows) {
-    const isSupp = r.channel === "suppressed" || r.channel === "dry-run-suppressed";
-    if (isSupp && !showSuppressed) continue;
-    if (filter) {
-      const hay = `${r.source} ${r.severity} ${r.title} ${r.channel} ${r.suppressed_by || ""}`.toLowerCase();
-      if (!hay.includes(filter)) continue;
-    }
     const row = document.createElement("tr");
     row.classList.add("deliv-row");
     const t = new Date(r.ts * 1000).toLocaleTimeString();
@@ -875,11 +1058,12 @@ function renderDeliv() {
     row.innerHTML = `<td>${t}</td><td>${escapeHtml(r.source)}</td><td class="sev-${r.severity}">${r.severity}</td><td>${escapeHtml(r.title)}</td><td>${chCell}</td>`;
     row.addEventListener("click", () => _toggleDelivExpand(row, r));
     row.style.cursor = "pointer";
-    tb.appendChild(row); shown++;
+    tb.appendChild(row);
   }
   const cnt = $("#deliv-count");
   if (cnt) cnt.textContent = total === shown ? tr("deliveries.event_count", { count: total }) : tr("deliveries.event_count_filtered", { shown, total });
   if (!shown) tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(total ? tr("deliveries.no_match") : tr("deliveries.no_deliveries"))}</td></tr>`;
+  applyTablePager("t-deliv", { reset: opts.reset });
 }
 
 function _toggleDelivExpand(tr, r) {
@@ -909,8 +1093,8 @@ function _toggleDelivExpand(tr, r) {
 
 // Re-render (client-side, no fetch) when filter changes
 document.addEventListener("DOMContentLoaded", () => {
-  $("#deliv-filter")?.addEventListener("input", renderDeliv);
-  $("#deliv-show-suppressed")?.addEventListener("change", renderDeliv);
+  $("#deliv-filter")?.addEventListener("input", () => renderDeliv({ reset: true }));
+  $("#deliv-show-suppressed")?.addEventListener("change", () => renderDeliv({ reset: true }));
   $("#deliv-export-csv")?.addEventListener("click", exportDeliveriesCsv);
 });
 
@@ -1116,10 +1300,11 @@ function populateTestComponentSelect() {
 
 function renderRCTable() {
   const tb = $("#t-rc tbody"); tb.innerHTML = "";
-  for (const [k, v] of Object.entries(rcData)) addRCRow(k, v[0], v[1]);
+  for (const [k, v] of Object.entries(rcData)) addRCRow(k, v[0], v[1], { deferPager: true });
+  applyTablePager("t-rc", { reset: true });
 }
 
-function addRCRow(component="", label="", url="") {
+function addRCRow(component="", label="", url="", opts = {}) {
   const tb = $("#t-rc tbody");
   const row = document.createElement("tr");
   row.innerHTML = `
@@ -1130,7 +1315,10 @@ function addRCRow(component="", label="", url="") {
       <button data-test title="${escapeHtml(tr("render.open_title"))}">↗</button>
       <button class="danger" data-del>×</button>
     </td>`;
-  row.querySelector("[data-del]").addEventListener("click", () => row.remove());
+  row.querySelector("[data-del]").addEventListener("click", () => {
+    row.remove();
+    applyTablePager("t-rc");
+  });
   row.querySelector("[data-test]").addEventListener("click", () => {
     const u = row.querySelector('[data-f="url"]').value.trim();
     if (!u) return;
@@ -1138,6 +1326,7 @@ function addRCRow(component="", label="", url="") {
     window.open(full, "_blank", "noopener");
   });
   tb.appendChild(row);
+  if (!opts.deferPager) applyTablePager("t-rc", { page: "last" });
 }
 
 $("#btn-rc-add").addEventListener("click", () => addRCRow());
@@ -1575,32 +1764,40 @@ async function loadCascade() {
 
 function renderCascadeTable() {
   const tb = $("#t-cas tbody"); tb.innerHTML = "";
-  casData.tiers.forEach((t, i) => addCasRow(t.name, t.timeout_seconds, i));
+  casData.tiers.forEach((t, i) => addCasRow(t.name, t.timeout_seconds, i, { deferPager: true }));
+  applyTablePager("t-cas", { reset: true });
 }
 
-function addCasRow(name = "ntfy", timeout = 5, idx = -1) {
+function addCasRow(name = "ntfy", timeout = 5, idx = -1, opts = {}) {
   const tb = $("#t-cas tbody");
   const i = idx === -1 ? tb.children.length : idx;
   const row = document.createElement("tr");
-  const opts = TIER_OPTS.map(o => `<option ${o === name ? "selected" : ""}>${o}</option>`).join("");
+  const tierOpts = TIER_OPTS.map(o => `<option ${o === name ? "selected" : ""}>${o}</option>`).join("");
   row.innerHTML = `
     <td><span class="muted">${i + 1}</span> <button data-up title="${escapeHtml(tr("cascade.move_up"))}">↑</button><button data-dn title="${escapeHtml(tr("cascade.move_down"))}">↓</button></td>
-    <td><select data-f="name">${opts}</select></td>
+    <td><select data-f="name">${tierOpts}</select></td>
     <td><input type="number" min="1" max="60" value="${timeout}" data-f="timeout"></td>
     <td><button class="danger" data-del>×</button></td>`;
-  row.querySelector("[data-del]").addEventListener("click", () => { row.remove(); renumberCas(); });
+  row.querySelector("[data-del]").addEventListener("click", () => {
+    row.remove();
+    renumberCas();
+    applyTablePager("t-cas");
+  });
   row.querySelector("[data-up]").addEventListener("click", () => {
     const prev = row.previousElementSibling;
     if (prev) tb.insertBefore(row, prev);
     renumberCas();
+    showTableRowPage("t-cas", row);
   });
   row.querySelector("[data-dn]").addEventListener("click", () => {
     const next = row.nextElementSibling;
     if (next) tb.insertBefore(next, row);
     renumberCas();
+    showTableRowPage("t-cas", row);
   });
   tb.appendChild(row);
   renumberCas();
+  if (!opts.deferPager) applyTablePager("t-cas", { page: "last" });
 }
 
 function renumberCas() {
@@ -1662,10 +1859,11 @@ function renderDeliveryDefault() {
 
 function renderPoliciesTable() {
   const tb = $("#t-pol tbody"); tb.innerHTML = "";
-  delivData.policies.forEach((p, i) => addPolicyRow(p.name, p.mode, p.tiers, i));
+  delivData.policies.forEach((p, i) => addPolicyRow(p.name, p.mode, p.tiers, i, { deferPager: true }));
+  applyTablePager("t-pol", { reset: true });
 }
 
-function addPolicyRow(name = "new-policy", mode = "cascade", tiers = [], idx = null) {
+function addPolicyRow(name = "new-policy", mode = "cascade", tiers = [], idx = null, opts = {}) {
   const tb = $("#t-pol tbody");
   const tr = document.createElement("tr");
   const tierTxt = tiers.map(t => `${t.name}(${t.timeout_seconds}s)`).join(" → ");
@@ -1678,11 +1876,16 @@ function addPolicyRow(name = "new-policy", mode = "cascade", tiers = [], idx = n
     </select></td>
     <td><input type="text" value="${escapeHtml(JSON.stringify(tiers))}" data-f="tiers" placeholder='[{"name":"ntfy","timeout_seconds":5}]' style="font-family:monospace;font-size:11px"></td>
     <td><button class="danger" data-del>×</button></td>`;
-  tr.querySelector("[data-del]").addEventListener("click", () => { tr.remove(); renderDeliveryDefault(); });
+  tr.querySelector("[data-del]").addEventListener("click", () => {
+    tr.remove();
+    renderDeliveryDefault();
+    applyTablePager("t-pol");
+  });
   // Re-populate the default-policy dropdown when name changes
   tr.querySelector('[data-f="name"]').addEventListener("input", () => { collectPoliciesFromTable(); renderDeliveryDefault(); });
   tb.appendChild(tr);
   renderDeliveryDefault();
+  if (!opts.deferPager) applyTablePager("t-pol", { page: "last" });
 }
 
 function collectPoliciesFromTable() {
@@ -1700,23 +1903,29 @@ function collectPoliciesFromTable() {
 
 function renderRulesTable() {
   const tb = $("#t-rules tbody"); tb.innerHTML = "";
-  delivData.rules.forEach((r, i) => addRuleRow(r.match || {}, r.policy, i));
+  delivData.rules.forEach((r, i) => addRuleRow(r.match || {}, r.policy, i, { deferPager: true }));
+  applyTablePager("t-rules", { reset: true });
 }
 
-function addRuleRow(match = {}, policy = "cascade", idx = -1) {
+function addRuleRow(match = {}, policy = "cascade", idx = -1, rowOpts = {}) {
   const tb = $("#t-rules tbody");
   const i = idx === -1 ? tb.children.length : idx;
   const tr = document.createElement("tr");
   const matchTxt = Object.entries(match).map(([k, v]) => `${k}=${v}`).join("\n");
-  const opts = policyNames().map(n => `<option ${n === policy ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
+  const policyOpts = policyNames().map(n => `<option ${n === policy ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
   tr.innerHTML = `
     <td><span class="muted">${i + 1}</span></td>
     <td><textarea data-f="match" rows="3" style="font-family:monospace;font-size:11px" placeholder="severity=critical\ncomponent=host\nhost=re:^prod-.*">${escapeHtml(matchTxt)}</textarea></td>
-    <td><select data-f="policy">${opts}</select></td>
+    <td><select data-f="policy">${policyOpts}</select></td>
     <td><button class="danger" data-del>×</button></td>`;
-  tr.querySelector("[data-del]").addEventListener("click", () => { tr.remove(); renumberRules(); });
+  tr.querySelector("[data-del]").addEventListener("click", () => {
+    tr.remove();
+    renumberRules();
+    applyTablePager("t-rules");
+  });
   tb.appendChild(tr);
   renumberRules();
+  if (!rowOpts.deferPager) applyTablePager("t-rules", { page: "last" });
 }
 
 function renumberRules() {
@@ -1877,6 +2086,125 @@ const OIDC_ISSUER_HINTS = {
   other:     "",
 };
 
+function fmtAuthTs(ts) {
+  return ts ? new Date(ts * 1000).toLocaleString() : "—";
+}
+
+function renderAuthGuard(settings) {
+  const guard = $("#auth-guard");
+  if (!guard) return;
+  const mode = settings.mode || "none";
+  const warnings = [];
+  if (mode === "basic") {
+    const b = settings.basic || {};
+    if (!b.username || b.password_hash !== "***SET***") warnings.push(tr("auth.guard_basic"));
+  } else if (mode === "oidc") {
+    const o = settings.oidc || {};
+    if (!o.issuer || !o.client_id) warnings.push(tr("auth.guard_oidc"));
+  } else if (mode === "trusted-proxy") {
+    const tp = settings.trusted_proxy || {};
+    if (!tp.user_header || !(tp.trusted_cidrs || []).length) warnings.push(tr("auth.guard_proxy"));
+  }
+  guard.classList.toggle("hidden", warnings.length === 0);
+  guard.textContent = warnings.join(" ");
+}
+
+function renderScopePicker(available = [], selected = ["admin:read"]) {
+  const box = $("#token-scopes");
+  if (!box) return;
+  const picked = new Set(selected);
+  box.innerHTML = available.map(scope => `
+    <label class="scope-pill">
+      <input type="checkbox" value="${escapeHtml(scope)}" ${picked.has(scope) ? "checked" : ""}>
+      <code>${escapeHtml(scope)}</code>
+    </label>`).join("");
+}
+
+function selectedTokenScopes() {
+  return Array.from(document.querySelectorAll("#token-scopes input:checked")).map(cb => cb.value);
+}
+
+function renderTokens(tokens = []) {
+  const tb = $("#t-tokens tbody"); if (!tb) return;
+  tb.innerHTML = "";
+  if (!tokens.length) {
+    tb.innerHTML = `<tr><td colspan="7" class="muted">${escapeHtml(tr("auth.no_tokens"))}</td></tr>`;
+    applyTablePager("t-tokens", { reset: true });
+    return;
+  }
+  for (const token of tokens) {
+    const trEl = document.createElement("tr");
+    trEl.innerHTML = `
+      <td>${escapeHtml(token.name || "")}<br><small class="muted">${escapeHtml(token.prefix || "")}…</small></td>
+      <td>${escapeHtml(token.kind || "")}</td>
+      <td>${(token.scopes || []).map(s => `<code>${escapeHtml(s)}</code>`).join(" ")}</td>
+      <td>${escapeHtml(fmtAuthTs(token.created_at))}</td>
+      <td>${escapeHtml(fmtAuthTs(token.last_used_at))}</td>
+      <td>${token.enabled ? `<span style="color:var(--green)">${escapeHtml(tr("auth.enabled"))}</span>` : `<span class="muted">${escapeHtml(tr("auth.revoked"))}</span>`}</td>
+      <td><button class="danger" data-revoke="${escapeHtml(token.id)}" ${token.enabled ? "" : "disabled"}>${escapeHtml(tr("auth.revoke"))}</button></td>`;
+    trEl.querySelector("[data-revoke]")?.addEventListener("click", () => revokeAuthToken(token.id));
+    tb.appendChild(trEl);
+  }
+  applyTablePager("t-tokens", { reset: true });
+}
+
+function renderPasskeys(passkeys = []) {
+  const tb = $("#t-passkeys tbody"); if (!tb) return;
+  tb.innerHTML = "";
+  if (!passkeys.length) {
+    tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("auth.no_passkeys"))}</td></tr>`;
+    applyTablePager("t-passkeys", { reset: true });
+    return;
+  }
+  for (const key of passkeys) {
+    const trEl = document.createElement("tr");
+    trEl.innerHTML = `
+      <td>${escapeHtml(key.name || "")}</td>
+      <td>${escapeHtml(key.user_name || key.user_email || key.user_sub || "")}</td>
+      <td>${escapeHtml(fmtAuthTs(key.created_at))}</td>
+      <td>${escapeHtml(fmtAuthTs(key.last_used_at))}</td>
+      <td><button class="danger" data-passkey-del="${escapeHtml(key.id)}">${escapeHtml(tr("auth.delete"))}</button></td>`;
+    trEl.querySelector("[data-passkey-del]")?.addEventListener("click", () => deletePasskey(key.id));
+    tb.appendChild(trEl);
+  }
+  applyTablePager("t-passkeys", { reset: true });
+}
+
+function b64urlToBuffer(s) {
+  s = String(s).replace(/-/g, "+").replace(/_/g, "/");
+  s += "===".slice((s.length + 3) % 4);
+  const raw = atob(s);
+  const out = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out.buffer;
+}
+
+function bufferToB64url(buffer) {
+  return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+    .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function webauthnCreateOptions(publicKey) {
+  publicKey.challenge = b64urlToBuffer(publicKey.challenge);
+  publicKey.user.id = b64urlToBuffer(publicKey.user.id);
+  (publicKey.excludeCredentials || []).forEach(cred => { cred.id = b64urlToBuffer(cred.id); });
+  return publicKey;
+}
+
+function webauthnCreatePayload(credential) {
+  return {
+    id: credential.id,
+    rawId: bufferToB64url(credential.rawId),
+    type: credential.type,
+    response: {
+      attestationObject: bufferToB64url(credential.response.attestationObject),
+      clientDataJSON: bufferToB64url(credential.response.clientDataJSON),
+      transports: credential.response.getTransports ? credential.response.getTransports() : undefined,
+    },
+    extensions: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
+  };
+}
+
 function _showSubcard(mode) {
   const map = {
     none: [],
@@ -1905,7 +2233,7 @@ async function loadAuth() {
     $("#auth-jwt-warn")?.classList.toggle("hidden", !!j.jwt_available);
     $("#auth-session-h").value = s.session_timeout_hours || 8;
     const cu = j.current_user || {};
-    $("#auth-current-user").textContent = `${cu.sub || "?"} (mode=${cu.mode || "?"})`;
+    updateCurrentUserUI(cu);
     // basic
     const b = s.basic || {};
     $("#auth-basic-user").value = b.username || "";
@@ -1929,6 +2257,14 @@ async function loadAuth() {
     $("#auth-tp-eheader").value = tp.email_header || "X-Forwarded-Email";
     $("#auth-tp-gheader").value = tp.groups_header || "X-Forwarded-Groups";
     $("#auth-tp-cidrs").value = (tp.trusted_cidrs || []).join(", ");
+    const w = s.webauthn || {};
+    $("#auth-webauthn-enabled").checked = w.enabled !== false;
+    $("#auth-webauthn-origin").value = w.origin || "";
+    $("#auth-webauthn-rp-id").value = w.rp_id || "";
+    renderAuthGuard(s);
+    renderScopePicker(j.available_token_scopes || [], selectedTokenScopes().length ? selectedTokenScopes() : ["admin:read"]);
+    renderTokens(s.api_keys || []);
+    renderPasskeys(s.passkeys || []);
   } catch (e) {
     notifyError("auth", e, { status: "#auth-status", inlineText: tr("auth.error_loading", { message: errorText(e) }) });
   }
@@ -1967,6 +2303,11 @@ $("#auth-save")?.addEventListener("click", async () => {
       groups_header: $("#auth-tp-gheader").value.trim(),
       trusted_cidrs: $("#auth-tp-cidrs").value.split(",").map(x => x.trim()).filter(Boolean),
     },
+    webauthn: {
+      enabled: $("#auth-webauthn-enabled").checked,
+      origin: $("#auth-webauthn-origin").value.trim(),
+      rp_id: $("#auth-webauthn-rp-id").value.trim(),
+    },
   };
   $("#auth-status").textContent = tr("status.saving");
   try {
@@ -1980,6 +2321,7 @@ $("#auth-save")?.addEventListener("click", async () => {
       _markTabDirty("auth", false);
       authData.settings = r.settings;
       _showSubcard(r.settings.mode);
+      renderAuthGuard(r.settings);
     } else {
       notifyError("auth-save", new Error(r.error || "unknown"), { status: "#auth-status" });
     }
@@ -1987,6 +2329,88 @@ $("#auth-save")?.addEventListener("click", async () => {
     notifyError("auth-save", e, { status: "#auth-status" });
   }
 });
+
+async function createAuthToken() {
+  const status = $("#token-status");
+  const body = {
+    name: $("#token-name").value.trim(),
+    kind: $("#token-kind").value,
+    expires_in_days: parseInt($("#token-expires-days").value, 10) || null,
+    scopes: selectedTokenScopes(),
+  };
+  status.textContent = tr("status.saving");
+  try {
+    const r = await J("/api/auth/tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: {"Content-Type": "application/json"},
+    });
+    const once = $("#token-once");
+    once.classList.remove("hidden");
+    once.textContent = tr("auth.token_once") + "\n" + r.token;
+    status.textContent = tr("auth.token_created");
+    await loadAuth();
+  } catch (e) {
+    notifyError("auth-token-create", e, { status });
+  }
+}
+
+async function revokeAuthToken(id) {
+  if (!confirm(tr("auth.revoke_confirm"))) return;
+  try {
+    await J("/api/auth/tokens/revoke", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+      headers: {"Content-Type": "application/json"},
+    });
+    await loadAuth();
+  } catch (e) {
+    notifyError("auth-token-revoke", e, { status: "#token-status" });
+  }
+}
+
+async function registerPasskey() {
+  if (!window.PublicKeyCredential || !navigator.credentials?.create) {
+    notifyError("passkey-register", new Error(tr("auth.passkey_unsupported")), { status: "#passkey-status" });
+    return;
+  }
+  const status = $("#passkey-status");
+  status.textContent = tr("status.saving");
+  try {
+    const start = await J("/api/auth/passkeys/register/start", {
+      method: "POST",
+      body: JSON.stringify({ name: $("#passkey-name").value.trim() || "passkey" }),
+      headers: {"Content-Type": "application/json"},
+    });
+    const credential = await navigator.credentials.create({ publicKey: webauthnCreateOptions(start.publicKey) });
+    await J("/api/auth/passkeys/register/finish", {
+      method: "POST",
+      body: JSON.stringify({ request_id: start.request_id, credential: webauthnCreatePayload(credential) }),
+      headers: {"Content-Type": "application/json"},
+    });
+    status.textContent = tr("auth.passkey_registered");
+    await loadAuth();
+  } catch (e) {
+    notifyError("passkey-register", e, { status });
+  }
+}
+
+async function deletePasskey(id) {
+  if (!confirm(tr("auth.passkey_delete_confirm"))) return;
+  try {
+    await J("/api/auth/passkeys/delete", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+      headers: {"Content-Type": "application/json"},
+    });
+    await loadAuth();
+  } catch (e) {
+    notifyError("passkey-delete", e, { status: "#passkey-status" });
+  }
+}
+
+$("#token-create")?.addEventListener("click", createAuthToken);
+$("#passkey-register")?.addEventListener("click", registerPasskey);
 
 document.querySelectorAll('[data-tab="auth"]').forEach(btn => {
   btn.addEventListener("click", () => { loadAuth(); });
@@ -2322,7 +2746,7 @@ document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
 
 // ---- Polling ----
 async function refreshAll() {
-  await Promise.all([loadStatus(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules(), loadAcks()]);
+  await Promise.all([loadStatus(), loadCurrentUser(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules(), loadAcks()]);
 }
 refreshAll();
 setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
@@ -2338,6 +2762,7 @@ document.addEventListener("klaxond:languagechange", () => {
   if (!_dirtyTabs.has("delivery")) { renderDeliveryDefault(); renderPoliciesTable(); renderRulesTable(); }
   if (!_dirtyTabs.has("grouping")) renderDedupCards();
   if (!_dirtyTabs.has("auth")) loadAuth();
+  refreshTablePagers();
   if (document.querySelector("#tab-flow.active")) loadFlow();
   if (document.querySelector("#tab-logs.active")) loadLogs();
 });
@@ -2467,6 +2892,7 @@ function _wireDirtyTracking() {
     pane.addEventListener("input", e => {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
+      if (t.closest(".table-pager")) return;
       // Skip search/filter fields — those aren't edits
       if (t.type === "search" || t.id === "deliv-filter" || t.id === "inhib-test-labels") return;
       _markTabDirty(tabId, true);
@@ -2474,6 +2900,7 @@ function _wireDirtyTracking() {
     pane.addEventListener("change", e => {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
+      if (t.closest(".table-pager")) return;
       if (t.id === "deliv-show-suppressed" || t.id === "inhib-test-source") return;
       _markTabDirty(tabId, true);
     });

@@ -1,9 +1,9 @@
-use crate::config::AuthConfig;
+use crate::config::{AuthConfig, AuthToken};
 use crate::state::{AppState, lock_mutex};
 use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch_i64, token_urlsafe};
 use axum::body::Body;
 use axum::http::header::{AUTHORIZATION, COOKIE, HOST, SET_COOKIE, WWW_AUTHENTICATE};
-use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use axum::response::IntoResponse;
 use bcrypt::verify;
 use constant_time_eq::constant_time_eq;
@@ -11,6 +11,7 @@ use ipnet::IpNet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::net::{IpAddr, SocketAddr};
 use url::Url;
 
@@ -31,11 +32,30 @@ const PUBLIC_PREFIXES: &[&str] = &[
     "/auth/login",
     "/auth/callback",
     "/auth/logout",
+    "/auth/passkey",
     "/static/",
     "/favicon.ico",
 ];
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
+
+pub const TOKEN_SCOPES: &[&str] = &[
+    "admin:*",
+    "admin:read",
+    "status:read",
+    "logs:read",
+    "config:read",
+    "config:write",
+    "auth:read",
+    "auth:write",
+    "routing:write",
+    "render:write",
+    "cascade:write",
+    "delivery:write",
+    "dedup:write",
+    "inhibitions:write",
+    "test:write",
+];
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct User {
@@ -65,6 +85,7 @@ pub fn is_public(path: &str) -> bool {
 pub async fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
+    method: &Method,
     path: &str,
     peer: Option<SocketAddr>,
 ) -> AuthOutcome {
@@ -82,6 +103,9 @@ pub async fn authenticate(
             None,
         );
     }
+    if let Some(token) = bearer_token(headers) {
+        return authenticate_api_token(&cfg, &token, method, path);
+    }
     if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
         for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
             if let Some(user) = verify_session(state, value) {
@@ -98,6 +122,128 @@ pub async fn authenticate(
         }
         _ => AuthOutcome::Rejected(StatusCode::FORBIDDEN.into_response()),
     }
+}
+
+fn authenticate_api_token(
+    cfg: &AuthConfig,
+    token: &str,
+    method: &Method,
+    path: &str,
+) -> AuthOutcome {
+    let hash = token_hash(token);
+    let now = now_epoch_i64();
+    let Some(record) = cfg.api_keys.iter().find(|record| {
+        record.enabled
+            && record
+                .expires_at
+                .map(|expires_at| expires_at > now)
+                .unwrap_or(true)
+            && constant_time_eq(record.token_hash.as_bytes(), hash.as_bytes())
+    }) else {
+        return AuthOutcome::Rejected(
+            (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response(),
+        );
+    };
+    let required = required_scope(method, path);
+    if !has_scope(&record.scopes, required) {
+        return AuthOutcome::Rejected(
+            (
+                StatusCode::FORBIDDEN,
+                format!("token missing required scope '{required}'"),
+            )
+                .into_response(),
+        );
+    }
+
+    AuthOutcome::Authorized(
+        User {
+            sub: format!("token:{}", record.name),
+            email: String::new(),
+            name: record.name.clone(),
+            groups: record.scopes.clone(),
+            mode: record.kind.clone(),
+            exp: record.expires_at.unwrap_or(0),
+        },
+        None,
+    )
+}
+
+fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| {
+            v.strip_prefix("Bearer ")
+                .or_else(|| v.strip_prefix("bearer "))
+        })
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+pub fn token_hash(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+pub fn public_token(record: &AuthToken) -> Value {
+    serde_json::json!({
+        "id": record.id,
+        "name": record.name,
+        "kind": record.kind,
+        "prefix": record.prefix,
+        "scopes": record.scopes,
+        "created_at": record.created_at,
+        "expires_at": record.expires_at,
+        "last_used_at": record.last_used_at,
+        "enabled": record.enabled,
+    })
+}
+
+pub fn required_scope(method: &Method, path: &str) -> &'static str {
+    if *method == Method::GET {
+        return match path {
+            "/api/auth-config" | "/auth/me" => "auth:read",
+            "/api/logs" => "logs:read",
+            "/api/config/backup" | "/api/config/export" | "/api/config/backups" => "config:read",
+            "/api/status" | "/api/deliveries" | "/api/cascade-config" => "status:read",
+            _ => "admin:read",
+        };
+    }
+    match path {
+        "/api/auth-config"
+        | "/api/auth/tokens"
+        | "/api/auth/tokens/revoke"
+        | "/api/auth/passkeys/register/start"
+        | "/api/auth/passkeys/register/finish"
+        | "/api/auth/passkeys/delete" => "auth:write",
+        "/api/config/restore" => "config:write",
+        "/api/channel-config" | "/api/ntfy-topics" | "/api/ingest-auth" => "routing:write",
+        "/api/render-config" | "/api/render-preview" => "render:write",
+        "/api/cascade-config" | "/api/cascade/toggle" => "cascade:write",
+        "/api/delivery-config" => "delivery:write",
+        "/api/dedup-config" => "dedup:write",
+        "/api/inhibition-rules"
+        | "/api/inhibition-rules/test"
+        | "/api/inhibitions/clear"
+        | "/api/schedules"
+        | "/api/acks/clear" => "inhibitions:write",
+        _ if path.starts_with("/api/test/") => "test:write",
+        _ => "admin:*",
+    }
+}
+
+fn has_scope(scopes: &[String], required: &str) -> bool {
+    scopes.iter().any(|scope| {
+        let scope = scope.as_str();
+        scope == "admin:*"
+            || scope == required
+            || (scope == "admin:read" && required.ends_with(":read"))
+            || scope
+                .strip_suffix(":*")
+                .zip(required.split_once(':'))
+                .map(|(prefix, (group, _))| prefix == group)
+                .unwrap_or(false)
+    })
 }
 
 fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -> AuthOutcome {
@@ -422,6 +568,11 @@ fn issue_session(state: &AppState, cfg: &AuthConfig, user: &mut User) -> String 
         "{AUTH_SESSION_COOKIE}={val}; HttpOnly; Path=/; SameSite=Lax; Max-Age={}",
         cfg.session_timeout_hours * 3600
     )
+}
+
+pub fn issue_session_cookie(state: &AppState, user: &mut User) -> String {
+    let cfg = state.cfg().auth;
+    issue_session(state, &cfg, user)
 }
 
 fn verify_session(state: &AppState, cookie_value: &str) -> Option<User> {

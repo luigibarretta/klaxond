@@ -11,6 +11,11 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
   await expect(page.locator('[data-tab="logs"]')).toBeVisible();
   await expect(page.locator('[data-tab="preview"]')).toBeVisible();
+  await expect(page.locator("#sidebar-user-card")).toBeVisible();
+  await page.click("#sidebar-toggle");
+  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await page.click("#sidebar-toggle");
+  await expect(page.locator("body")).not.toHaveClass(/sidebar-collapsed/);
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
   await expect(page.locator("#stat-log-retained")).toContainText(/\/500/);
   await expect(page.locator("#stat-log-severity")).toContainText(/WARN \d+ \/ ERROR \d+/);
@@ -74,6 +79,36 @@ test("backend logs are paginated in the UI and API", async ({ page, request }) =
   await expect(page.locator("#logs-page-info")).toContainText(/Page 1 \/ [2-9]\d*/);
 });
 
+test("recent deliveries are paginated", async ({ page, request }) => {
+  for (let i = 0; i < 32; i++) {
+    const res = await request.post("/webhook/warning?dry_run=1", {
+      headers: { Authorization: "bearer e2e-secret" },
+      data: {
+        status: "firing",
+        commonLabels: {
+          alertname: `DeliveryPaginationProbe${i}`,
+          component: "host",
+          host: `dev-${i}`
+        }
+      }
+    });
+    await expect(res).toBeOK();
+  }
+
+  await page.goto("/ui/index.html#deliveries");
+  const pager = page.locator('[data-table-pager="t-deliv"]');
+  await expect(pager).toBeVisible();
+  await page.selectOption('[data-table-pager="t-deliv"] [data-pager-size]', "10");
+  await expect(pager.locator("[data-pager-range]")).toContainText(/1-10 \/ \d+/);
+  await expect(page.locator("#t-deliv tbody tr.deliv-row:visible")).toHaveCount(10);
+  await expect(pager.locator("[data-pager-next]")).toBeEnabled();
+
+  await pager.locator("[data-pager-next]").click();
+  await expect(pager.locator("[data-pager-range]")).toContainText(/11-20 \/ \d+/);
+  await expect(page.locator("#t-deliv tbody tr.deliv-row:visible")).toHaveCount(10);
+  await expect(pager.locator("[data-pager-prev]")).toBeEnabled();
+});
+
 test("backend logs fetch failure clears stale count", async ({ page }) => {
   await page.goto("/ui/index.html#logs");
   await expect(page.locator("#logs-count")).toContainText(/log line/);
@@ -127,7 +162,7 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
   await page.selectOption("#language-select", "it");
   await expect(page.locator("html")).toHaveAttribute("lang", "it");
   await expect(page.locator('[data-tab="status"]')).toHaveText("Stato");
-  await expect(page.locator('[data-tab="deliveries"]')).toHaveText("Consegne recenti");
+  await expect(page.locator('[data-tab="deliveries"]')).toContainText("Consegne recenti");
   await expect(page).toHaveTitle(/demone notifiche/);
   await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.lang"))).toBe("it");
@@ -274,6 +309,68 @@ test("full config export includes TOML sidecars and runtime settings", async ({ 
 });
 
 test("backend logs require admin auth when auth is enabled", async ({ request }) => {
+  const unsafeBasic = await request.post("/api/auth-config", {
+    data: {
+      settings: {
+        mode: "basic",
+        basic: { username: "admin" }
+      }
+    }
+  });
+  expect(unsafeBasic.status()).toBe(400);
+  expect(await unsafeBasic.text()).toContain("password");
+
+  const unsafeOidc = await request.post("/api/auth-config", {
+    data: {
+      settings: {
+        mode: "oidc",
+        oidc: {
+          issuer: "https://idp.example.test",
+          client_id: "klaxond",
+          redirect_path: "/custom/callback"
+        }
+      }
+    }
+  });
+  expect(unsafeOidc.status()).toBe(400);
+  expect(await unsafeOidc.text()).toContain("/auth/callback");
+
+  const unsafeTrustedProxy = await request.post("/api/auth-config", {
+    data: {
+      settings: {
+        mode: "trusted-proxy",
+        trusted_proxy: {
+          user_header: "X-Forwarded-User",
+          trusted_cidrs: ["127.0.0.1/32"]
+        }
+      }
+    }
+  });
+  expect(unsafeTrustedProxy.status()).toBe(400);
+  expect(await unsafeTrustedProxy.text()).toContain("X-Forwarded-User");
+
+  const scopedToken = await request.post("/api/auth/tokens", {
+    data: {
+      name: "logs-reader",
+      kind: "pat",
+      scopes: ["logs:read"]
+    }
+  });
+  await expect(scopedToken).toBeOK();
+  const scopedPayload = await scopedToken.json();
+  expect(scopedPayload.token).toMatch(/^klx_pat_/);
+  expect(JSON.stringify(scopedPayload.record)).not.toContain("token_hash");
+
+  const wrongToken = await request.post("/api/auth/tokens", {
+    data: {
+      name: "status-only",
+      kind: "api-key",
+      scopes: ["status:read"]
+    }
+  });
+  await expect(wrongToken).toBeOK();
+  const wrongPayload = await wrongToken.json();
+
   const update = await request.post("/api/auth-config", {
     data: {
       settings: {
@@ -286,6 +383,9 @@ test("backend logs require admin auth when auth is enabled", async ({ request })
     }
   });
   await expect(update).toBeOK();
+  const updatedAuth = await update.json();
+  expect(JSON.stringify(updatedAuth.settings)).not.toContain("token_hash");
+  expect(JSON.stringify(updatedAuth.settings)).not.toContain("credential");
 
   const denied = await request.get("/api/logs?limit=1");
   expect(denied.status()).toBe(401);
@@ -296,4 +396,14 @@ test("backend logs require admin auth when auth is enabled", async ({ request })
     headers: { Authorization: `Basic ${token}` }
   });
   await expect(allowed).toBeOK();
+
+  const bearerAllowed = await request.get("/api/logs?limit=1", {
+    headers: { Authorization: `Bearer ${scopedPayload.token}` }
+  });
+  await expect(bearerAllowed).toBeOK();
+
+  const bearerDenied = await request.get("/api/logs?limit=1", {
+    headers: { Authorization: `Bearer ${wrongPayload.token}` }
+  });
+  expect(bearerDenied.status()).toBe(403);
 });

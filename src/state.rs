@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 use tokio::sync::Mutex as AsyncMutex;
+use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration, Uuid};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -30,6 +31,8 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub dedup: Arc<AsyncMutex<DedupQueues>>,
     pub oidc_states: Arc<Mutex<HashMap<String, (f64, String)>>>,
+    pub passkey_registrations: Arc<Mutex<HashMap<String, PendingPasskeyRegistration>>>,
+    pub passkey_authentications: Arc<Mutex<HashMap<String, PendingPasskeyAuthentication>>>,
 }
 
 #[derive(Clone)]
@@ -79,6 +82,24 @@ pub struct DedupItem {
     pub dedup_key: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct PendingPasskeyRegistration {
+    pub ts: f64,
+    pub user_sub: String,
+    pub user_name: String,
+    pub user_email: String,
+    pub user_uuid: Uuid,
+    pub label: String,
+    pub state: PasskeyRegistration,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingPasskeyAuthentication {
+    pub ts: f64,
+    pub user_sub: String,
+    pub state: PasskeyAuthentication,
+}
+
 impl AppState {
     pub fn new(paths: Paths) -> Result<Self> {
         let cfg = load_runtime_config(&paths)?;
@@ -108,6 +129,8 @@ impl AppState {
             metrics: Arc::new(Metrics::default()),
             dedup: Arc::new(AsyncMutex::new(queues)),
             oidc_states: Arc::new(Mutex::new(HashMap::new())),
+            passkey_registrations: Arc::new(Mutex::new(HashMap::new())),
+            passkey_authentications: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 

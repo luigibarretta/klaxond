@@ -1,5 +1,29 @@
 # Klaxond — CHANGELOG
 
+## 0.14.0 — 2026-07-01
+
+- Sostituita la top navigation con una sidebar responsive e collassabile,
+  con card utente/avatar in fondo e preferenze lingua/tema integrate.
+- Aggiunti API key/PAT granulari con scope per endpoint admin, token mostrato
+  una sola volta, revoca e autenticazione Bearer con enforcement server-side.
+- Aggiunto supporto WebAuthn/passkey: configurazione RP/origin, registrazione
+  passkey da utente autenticato, pagina login passkey pubblica e session cookie
+  emesso solo dopo verifica WebAuthn.
+- Rafforzata la configurazione Auth con guard anti-lockout server-side per
+  Basic, OIDC e trusted-proxy.
+- Estesa la paginazione client-side a tutte le tabelle admin che possono
+  crescere, incluse delivery, inhibition, schedules, cascade, token e passkey.
+
+## 0.13.5 — 2026-07-01
+
+- Estesa la paginazione client-side alle tabelle UI che possono crescere:
+  consegne recenti, regole/soppressioni/ack/schedulazioni, render mapping e
+  policy/rules delivery.
+- Aggiunto un pager riusabile con page size, range corrente e controlli
+  prima/precedente/successiva/ultima.
+- I controlli di paginazione non marcano piu' i tab come dirty e le righe
+  nascoste restano nel DOM per salvataggi, validazioni ed export.
+
 ## 0.13.4 — 2026-07-01
 
 - Aggiunta paginazione reale a `/api/logs` con `limit` + `offset` e metadata

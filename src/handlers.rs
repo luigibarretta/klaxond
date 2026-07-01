@@ -1,8 +1,9 @@
 use crate::auth::{self, AuthOutcome, User};
 use crate::config::{
-    AuthConfig, DEDUP_SOURCES, DedupSetting, InhibitionRule, NtfyTopic, Schedule, default_dedup,
-    default_tiers, load_runtime_config, restore_sidecars_from_toml, save_auth, save_dedup,
-    save_ntfy_topics, save_render_config, save_toml,
+    AuthConfig, AuthToken, DEDUP_SOURCES, DedupSetting, InhibitionRule, NtfyTopic, PasskeyRecord,
+    RuntimeConfig, Schedule, default_dedup, default_tiers, load_runtime_config,
+    restore_sidecars_from_toml, save_auth, save_dedup, save_ntfy_topics, save_render_config,
+    save_toml,
 };
 use crate::dedup;
 use crate::delivery::deliver;
@@ -12,8 +13,10 @@ use crate::parsers::{
     Parts, normalize_labels, parse_beszel_payload, parse_grafana_payload,
     parse_healthchecks_payload, parse_source, parse_wud_payload,
 };
-use crate::state::{AppState, esc_label, lock_mutex};
-use crate::util::{atomic_write, env_string, random_hex, toml_table_mut};
+use crate::state::{
+    AppState, PendingPasskeyAuthentication, PendingPasskeyRegistration, esc_label, lock_mutex,
+};
+use crate::util::{atomic_write, env_string, random_hex, token_urlsafe, toml_table_mut};
 use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::header::{
@@ -22,13 +25,18 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
 use chrono::{DateTime, Utc};
+use ipnet::IpNet;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use url::form_urlencoded;
+use url::{Url, form_urlencoded};
+use webauthn_rs::prelude::{
+    CredentialID, Passkey, PublicKeyCredential, RegisterPublicKeyCredential, Uuid, Webauthn,
+    WebauthnBuilder,
+};
 
 pub async fn dispatch(
     State(state): State<AppState>,
@@ -58,7 +66,7 @@ pub async fn dispatch(
     let mut authed_user: Option<User> = None;
     let mut pending_cookie: Option<String> = None;
     if !auth::is_public(&path) {
-        match auth::authenticate(&state, &headers, &full_path, Some(peer)).await {
+        match auth::authenticate(&state, &headers, &method, &path, Some(peer)).await {
             AuthOutcome::Authorized(user, cookie) => {
                 authed_user = Some(user);
                 pending_cookie = cookie;
@@ -69,7 +77,9 @@ pub async fn dispatch(
 
     let mut resp = match method {
         Method::GET => handle_get(&state, &path, &full_path, authed_user).await,
-        Method::POST => handle_post(&state, &path, &full_path, &headers, body, peer).await,
+        Method::POST => {
+            handle_post(&state, &path, &full_path, &headers, body, peer, authed_user).await
+        }
         _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
     };
     if let Some(cookie) = pending_cookie
@@ -128,12 +138,42 @@ async fn handle_get(
             {
                 settings["oidc"]["client_secret"] = json!("***SET***");
             }
+            let cfg = state.cfg();
+            settings["api_keys"] = json!(
+                cfg.auth
+                    .api_keys
+                    .iter()
+                    .map(auth::public_token)
+                    .collect::<Vec<_>>()
+            );
+            settings["passkeys"] = json!(
+                cfg.auth
+                    .passkeys
+                    .iter()
+                    .map(public_passkey)
+                    .collect::<Vec<_>>()
+            );
             json_response(json!({
                 "settings": settings,
                 "available_modes": ["none", "basic", "oidc", "trusted-proxy"],
+                "available_token_scopes": auth::TOKEN_SCOPES,
                 "bcrypt_available": true,
                 "jwt_available": true,
                 "current_user": authed_user.unwrap_or(User { sub: "anonymous".into(), email: String::new(), name: String::new(), groups: vec![], mode: "none".into(), exp: 0 }),
+            }))
+        }
+        "/api/auth/tokens" => {
+            let cfg = state.cfg();
+            json_response(json!({
+                "tokens": cfg.auth.api_keys.iter().map(auth::public_token).collect::<Vec<_>>(),
+                "available_scopes": auth::TOKEN_SCOPES,
+            }))
+        }
+        "/api/auth/passkeys" => {
+            let cfg = state.cfg();
+            json_response(json!({
+                "webauthn": webauthn_public_config(&cfg),
+                "passkeys": cfg.auth.passkeys.iter().map(public_passkey).collect::<Vec<_>>(),
             }))
         }
         "/api/ntfy-topics" => {
@@ -197,6 +237,7 @@ async fn handle_get(
             mode: "none".into(),
             exp: 0,
         })),
+        "/auth/passkey" | "/auth/passkey/" => passkey_login_page(),
         _ if path.starts_with("/img/") => image_response(state, path),
         _ if path.starts_with("/ui/") => static_response(state, path.trim_start_matches("/ui/")),
         _ if path.starts_with("/api/ack/") => ack_response(state, path),
@@ -211,9 +252,19 @@ async fn handle_post(
     headers: &HeaderMap,
     body: Bytes,
     peer: SocketAddr,
+    authed_user: Option<User>,
 ) -> Response<Body> {
     match path {
-        "/api/auth-config" => update_auth_config(state, body),
+        "/auth/passkey/start" => passkey_login_start(state, body),
+        "/auth/passkey/finish" => passkey_login_finish(state, body),
+        "/api/auth-config" => update_auth_config(state, body, authed_user.as_ref(), peer, headers),
+        "/api/auth/tokens" => create_auth_token(state, body),
+        "/api/auth/tokens/revoke" => revoke_auth_token(state, body),
+        "/api/auth/passkeys/register/start" => {
+            passkey_register_start(state, body, authed_user.as_ref())
+        }
+        "/api/auth/passkeys/register/finish" => passkey_register_finish(state, body),
+        "/api/auth/passkeys/delete" => passkey_delete(state, body, authed_user.as_ref()),
         "/api/cascade/toggle" => cascade_toggle(state, body),
         "/api/render-config" => update_render_config(state, body),
         "/api/cascade-config" => update_cascade_config(state, body),
@@ -737,7 +788,90 @@ fn update_dedup_config(state: &AppState, body: Bytes) -> Response<Body> {
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
-fn update_auth_config(state: &AppState, body: Bytes) -> Response<Body> {
+fn validate_auth_config(
+    auth: &AuthConfig,
+    current_user: Option<&User>,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+) -> Result<(), String> {
+    match auth.mode.as_str() {
+        "none" => Ok(()),
+        "basic" => {
+            if auth.basic.username.trim().is_empty() {
+                return Err("basic auth requires a username".into());
+            }
+            if auth.basic.password_hash.trim().is_empty() {
+                return Err("basic auth requires a password before it can be enabled".into());
+            }
+            Ok(())
+        }
+        "oidc" => {
+            if auth.oidc.issuer.trim().is_empty() || auth.oidc.client_id.trim().is_empty() {
+                return Err("OIDC requires issuer and client_id before it can be enabled".into());
+            }
+            if auth.oidc.redirect_path != "/auth/callback" {
+                return Err("OIDC redirect_path must be /auth/callback".into());
+            }
+            if let Some(user) = current_user
+                && !auth.oidc.required_group.trim().is_empty()
+                && user.mode == "oidc"
+                && !user.groups.iter().any(|g| g == &auth.oidc.required_group)
+            {
+                return Err(format!(
+                    "current OIDC user is not in required_group '{}'",
+                    auth.oidc.required_group
+                ));
+            }
+            Ok(())
+        }
+        "trusted-proxy" => {
+            if auth.trusted_proxy.user_header.trim().is_empty() {
+                return Err("trusted-proxy requires a user header".into());
+            }
+            if auth.trusted_proxy.trusted_cidrs.is_empty() {
+                return Err("trusted-proxy requires at least one trusted CIDR".into());
+            }
+            for cidr in &auth.trusted_proxy.trusted_cidrs {
+                cidr.parse::<IpNet>()
+                    .map_err(|_| format!("invalid trusted CIDR '{cidr}'"))?;
+            }
+            if !cidr_match(peer.ip(), &auth.trusted_proxy.trusted_cidrs) {
+                return Err(format!(
+                    "current peer {} is not covered by trusted_proxy.trusted_cidrs",
+                    peer.ip()
+                ));
+            }
+            if headers
+                .get(auth.trusted_proxy.user_header.as_str())
+                .and_then(|v| v.to_str().ok())
+                .filter(|v| !v.trim().is_empty())
+                .is_none()
+            {
+                return Err(format!(
+                    "current request is missing trusted proxy user header '{}'",
+                    auth.trusted_proxy.user_header
+                ));
+            }
+            Ok(())
+        }
+        _ => Err("invalid mode".into()),
+    }
+}
+
+fn cidr_match(ip: IpAddr, cidrs: &[String]) -> bool {
+    cidrs
+        .iter()
+        .filter_map(|c| c.parse::<IpNet>().ok())
+        .any(|net| net.contains(&ip))
+}
+
+fn update_auth_config(
+    state: &AppState,
+    body: Bytes,
+    current_user: Option<&User>,
+    peer: SocketAddr,
+    headers: &HeaderMap,
+) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
@@ -823,6 +957,20 @@ fn update_auth_config(state: &AppState, body: Bytes) -> Response<Body> {
                         .collect();
                 }
             }
+            if let Some(w) = incoming.get("webauthn").and_then(|v| v.as_object()) {
+                if let Some(v) = w.get("enabled").and_then(|v| v.as_bool()) {
+                    auth.webauthn.enabled = v;
+                }
+                if let Some(v) = w.get("rp_id").and_then(|v| v.as_str()) {
+                    auth.webauthn.rp_id = v.trim().to_string();
+                }
+                if let Some(v) = w.get("origin").and_then(|v| v.as_str()) {
+                    auth.webauthn.origin = v.trim().trim_end_matches('/').to_string();
+                }
+            }
+            if let Err(err) = validate_auth_config(&auth, current_user, peer, headers) {
+                return text(StatusCode::BAD_REQUEST, &err);
+            }
             if let Err(err) = save_auth(&state.paths, &auth) {
                 return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
             }
@@ -843,10 +991,537 @@ fn update_auth_config(state: &AppState, body: Bytes) -> Response<Body> {
             {
                 redacted["oidc"]["client_secret"] = json!("***SET***");
             }
+            redacted["api_keys"] = json!(
+                cfg.auth
+                    .api_keys
+                    .iter()
+                    .map(auth::public_token)
+                    .collect::<Vec<_>>()
+            );
+            redacted["passkeys"] = json!(
+                cfg.auth
+                    .passkeys
+                    .iter()
+                    .map(public_passkey)
+                    .collect::<Vec<_>>()
+            );
             state.replace_config(cfg);
             json_response(json!({"ok": true, "settings": redacted}))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn create_auth_token(state: &AppState, body: Bytes) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let name = payload
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if name.is_empty() {
+        return text(StatusCode::BAD_REQUEST, "token name is required");
+    }
+    let kind = payload
+        .get("kind")
+        .and_then(|v| v.as_str())
+        .unwrap_or("api-key")
+        .trim();
+    if !matches!(kind, "api-key" | "pat") {
+        return text(StatusCode::BAD_REQUEST, "kind must be api-key or pat");
+    }
+    let scopes = payload
+        .get("scopes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if scopes.is_empty() {
+        return text(StatusCode::BAD_REQUEST, "at least one scope is required");
+    }
+    for scope in &scopes {
+        if !auth::TOKEN_SCOPES.contains(&scope.as_str()) {
+            return text(StatusCode::BAD_REQUEST, &format!("invalid scope '{scope}'"));
+        }
+    }
+    let now = crate::util::now_epoch_i64();
+    let expires_at = payload
+        .get("expires_in_days")
+        .and_then(|v| v.as_u64())
+        .filter(|days| *days > 0)
+        .map(|days| now + (days.min(3650) * 86_400) as i64)
+        .or_else(|| {
+            payload
+                .get("expires_at")
+                .and_then(|v| v.as_i64())
+                .filter(|v| *v > now)
+        });
+    let token = format!(
+        "klx_{}_{}",
+        if kind == "pat" { "pat" } else { "key" },
+        token_urlsafe(32)
+    );
+    let record = AuthToken {
+        id: random_hex(8),
+        name: name.to_string(),
+        kind: kind.to_string(),
+        prefix: token.chars().take(18).collect(),
+        token_hash: auth::token_hash(&token),
+        scopes,
+        created_at: now,
+        expires_at,
+        last_used_at: None,
+        enabled: true,
+    };
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            cfg.auth.api_keys.push(record.clone());
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            state.replace_config(cfg);
+            json_response(json!({
+                "ok": true,
+                "token": token,
+                "record": auth::public_token(&record),
+            }))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn revoke_auth_token(state: &AppState, body: Bytes) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return text(StatusCode::BAD_REQUEST, "token id is required");
+    }
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            let mut changed = false;
+            for token in &mut cfg.auth.api_keys {
+                if token.id == id {
+                    token.enabled = false;
+                    changed = true;
+                }
+            }
+            if !changed {
+                return text(StatusCode::NOT_FOUND, "token not found");
+            }
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            state.replace_config(cfg);
+            json_response(json!({"ok": true}))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn webauthn_for_cfg(cfg: &RuntimeConfig) -> Result<Webauthn, String> {
+    if !cfg.auth.webauthn.enabled {
+        return Err("WebAuthn/passkeys are disabled".into());
+    }
+    let origin = if cfg.auth.webauthn.origin.trim().is_empty() {
+        cfg.public_url.trim_end_matches('/').to_string()
+    } else {
+        cfg.auth.webauthn.origin.trim_end_matches('/').to_string()
+    };
+    let url = Url::parse(&origin).map_err(|err| format!("invalid WebAuthn origin: {err}"))?;
+    let rp_id = if cfg.auth.webauthn.rp_id.trim().is_empty() {
+        url.domain()
+            .ok_or_else(|| "WebAuthn origin must have a domain host".to_string())?
+            .to_string()
+    } else {
+        cfg.auth.webauthn.rp_id.trim().to_string()
+    };
+    WebauthnBuilder::new(&rp_id, &url)
+        .map_err(|err| format!("invalid WebAuthn relying party: {err}"))?
+        .rp_name("klaxond")
+        .allow_any_port(matches!(
+            url.host_str(),
+            Some("localhost" | "127.0.0.1" | "::1")
+        ))
+        .build()
+        .map_err(|err| format!("invalid WebAuthn config: {err}"))
+}
+
+fn webauthn_public_config(cfg: &RuntimeConfig) -> Value {
+    let origin = if cfg.auth.webauthn.origin.trim().is_empty() {
+        cfg.public_url.trim_end_matches('/').to_string()
+    } else {
+        cfg.auth.webauthn.origin.trim_end_matches('/').to_string()
+    };
+    let rp_id = if cfg.auth.webauthn.rp_id.trim().is_empty() {
+        Url::parse(&origin)
+            .ok()
+            .and_then(|url| url.domain().map(ToOwned::to_owned))
+            .unwrap_or_default()
+    } else {
+        cfg.auth.webauthn.rp_id.clone()
+    };
+    json!({
+        "enabled": cfg.auth.webauthn.enabled,
+        "rp_id": rp_id,
+        "origin": origin,
+    })
+}
+
+fn public_passkey(record: &PasskeyRecord) -> Value {
+    json!({
+        "id": record.id,
+        "name": record.name,
+        "user_sub": record.user_sub,
+        "user_name": record.user_name,
+        "user_email": record.user_email,
+        "created_at": record.created_at,
+        "last_used_at": record.last_used_at,
+    })
+}
+
+fn passkey_register_start(
+    state: &AppState,
+    body: Bytes,
+    current_user: Option<&User>,
+) -> Response<Body> {
+    let Some(user) = current_user.filter(|u| u.sub != "anonymous") else {
+        return text(
+            StatusCode::FORBIDDEN,
+            "passkey registration requires a logged-in user",
+        );
+    };
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let label = payload
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("passkey")
+        .trim()
+        .chars()
+        .take(80)
+        .collect::<String>();
+    let cfg = state.cfg();
+    let webauthn = match webauthn_for_cfg(&cfg) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err),
+    };
+    let excludes = cfg
+        .auth
+        .passkeys
+        .iter()
+        .filter(|p| p.user_sub == user.sub)
+        .map(|p| p.credential.cred_id().clone())
+        .collect::<Vec<CredentialID>>();
+    let user_uuid = Uuid::new_v4();
+    let display_name = if user.name.is_empty() {
+        user.sub.as_str()
+    } else {
+        user.name.as_str()
+    };
+    let (challenge, reg_state) = match webauthn.start_passkey_registration(
+        user_uuid,
+        &user.sub,
+        display_name,
+        (!excludes.is_empty()).then_some(excludes),
+    ) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err.to_string()),
+    };
+    let request_id = random_hex(16);
+    {
+        let mut pending = lock_mutex(&state.passkey_registrations, "passkey registrations");
+        let cutoff = crate::util::now_epoch() - 600.0;
+        pending.retain(|_, v| v.ts >= cutoff);
+        pending.insert(
+            request_id.clone(),
+            PendingPasskeyRegistration {
+                ts: crate::util::now_epoch(),
+                user_sub: user.sub.clone(),
+                user_name: user.name.clone(),
+                user_email: user.email.clone(),
+                user_uuid,
+                label: if label.is_empty() {
+                    "passkey".into()
+                } else {
+                    label
+                },
+                state: reg_state,
+            },
+        );
+    }
+    json_response(json!({"ok": true, "request_id": request_id, "publicKey": challenge.public_key}))
+}
+
+fn passkey_register_finish(state: &AppState, body: Bytes) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let request_id = payload
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let Some(credential_value) = payload.get("credential") else {
+        return text(StatusCode::BAD_REQUEST, "missing credential");
+    };
+    let credential: RegisterPublicKeyCredential =
+        match serde_json::from_value(credential_value.clone()) {
+            Ok(v) => v,
+            Err(err) => return text(StatusCode::BAD_REQUEST, &format!("bad credential: {err}")),
+        };
+    let pending = {
+        let mut pending = lock_mutex(&state.passkey_registrations, "passkey registrations");
+        match pending.remove(request_id) {
+            Some(v) => v,
+            None => {
+                return text(
+                    StatusCode::BAD_REQUEST,
+                    "unknown or expired passkey request",
+                );
+            }
+        }
+    };
+    let cfg = state.cfg();
+    let webauthn = match webauthn_for_cfg(&cfg) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err),
+    };
+    let passkey = match webauthn.finish_passkey_registration(&credential, &pending.state) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err.to_string()),
+    };
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            if cfg
+                .auth
+                .passkeys
+                .iter()
+                .any(|record| record.credential.cred_id() == passkey.cred_id())
+            {
+                return text(StatusCode::CONFLICT, "passkey already registered");
+            }
+            let record = PasskeyRecord {
+                id: random_hex(8),
+                name: pending.label,
+                user_sub: pending.user_sub,
+                user_name: pending.user_name,
+                user_email: pending.user_email,
+                user_uuid: pending.user_uuid.to_string(),
+                created_at: crate::util::now_epoch_i64(),
+                last_used_at: None,
+                credential: passkey,
+            };
+            cfg.auth.passkeys.push(record.clone());
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            state.replace_config(cfg);
+            json_response(json!({"ok": true, "passkey": public_passkey(&record)}))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn passkey_login_start(state: &AppState, body: Bytes) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let user_hint = payload
+        .get("user")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if user_hint.is_empty() {
+        return text(StatusCode::BAD_REQUEST, "user is required");
+    }
+    let cfg = state.cfg();
+    let matching = cfg
+        .auth
+        .passkeys
+        .iter()
+        .filter(|record| {
+            [
+                record.user_sub.as_str(),
+                record.user_name.as_str(),
+                record.user_email.as_str(),
+            ]
+            .iter()
+            .any(|v| v.to_ascii_lowercase() == user_hint)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return text(StatusCode::NOT_FOUND, "no passkey registered for that user");
+    }
+    let webauthn = match webauthn_for_cfg(&cfg) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err),
+    };
+    let creds = matching
+        .iter()
+        .map(|record| record.credential.clone())
+        .collect::<Vec<Passkey>>();
+    let (challenge, auth_state) = match webauthn.start_passkey_authentication(&creds) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err.to_string()),
+    };
+    let request_id = random_hex(16);
+    {
+        let mut pending = lock_mutex(&state.passkey_authentications, "passkey authentications");
+        let cutoff = crate::util::now_epoch() - 600.0;
+        pending.retain(|_, v| v.ts >= cutoff);
+        pending.insert(
+            request_id.clone(),
+            PendingPasskeyAuthentication {
+                ts: crate::util::now_epoch(),
+                user_sub: matching[0].user_sub.clone(),
+                state: auth_state,
+            },
+        );
+    }
+    json_response(json!({"ok": true, "request_id": request_id, "publicKey": challenge.public_key}))
+}
+
+fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let request_id = payload
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let Some(credential_value) = payload.get("credential") else {
+        return text(StatusCode::BAD_REQUEST, "missing credential");
+    };
+    let credential: PublicKeyCredential = match serde_json::from_value(credential_value.clone()) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &format!("bad credential: {err}")),
+    };
+    let pending = {
+        let mut pending = lock_mutex(&state.passkey_authentications, "passkey authentications");
+        match pending.remove(request_id) {
+            Some(v) => v,
+            None => {
+                return text(
+                    StatusCode::BAD_REQUEST,
+                    "unknown or expired passkey request",
+                );
+            }
+        }
+    };
+    let cfg = state.cfg();
+    let webauthn = match webauthn_for_cfg(&cfg) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err),
+    };
+    let result = match webauthn.finish_passkey_authentication(&credential, &pending.state) {
+        Ok(v) => v,
+        Err(err) => return text(StatusCode::UNAUTHORIZED, &err.to_string()),
+    };
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            let now = crate::util::now_epoch_i64();
+            let mut matched_idx = None;
+            for (idx, record) in cfg.auth.passkeys.iter_mut().enumerate() {
+                if record.user_sub == pending.user_sub
+                    && record.credential.update_credential(&result).is_some()
+                {
+                    matched_idx = Some(idx);
+                    break;
+                }
+            }
+            let Some(idx) = matched_idx else {
+                return text(StatusCode::UNAUTHORIZED, "passkey credential not found");
+            };
+            let record = &mut cfg.auth.passkeys[idx];
+            record.last_used_at = Some(now);
+            let mut user = User {
+                sub: record.user_sub.clone(),
+                email: record.user_email.clone(),
+                name: record.user_name.clone(),
+                groups: vec!["passkey".into()],
+                mode: "passkey".into(),
+                exp: 0,
+            };
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            state.replace_config(cfg);
+            let cookie = auth::issue_session_cookie(state, &mut user);
+            let mut resp = json_response(json!({"ok": true, "user": user}));
+            if let Ok(value) = HeaderValue::from_str(&cookie) {
+                resp.headers_mut().insert(SET_COOKIE, value);
+            }
+            resp
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn passkey_delete(state: &AppState, body: Bytes, current_user: Option<&User>) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return text(StatusCode::BAD_REQUEST, "passkey id is required");
+    }
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            let before = cfg.auth.passkeys.len();
+            cfg.auth.passkeys.retain(|record| {
+                if record.id != id {
+                    return true;
+                }
+                if let Some(user) = current_user
+                    && user.mode == "passkey"
+                    && user.sub != record.user_sub
+                {
+                    return true;
+                }
+                false
+            });
+            if cfg.auth.passkeys.len() == before {
+                return text(StatusCode::NOT_FOUND, "passkey not found");
+            }
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+            }
+            state.replace_config(cfg);
+            json_response(json!({"ok": true}))
+        })
+        .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn passkey_login_page() -> Response<Body> {
+    let html = r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>klaxond passkey login</title><link rel="stylesheet" href="/ui/style.css"></head>
+<body><main class="passkey-login"><section class="card"><h1>klaxond</h1><h2>Passkey login</h2>
+<label>User, email or subject <input id="user" autocomplete="username webauthn"></label>
+<button id="login" class="primary">Use passkey</button><p id="status" class="muted"></p>
+<p><a href="/ui/index.html">Back to UI</a></p></section></main>
+<script>
+const b64uToBuf=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');s+='==='.slice((s.length+3)%4);const b=atob(s);const a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a.buffer};
+const bufToB64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+function publicKeyGetOptions(pk){pk.challenge=b64uToBuf(pk.challenge);(pk.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));return pk}
+function credentialGetPayload(c){return {id:c.id,rawId:bufToB64u(c.rawId),type:c.type,response:{authenticatorData:bufToB64u(c.response.authenticatorData),clientDataJSON:bufToB64u(c.response.clientDataJSON),signature:bufToB64u(c.response.signature),userHandle:c.response.userHandle?bufToB64u(c.response.userHandle):null},extensions:c.getClientExtensionResults?c.getClientExtensionResults():{}}}
+document.getElementById('login').onclick=async()=>{const s=document.getElementById('status');try{const user=document.getElementById('user').value.trim();const a=await fetch('/auth/passkey/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});if(!a.ok)throw new Error(await a.text());const ch=await a.json();const cred=await navigator.credentials.get({publicKey:publicKeyGetOptions(ch.publicKey)});const f=await fetch('/auth/passkey/finish',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request_id:ch.request_id,credential:credentialGetPayload(cred)})});if(!f.ok)throw new Error(await f.text());location.href='/ui/index.html'}catch(e){s.textContent=e.message||String(e);s.style.color='var(--red)'}};
+</script></body></html>"#;
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/html; charset=utf-8")
+        .body(Body::from(html))
+        .unwrap()
 }
 
 fn update_cascade_config(state: &AppState, body: Bytes) -> Response<Body> {

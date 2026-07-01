@@ -7,8 +7,9 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.13.4";
+pub const VERSION: &str = "0.14.0";
 pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",
@@ -178,6 +179,12 @@ pub struct AuthConfig {
     pub basic: BasicAuthConfig,
     pub oidc: OidcConfig,
     pub trusted_proxy: TrustedProxyConfig,
+    #[serde(default)]
+    pub webauthn: WebauthnConfig,
+    #[serde(default)]
+    pub api_keys: Vec<AuthToken>,
+    #[serde(default)]
+    pub passkeys: Vec<PasskeyRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -204,6 +211,58 @@ pub struct TrustedProxyConfig {
     pub email_header: String,
     pub groups_header: String,
     pub trusted_cidrs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WebauthnConfig {
+    pub enabled: bool,
+    pub rp_id: String,
+    pub origin: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AuthToken {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub prefix: String,
+    pub token_hash: String,
+    pub scopes: Vec<String>,
+    pub created_at: i64,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+    #[serde(default)]
+    pub last_used_at: Option<i64>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PasskeyRecord {
+    pub id: String,
+    pub name: String,
+    pub user_sub: String,
+    pub user_name: String,
+    pub user_email: String,
+    pub user_uuid: String,
+    pub created_at: i64,
+    #[serde(default)]
+    pub last_used_at: Option<i64>,
+    pub credential: Passkey,
+}
+
+impl Default for WebauthnConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            rp_id: String::new(),
+            origin: String::new(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for AuthConfig {
@@ -236,6 +295,9 @@ impl Default for AuthConfig {
                     "172.16.0.0/12".to_string(),
                 ],
             },
+            webauthn: WebauthnConfig::default(),
+            api_keys: Vec::new(),
+            passkeys: Vec::new(),
         }
     }
 }
@@ -949,6 +1011,9 @@ fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {
     base.basic = raw.basic;
     base.oidc = raw.oidc;
     base.trusted_proxy = raw.trusted_proxy;
+    base.webauthn = raw.webauthn;
+    base.api_keys = raw.api_keys;
+    base.passkeys = raw.passkeys;
     base
 }
 
