@@ -37,6 +37,14 @@ const PUBLIC_PREFIXES: &[&str] = &[
     "/favicon.ico",
 ];
 
+const PUBLIC_PATHS: &[&str] = &[
+    "/ui/privacy",
+    "/ui/accessibility",
+    "/ui/terms",
+    "/ui/cookies",
+    "/ui/legal",
+];
+
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
 
 pub const TOKEN_SCOPES: &[&str] = &[
@@ -77,9 +85,20 @@ pub enum AuthOutcome {
 }
 
 pub fn is_public(path: &str) -> bool {
+    if PUBLIC_PATHS.contains(&path) || is_public_ui_asset(path) {
+        return true;
+    }
     PUBLIC_PREFIXES
         .iter()
         .any(|p| path == *p || path.starts_with(p))
+}
+
+fn is_public_ui_asset(path: &str) -> bool {
+    path.starts_with("/ui/")
+        && path
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.contains('.'))
 }
 
 pub async fn authenticate(
@@ -849,6 +868,16 @@ mod tests {
         assert_eq!(sanitize_return_to("/auth/login?return_to=%2F"), "/");
         assert_eq!(sanitize_return_to("/auth"), "/");
         assert_eq!(sanitize_return_to(""), "/");
+    }
+
+    #[test]
+    fn legal_ui_pages_and_assets_are_public_but_admin_routes_are_not() {
+        assert!(is_public("/ui/privacy"));
+        assert!(is_public("/ui/accessibility"));
+        assert!(is_public("/ui/style.css"));
+        assert!(is_public("/ui/app.js"));
+        assert!(!is_public("/ui/status"));
+        assert!(!is_public("/ui/auth"));
     }
 
     #[test]

@@ -212,6 +212,27 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
   );
   expect(Math.abs(mobileFooterBottomGap)).toBeLessThanOrEqual(2);
+
+  const originalBundle = await exportConfigBundle(request);
+  try {
+    await enableBasicAuth(request);
+    const publicLegal = await request.get("/ui/privacy", { maxRedirects: 0 });
+    await expect(publicLegal).toBeOK();
+    expect(await publicLegal.text()).toContain("Privacy notice");
+
+    const publicAsset = await request.get("/ui/style.css", { maxRedirects: 0 });
+    await expect(publicAsset).toBeOK();
+
+    const protectedAdmin = await request.get("/ui/status", { maxRedirects: 0 });
+    expect(protectedAdmin.status()).toBe(401);
+
+    await page.goto("/ui/privacy");
+    await expect(page).toHaveURL(/\/ui\/privacy$/);
+    await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
+    await expect(page.locator("#tab-privacy h2")).toContainText(/Privacy notice|Informativa privacy/);
+  } finally {
+    await restoreConfigBundle(request, originalBundle, { Authorization: BASIC_AUTH });
+  }
 });
 
 test("footer version reveals a major-version easter egg", async ({ page, request }) => {

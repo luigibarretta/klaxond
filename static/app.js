@@ -82,10 +82,15 @@ const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key,
 // ---- Tab switching (with URL path routing) ----
 const UI_TABS = new Set(Array.from(document.querySelectorAll(".tab[data-tab]"), t => t.dataset.tab));
 const UI_PAGES = new Set(Array.from(document.querySelectorAll(".tabpane[id^='tab-']"), p => p.id.replace(/^tab-/, "")));
+const PUBLIC_INFO_PAGES = new Set(["privacy", "accessibility", "terms", "cookies", "legal"]);
 const DEFAULT_TAB = "status";
 
 function isKnownTab(tabId) {
   return UI_PAGES.has(tabId);
+}
+
+function isPublicInfoPage(tabId = tabFromLocation().tabId) {
+  return PUBLIC_INFO_PAGES.has(tabId);
 }
 
 function canonicalUiPath(tabId) {
@@ -112,8 +117,13 @@ function _onTabActivated(tabId) {
   try {
     switch (tabId) {
       case "flow":        if (typeof loadFlow === "function")       { loadFlow(); if (typeof _setupFlowAutorefresh === "function") _setupFlowAutorefresh(); } break;
+      case "status":      if (typeof loadStatus === "function")     loadStatus(); break;
       case "auth":        if (typeof loadAuth === "function")        loadAuth(); break;
+      case "deliveries":  if (typeof loadDeliv === "function")       loadDeliv(); break;
       case "routing":     if (typeof loadNtfyTopics === "function") loadNtfyTopics(); if (typeof loadIngestAuth === "function") loadIngestAuth(); break;
+      case "render":      if (typeof loadRC === "function")          loadRC(); break;
+      case "cascade":     if (typeof loadCascade === "function")     loadCascade(); break;
+      case "delivery":    if (typeof loadDelivery === "function")    loadDelivery(); break;
       case "grouping":    if (typeof loadDedup === "function")       loadDedup(); break;
       case "inhibitions": if (typeof loadInhibRules === "function") loadInhibRules(); if (typeof loadSchedules === "function") loadSchedules(); if (typeof loadAcks === "function") loadAcks(); break;
       case "logs":        if (typeof loadLogs === "function")        loadLogs(); break;
@@ -3053,13 +3063,20 @@ document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
 
 // ---- Polling ----
 async function refreshAll() {
+  if (isPublicInfoPage()) return;
   await Promise.all([loadStatus(), loadCurrentUser(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules(), loadAcks()]);
 }
 refreshAll();
-setInterval(() => { loadStatus(); loadInhib(); loadDeliv(); }, 10000);
+setInterval(() => {
+  if (isPublicInfoPage()) return;
+  loadStatus();
+  loadInhib();
+  loadDeliv();
+}, 10000);
 
 document.addEventListener("klaxond:languagechange", () => {
   updateAllTabAccessibleLabels();
+  if (isPublicInfoPage()) return;
   loadStatus();
   loadConfigBackups();
   renderDeliv();

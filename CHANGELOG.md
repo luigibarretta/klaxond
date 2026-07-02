@@ -1,5 +1,12 @@
 # Klaxond — CHANGELOG
 
+## 0.14.8 — 2026-07-02
+
+- Rese pubbliche le pagine footer privacy/accessibilita'/termini/cookie/note
+  legali e gli asset statici UI necessari, mantenendo protette le route admin.
+- Evitato che le pagine legali pubbliche avviino fetch admin automatiche e
+  rimbalzino alla login quando l'autenticazione e' attiva.
+
 ## 0.14.7 — 2026-07-02
 
 - Estesa la suite con copertura WebAuthn/passkey, lifecycle API key/PAT,
