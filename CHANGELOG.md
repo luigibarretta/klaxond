@@ -1,5 +1,11 @@
 # Klaxond — CHANGELOG
 
+## 0.14.5 — 2026-07-02
+
+- Separata la UI Auth per API Keys e PAT: il tipo del token ora e' scelto da
+  segmenti dedicati e la tabella mostra solo il tipo selezionato.
+- Mantenuto lo stesso backend token/scopes/revoche, evitando migrazioni dati.
+
 ## 0.14.4 — 2026-07-01
 
 - Corretta la gestione delle sessioni UI scadute: le fetch admin ora ricevono

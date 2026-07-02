@@ -2229,6 +2229,8 @@ document.querySelectorAll('[data-tab="grouping"]').forEach(btn => {
 
 // ---- Authentication tab ----
 let authData = { settings: {}, current_user: {} };
+let _authTokens = [];
+let _activeTokenKind = "api-key";
 
 const OIDC_ISSUER_HINTS = {
   authentik: "https://idp.example.com/application/o/klaxond/",
@@ -2240,6 +2242,49 @@ const OIDC_ISSUER_HINTS = {
 
 function fmtAuthTs(ts) {
   return ts ? new Date(ts * 1000).toLocaleString() : "—";
+}
+
+function normalizeTokenKind(kind) {
+  return kind === "pat" ? "pat" : "api-key";
+}
+
+function tokenKindLabel(kind) {
+  return normalizeTokenKind(kind) === "pat" ? tr("auth.pats") : tr("auth.api_keys");
+}
+
+function updateTokenKindUI() {
+  const kind = normalizeTokenKind(_activeTokenKind);
+  const counts = _authTokens.reduce((acc, token) => {
+    const tokenKind = normalizeTokenKind(token.kind);
+    acc[tokenKind] = (acc[tokenKind] || 0) + 1;
+    return acc;
+  }, {"api-key": 0, pat: 0});
+  document.querySelectorAll("[data-token-kind-option]").forEach(btn => {
+    const active = normalizeTokenKind(btn.dataset.tokenKindOption) === kind;
+    btn.classList.toggle("active", active);
+    btn.setAttribute("aria-pressed", active ? "true" : "false");
+    btn.setAttribute("aria-selected", active ? "true" : "false");
+    const count = counts[normalizeTokenKind(btn.dataset.tokenKindOption)] || 0;
+    btn.title = tr("auth.token_kind_count", { kind: tokenKindLabel(btn.dataset.tokenKindOption), count });
+  });
+  const hidden = $("#token-kind");
+  if (hidden) hidden.value = kind;
+  const name = $("#token-name");
+  if (name) name.placeholder = kind === "pat" ? "luigi-cli" : "grafana-admin-script";
+  const summary = $("#token-kind-summary");
+  if (summary) summary.textContent = kind === "pat" ? tr("auth.pat_summary") : tr("auth.api_key_summary");
+  const create = $("#token-create");
+  if (create) create.textContent = kind === "pat" ? tr("auth.create_pat") : tr("auth.create_api_key");
+  const title = $("#token-table-title");
+  if (title) title.textContent = tokenKindLabel(kind);
+  const count = $("#token-table-count");
+  if (count) count.textContent = tr("auth.token_count", { count: counts[kind] || 0 });
+}
+
+function setTokenKind(kind) {
+  _activeTokenKind = normalizeTokenKind(kind);
+  updateTokenKindUI();
+  renderTokens(_authTokens, { preserveSource: true });
 }
 
 function renderAuthGuard(settings) {
@@ -2276,19 +2321,22 @@ function selectedTokenScopes() {
   return Array.from(document.querySelectorAll("#token-scopes input:checked")).map(cb => cb.value);
 }
 
-function renderTokens(tokens = []) {
+function renderTokens(tokens = [], opts = {}) {
+  if (!opts.preserveSource) _authTokens = Array.isArray(tokens) ? tokens : [];
+  const filtered = _authTokens.filter(token => normalizeTokenKind(token.kind) === _activeTokenKind);
+  updateTokenKindUI();
   const tb = $("#t-tokens tbody"); if (!tb) return;
   tb.innerHTML = "";
-  if (!tokens.length) {
-    tb.innerHTML = `<tr><td colspan="7" class="muted">${escapeHtml(tr("auth.no_tokens"))}</td></tr>`;
+  if (!filtered.length) {
+    const emptyKey = _activeTokenKind === "pat" ? "auth.no_pats" : "auth.no_api_keys";
+    tb.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(tr(emptyKey))}</td></tr>`;
     applyTablePager("t-tokens", { reset: true });
     return;
   }
-  for (const token of tokens) {
+  for (const token of filtered) {
     const trEl = document.createElement("tr");
     trEl.innerHTML = `
       <td>${escapeHtml(token.name || "")}<br><small class="muted">${escapeHtml(token.prefix || "")}…</small></td>
-      <td>${escapeHtml(token.kind || "")}</td>
       <td>${(token.scopes || []).map(s => `<code>${escapeHtml(s)}</code>`).join(" ")}</td>
       <td>${escapeHtml(fmtAuthTs(token.created_at))}</td>
       <td>${escapeHtml(fmtAuthTs(token.last_used_at))}</td>
@@ -2428,6 +2476,9 @@ document.querySelectorAll('input[name="auth-mode"]').forEach(r => {
 document.getElementById("auth-oidc-provider")?.addEventListener("change", e => {
   const hint = OIDC_ISSUER_HINTS[e.target.value] || "";
   if (hint) $("#auth-oidc-issuer").placeholder = hint;
+});
+document.querySelectorAll("[data-token-kind-option]").forEach(btn => {
+  btn.addEventListener("click", () => setTokenKind(btn.dataset.tokenKindOption));
 });
 
 $("#auth-save")?.addEventListener("click", async () => {
@@ -2912,6 +2963,7 @@ document.addEventListener("klaxond:languagechange", () => {
   if (!_dirtyTabs.has("delivery")) { renderDeliveryDefault(); renderPoliciesTable(); renderRulesTable(); }
   if (!_dirtyTabs.has("grouping")) renderDedupCards();
   if (!_dirtyTabs.has("auth")) loadAuth();
+  else renderTokens(_authTokens, { preserveSource: true });
   refreshTablePagers();
   if (document.querySelector("#tab-flow.active")) loadFlow();
   if (document.querySelector("#tab-logs.active")) loadLogs();

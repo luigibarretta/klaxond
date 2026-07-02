@@ -253,6 +253,22 @@ test("inhibition applies-to checkboxes stay compact and aligned", async ({ page 
   await expect(firstCheckbox.locator("xpath=..")).toHaveCSS("align-items", "center");
 });
 
+test("authentication separates API keys and PATs", async ({ page }) => {
+  await page.goto("/ui/auth");
+  await expect(page.locator('[data-token-kind-option="api-key"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#token-kind")).toHaveValue("api-key");
+  await expect(page.locator("#token-create")).toHaveText("Create API key");
+  await expect(page.locator("#token-table-title")).toHaveText("API Keys");
+  await expect(page.locator("#t-tokens tbody")).toContainText("No API keys.");
+
+  await page.click('[data-token-kind-option="pat"]');
+  await expect(page.locator('[data-token-kind-option="pat"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#token-kind")).toHaveValue("pat");
+  await expect(page.locator("#token-create")).toHaveText("Create PAT");
+  await expect(page.locator("#token-table-title")).toHaveText("PATs");
+  await expect(page.locator("#t-tokens tbody")).toContainText("No PATs.");
+});
+
 test("supports Italian and English plus system/light/dark theme modes", async ({ page }) => {
   await page.goto("/healthz");
   await page.evaluate(() => {

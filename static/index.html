@@ -694,13 +694,18 @@
     </div>
   </div>
 
-  <h3 data-i18n="auth.tokens_title">API keys and PATs</h3>
+  <h3 data-i18n="auth.tokens_title">Access tokens</h3>
   <div class="card">
-    <div class="grid3">
+    <div class="token-kind-header">
+      <div class="segmented-control token-kind-segment" role="tablist" data-i18n-aria-label="auth.token_kind" aria-label="Token kind">
+        <button type="button" class="seg-btn active" data-token-kind-option="api-key" aria-pressed="true" role="tab" data-i18n="auth.api_keys">API Keys</button>
+        <button type="button" class="seg-btn" data-token-kind-option="pat" aria-pressed="false" role="tab" data-i18n="auth.pats">PATs</button>
+      </div>
+      <span id="token-kind-summary" class="muted"></span>
+    </div>
+    <input type="hidden" id="token-kind" value="api-key">
+    <div class="grid2">
       <label><span data-i18n="common.name">Name</span> <input type="text" id="token-name" placeholder="grafana-admin-script"></label>
-      <label><span data-i18n="auth.token_kind">Kind</span>
-        <select id="token-kind"><option value="api-key">API key</option><option value="pat">PAT</option></select>
-      </label>
       <label><span data-i18n="auth.expires_days">Expires in days</span> <input type="number" id="token-expires-days" min="1" max="3650" placeholder="never"></label>
     </div>
     <div id="token-scopes" class="scope-grid"></div>
@@ -709,9 +714,13 @@
       <span id="token-status" class="muted"></span>
     </div>
     <pre id="token-once" class="hidden"></pre>
+    <div class="token-table-heading">
+      <h4 id="token-table-title" data-i18n="auth.api_keys">API Keys</h4>
+      <span id="token-table-count" class="muted"></span>
+    </div>
     <div class="table-scroll">
       <table id="t-tokens">
-        <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.token_kind">Kind</th><th data-i18n="auth.scopes">Scopes</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.status">Status</th><th></th></tr></thead>
+        <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.scopes">Scopes</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.status">Status</th><th></th></tr></thead>
         <tbody></tbody>
       </table>
     </div>
@@ -760,7 +769,7 @@
     </main>
 
     <footer>
-      <small>klaxond · <span id="footer-version" class="muted">v0.14.4</span></small>
+      <small>klaxond · <span id="footer-version" class="muted">v0.14.5</span></small>
     </footer>
   </div>
 </div>
