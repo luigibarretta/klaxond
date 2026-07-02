@@ -97,7 +97,21 @@
   </aside>
 
   <div class="app-main">
-    <main>
+<main>
+<div class="public-legal-bar" id="public-legal-bar" hidden>
+  <a class="public-legal-brand" href="/ui/privacy" aria-label="klaxond">
+    <img class="public-legal-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
+    <span>klaxond</span>
+  </a>
+  <div class="public-legal-controls">
+    <span class="pref-label" data-i18n="prefs.language">Language</span>
+    <div class="segmented-control public-language-segment" role="group" data-i18n-aria-label="prefs.language" aria-label="Language">
+      <button type="button" class="seg-btn" data-public-language-option="it" aria-pressed="false">IT</button>
+      <button type="button" class="seg-btn" data-public-language-option="en" aria-pressed="true">EN</button>
+    </div>
+    <a class="btn public-login-link" href="/auth/login?return_to=%2Fui%2Fstatus" data-i18n="auth.sign_in">Sign in</a>
+  </div>
+</div>
 
 <section id="tab-status" class="tabpane active">
   <h2 data-i18n="status.channels">Channels</h2>
@@ -835,7 +849,7 @@
   <h2 data-i18n="legal.notice.title">Legal notice and contacts</h2>
   <div class="legal-copy" data-i18n-html="legal.notice.body">
     <p><strong>Application:</strong> klaxond</p>
-    <p><strong>Author:</strong> <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a></p>
+    <p><strong>Author:</strong></p>
     <p><strong>Instance operator:</strong> the person or organization running this self-hosted deployment.</p>
     <p>klaxond is an open-source administrative console for alert routing and notification delivery. It is not intended to be a public website, marketplace, social network, advertising platform or user-generated content hosting service.</p>
     <p>For privacy, accessibility, security or legal requests, use the operational contact configured by the instance operator and include enough detail to identify the affected account, URL, request ID or timestamp.</p>
@@ -847,8 +861,8 @@
     <footer class="app-footer">
       <div class="footer-meta">
         <strong>klaxond</strong>
-        <span id="footer-version" class="muted version-trigger">v0.14.9</span>
-        <span data-i18n-html="footer.byline">by <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a></span>
+        <span id="footer-version" class="muted version-trigger">v...</span>
+        <span data-i18n-html="footer.byline">by</span>
       </div>
       <nav class="footer-links" data-i18n-aria-label="footer.legal_links" aria-label="Legal links">
         <a href="/ui/privacy" data-i18n="footer.privacy">Privacy</a>
@@ -875,6 +889,7 @@
   _waitForMermaid). 'defer' preserves order: mermaid first, then app.
 -->
 <script src="/ui/mermaid.min.js" defer></script>
+<script src="/ui/meta.js" defer></script>
 <script src="/ui/i18n.js" defer></script>
 <script src="/ui/app.js" defer></script>
 </body>

@@ -2480,10 +2480,29 @@ fn sanitize_static_rel(rel: &str) -> String {
 fn ui_response(state: &AppState, rel: &str) -> Response<Body> {
     let safe = sanitize_static_rel(rel);
     let route = safe.trim_matches('/');
+    if route == "meta.js" {
+        return ui_meta_response();
+    }
     if route.is_empty() || route == "index.html" || UI_ROUTES.contains(&route) {
         return static_response(state, "index.html");
     }
     static_response(state, &safe)
+}
+
+fn ui_meta_response() -> Response<Body> {
+    let body = format!(
+        "window.KLAXOND_META=Object.freeze({{version:{},authorName:{},authorUrl:{}}});\n",
+        serde_json::to_string(crate::config::VERSION).unwrap_or_else(|_| "\"\"".into()),
+        serde_json::to_string(crate::config::AUTHOR_NAME).unwrap_or_else(|_| "\"\"".into()),
+        serde_json::to_string(crate::config::AUTHOR_URL).unwrap_or_else(|_| "\"\"".into())
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/javascript; charset=utf-8")
+        .header(CONTENT_LENGTH, body.len().to_string())
+        .header(CACHE_CONTROL, "no-store")
+        .body(Body::from(body))
+        .unwrap()
 }
 
 fn static_response(state: &AppState, rel: &str) -> Response<Body> {

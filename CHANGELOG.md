@@ -1,5 +1,15 @@
 # Klaxond — CHANGELOG
 
+## 0.14.10 — 2026-07-02
+
+- Rifinita graficamente la schermata login/signed-out pubblica con logo,
+  badge versione, copy piu' leggibile e footer con autore linkato.
+- Centralizzati versione, nome autore e URL GitHub in costanti Rust esposte
+  al frontend tramite meta pubblico.
+- Aggiunta una barra pubblica con selettore lingua IT/EN sulle pagine legali.
+- Rafforzata la copertura E2E sui link pubblici privacy/accessibilita'/termini/
+  cookie/note legali e sugli asset pubblici mentre l'auth e' attiva.
+
 ## 0.14.9 — 2026-07-02
 
 - Rimossi i riferimenti al dominio privato dalle pagine legali, rendendo i

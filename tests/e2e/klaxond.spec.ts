@@ -4,6 +4,8 @@ const LOCAL_ORIGIN = "http://localhost:18181";
 const BASIC_USER = "admin";
 const BASIC_PASSWORD = "test-password";
 const BASIC_AUTH = `Basic ${Buffer.from(`${BASIC_USER}:${BASIC_PASSWORD}`).toString("base64")}`;
+const AUTHOR_NAME = "Luigi Barretta";
+const AUTHOR_URL = "https://github.com/luigibarretta";
 
 async function revealVersionEgg(page: Page) {
   for (let i = 0; i < 7; i++) {
@@ -186,10 +188,13 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
 
   await page.goto("/ui/privacy");
   await expect(page).toHaveURL(/\/ui\/privacy$/);
+  await expect(page.locator("body")).toHaveClass(/public-info-route/);
+  await expect(page.locator("#public-legal-bar")).toBeVisible();
+  await expect(page.locator(".sidebar")).toBeHidden();
   await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
   await expect(page.locator(".app-footer")).toContainText("klaxond");
-  await expect(page.locator(".app-footer")).toContainText("by Luigi Barretta");
-  await expect(page.locator(".footer-meta a", { hasText: "Luigi Barretta" })).toHaveAttribute("href", "https://github.com/luigibarretta");
+  await expect(page.locator(".app-footer")).toContainText(`by ${AUTHOR_NAME}`);
+  await expect(page.locator(".footer-meta a", { hasText: AUTHOR_NAME })).toHaveAttribute("href", AUTHOR_URL);
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
   await expect(page.locator('.footer-links a[href="/ui/accessibility"]')).toHaveText("Accessibility");
 
@@ -197,13 +202,14 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   await expect(page).toHaveURL(/\/ui\/accessibility$/);
   await expect(page.locator("#tab-accessibility")).toHaveClass(/active/);
 
-  await page.click('[data-language-option="it"]');
+  await page.click('#public-legal-bar [data-public-language-option="it"]');
   await expect(page.locator("#tab-accessibility h2")).toHaveText("Dichiarazione di accessibilita'");
   await expect(page.locator('.footer-links a[href="/ui/legal"]')).toHaveText("Note legali");
+  await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toHaveAttribute("aria-pressed", "true");
 
   await page.click('.footer-links a[href="/ui/legal"]');
   await expect(page).toHaveURL(/\/ui\/legal$/);
-  await expect(page.locator("#tab-legal a", { hasText: "Luigi Barretta" })).toHaveAttribute("href", "https://github.com/luigibarretta");
+  await expect(page.locator("#tab-legal a", { hasText: AUTHOR_NAME })).toHaveAttribute("href", AUTHOR_URL);
   await expect(page.locator("#tab-legal")).not.toContainText("klaxond.luigibarretta.com");
   const footerBottomGap = await page.locator(".app-footer").evaluate(el =>
     Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
@@ -212,7 +218,8 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/ui/legal");
-  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await expect(page.locator("body")).toHaveClass(/public-info-route/);
+  await expect(page.locator("#public-legal-bar")).toBeVisible();
   const mobileFooterBottomGap = await page.locator(".app-footer").evaluate(el =>
     Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
   );
@@ -221,12 +228,18 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   const originalBundle = await exportConfigBundle(request);
   try {
     await enableBasicAuth(request);
-    const publicLegal = await request.get("/ui/privacy", { maxRedirects: 0 });
-    await expect(publicLegal).toBeOK();
-    expect(await publicLegal.text()).toContain("Privacy notice");
+    for (const route of ["privacy", "accessibility", "terms", "cookies", "legal"]) {
+      const publicLegal = await request.get(`/ui/${route}`, { maxRedirects: 0 });
+      await expect(publicLegal).toBeOK();
+    }
 
     const publicAsset = await request.get("/ui/style.css", { maxRedirects: 0 });
     await expect(publicAsset).toBeOK();
+    const publicMeta = await request.get("/ui/meta.js", { maxRedirects: 0 });
+    await expect(publicMeta).toBeOK();
+    const metaJs = await publicMeta.text();
+    expect(metaJs).toContain("window.KLAXOND_META");
+    expect(metaJs).toContain(AUTHOR_URL);
 
     const loginPage = await request.get("/auth/login?return_to=%2Fui%2Fstatus", { maxRedirects: 0 });
     await expect(loginPage).toBeOK();
@@ -234,7 +247,9 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(loginHtml).toContain('href="/ui/privacy"');
     expect(loginHtml).toContain('href="/ui/accessibility"');
     expect(loginHtml).toContain('href="/ui/legal"');
-    expect(loginHtml).toContain('https://github.com/luigibarretta');
+    expect(loginHtml).toContain('class="login-logo" src="/ui/favicon.svg"');
+    expect(loginHtml).toContain('class="login-version">v0.14.10</span>');
+    expect(loginHtml).toContain(AUTHOR_URL);
     expect(loginHtml).not.toContain("klaxond.luigibarretta.com");
 
     const logout = await request.get("/auth/logout", { maxRedirects: 0 });

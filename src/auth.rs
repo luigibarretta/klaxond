@@ -491,12 +491,19 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
     } else {
         ""
     };
+    let author_link = author_link_html();
     let html = format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>klaxond login</title><link rel="stylesheet" href="/ui/style.css"></head>
-<body><main class="auth-login"><section class="card"><h1>klaxond</h1><h2>Sign in</h2>
-<p class="muted">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
+<body><main class="auth-login"><section class="card auth-login-card">
+<div class="login-brand">
+<img class="login-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
+<div class="login-brand-text"><h1>klaxond</h1><span>notification daemon</span></div>
+<span class="login-version">v{version}</span>
+</div>
+<h2>Sign in</h2>
+<p class="login-note">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
 <div class="login-actions">{primary}{passkey}</div>
 <nav class="login-legal" aria-label="Legal links">
 <a href="/ui/privacy">Privacy</a>
@@ -505,8 +512,9 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
 <a href="/ui/cookies">Cookies</a>
 <a href="/ui/legal">Legal notice</a>
 </nav>
-<p class="muted login-byline">by <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a></p>
-</section></main></body></html>"#
+<p class="muted login-byline">by {author_link}</p>
+</section></main></body></html>"#,
+        version = crate::config::VERSION
     );
     Response::builder()
         .status(StatusCode::OK)
@@ -514,6 +522,14 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
         .header("Content-Type", "text/html; charset=utf-8")
         .body(Body::from(html))
         .unwrap()
+}
+
+fn author_link_html() -> String {
+    format!(
+        r#"<a href="{}" target="_blank" rel="noopener">{}</a>"#,
+        html_attr(crate::config::AUTHOR_URL),
+        html_attr(crate::config::AUTHOR_NAME)
+    )
 }
 
 fn html_attr(value: &str) -> String {
@@ -950,6 +966,7 @@ mod tests {
         assert!(is_public("/ui/privacy"));
         assert!(is_public("/ui/accessibility"));
         assert!(is_public("/ui/style.css"));
+        assert!(is_public("/ui/meta.js"));
         assert!(is_public("/ui/app.js"));
         assert!(!is_public("/ui/status"));
         assert!(!is_public("/ui/auth"));

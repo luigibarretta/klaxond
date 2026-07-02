@@ -78,6 +78,7 @@ const J = async (url, opts) => {
   return ct.includes("json") ? r.json() : r.text();
 };
 const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key, vars) : key;
+const APP_META = window.KLAXOND_META || {};
 
 // ---- Tab switching (with URL path routing) ----
 const UI_TABS = new Set(Array.from(document.querySelectorAll(".tab[data-tab]"), t => t.dataset.tab));
@@ -93,6 +94,13 @@ function isPublicInfoPage(tabId = tabFromLocation().tabId) {
   return PUBLIC_INFO_PAGES.has(tabId);
 }
 
+function updatePublicChrome(tabId) {
+  const isPublic = PUBLIC_INFO_PAGES.has(tabId);
+  document.body.classList.toggle("public-info-route", isPublic);
+  const publicBar = $("#public-legal-bar");
+  if (publicBar) publicBar.hidden = !isPublic;
+}
+
 function canonicalUiPath(tabId) {
   return `/ui/${isKnownTab(tabId) ? tabId : DEFAULT_TAB}`;
 }
@@ -105,6 +113,7 @@ function activateTab(tabId) {
   if (pane) {
     if (btn) btn.classList.add("active");
     pane.classList.add("active");
+    updatePublicChrome(tabId);
     _onTabActivated(tabId);
     return true;
   }
@@ -319,6 +328,8 @@ function updateAppVersion(version) {
   footerVersion.setAttribute("tabindex", "0");
   footerVersion.setAttribute("aria-label", `klaxond v${_appVersion}`);
 }
+
+updateAppVersion(APP_META.version);
 
 function showVersionEasterEgg() {
   const major = majorVersion(_appVersion || $("#footer-version")?.textContent || "0");

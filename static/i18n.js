@@ -7,12 +7,21 @@
   const LEGACY_THEME_KEY = "klaxond.theme";
   const LANGS = ["en", "it"];
   const THEME_MODES = ["system", "light", "dark"];
+  const APP_META = window.KLAXOND_META || {};
+  const AUTHOR_NAME = String(APP_META.authorName || "Author");
+  const AUTHOR_URL = String(APP_META.authorUrl || "");
+  const htmlEscape = value => String(value || "").replace(/[&<>"']/g, ch => (
+    {"&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"}[ch]
+  ));
+  const authorLink = () => AUTHOR_URL
+    ? `<a href="${htmlEscape(AUTHOR_URL)}" target="_blank" rel="noopener">${htmlEscape(AUTHOR_NAME)}</a>`
+    : htmlEscape(AUTHOR_NAME);
 
   const M = {
     en: {
       "app.title": "klaxond — notification daemon",
       "app.tagline": "klaxond — cascade • inhibition • render",
-      "footer.byline": `by <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a>`,
+      "footer.byline": `by ${authorLink()}`,
       "footer.legal_links": "Legal links",
       "footer.privacy": "Privacy",
       "footer.accessibility": "Accessibility",
@@ -28,7 +37,7 @@
       "legal.cookies.title": "Cookie notice",
       "legal.cookies.body": `<p>klaxond uses only strictly necessary local storage and authentication state. It does not use advertising, profiling or cross-site tracking cookies.</p><h3>What is stored</h3><ul><li><code>klaxond_session</code>: secure session cookie used to keep authorized users logged in.</li><li><code>klaxond.lang</code>, <code>klaxond.themeMode</code> and UI state values: browser-local preferences for language, theme and layout.</li></ul><p>Because these items are necessary for security or explicitly requested UI preferences, no marketing cookie banner is shown.</p>`,
       "legal.notice.title": "Legal notice and contacts",
-      "legal.notice.body": `<p><strong>Application:</strong> klaxond</p><p><strong>Author:</strong> <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a></p><p><strong>Instance operator:</strong> the person or organization running this self-hosted deployment.</p><p>klaxond is an open-source administrative console for alert routing and notification delivery. It is not intended to be a public website, marketplace, social network, advertising platform or user-generated content hosting service.</p><p>For privacy, accessibility, security or legal requests, use the operational contact configured by the instance operator and include enough detail to identify the affected account, URL, request ID or timestamp.</p>`,
+      "legal.notice.body": `<p><strong>Application:</strong> klaxond</p><p><strong>Author:</strong> ${authorLink()}</p><p><strong>Instance operator:</strong> the person or organization running this self-hosted deployment.</p><p>klaxond is an open-source administrative console for alert routing and notification delivery. It is not intended to be a public website, marketplace, social network, advertising platform or user-generated content hosting service.</p><p>For privacy, accessibility, security or legal requests, use the operational contact configured by the instance operator and include enough detail to identify the affected account, URL, request ID or timestamp.</p>`,
       "prefs.language": "Language",
       "prefs.theme": "Theme",
       "lang.en": "English",
@@ -375,6 +384,7 @@
       "auth.title": "Authentication",
       "auth.desc": "Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user: <code id=\"auth-current-user\">—</code>.",
       "auth.desc_before_user": "Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user:",
+      "auth.sign_in": "Sign in",
       "auth.mode_none": "<b>None</b> — public (default; suitable when klaxond is on a trusted internal network)",
       "auth.mode_basic": "<b>Basic</b> — single user with bcrypt password (browser native)",
       "auth.mode_oidc": "<b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)",
@@ -494,7 +504,7 @@
     it: {
       "app.title": "klaxond — demone notifiche",
       "app.tagline": "klaxond — cascata • inibizioni • rendering",
-      "footer.byline": `by <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a>`,
+      "footer.byline": `by ${authorLink()}`,
       "footer.legal_links": "Link legali",
       "footer.privacy": "Privacy",
       "footer.accessibility": "Accessibilita'",
@@ -510,7 +520,7 @@
       "legal.cookies.title": "Informativa cookie",
       "legal.cookies.body": `<p>klaxond usa solo storage locale e stato di autenticazione strettamente necessari. Non usa cookie pubblicitari, di profilazione o tracking cross-site.</p><h3>Cosa viene salvato</h3><ul><li><code>klaxond_session</code>: cookie di sessione sicuro usato per mantenere autenticati gli utenti autorizzati.</li><li><code>klaxond.lang</code>, <code>klaxond.themeMode</code> e valori di stato UI: preferenze locali del browser per lingua, tema e layout.</li></ul><p>Poiche' questi elementi sono necessari per sicurezza o preferenze UI richieste esplicitamente, non viene mostrato un banner per cookie marketing.</p>`,
       "legal.notice.title": "Note legali e contatti",
-      "legal.notice.body": `<p><strong>Applicazione:</strong> klaxond</p><p><strong>Autore:</strong> <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a></p><p><strong>Operatore istanza:</strong> il soggetto che gestisce questo deployment self-hosted.</p><p>klaxond e' una console amministrativa open-source per routing alert e consegna notifiche. Non e' pensato come sito pubblico, marketplace, social network, piattaforma pubblicitaria o servizio di hosting per contenuti generati dagli utenti.</p><p>Per richieste privacy, accessibilita', sicurezza o legali, usa il contatto operativo configurato dall'operatore dell'istanza e includi dettagli sufficienti a identificare account, URL, request ID o timestamp interessati.</p>`,
+      "legal.notice.body": `<p><strong>Applicazione:</strong> klaxond</p><p><strong>Autore:</strong> ${authorLink()}</p><p><strong>Operatore istanza:</strong> il soggetto che gestisce questo deployment self-hosted.</p><p>klaxond e' una console amministrativa open-source per routing alert e consegna notifiche. Non e' pensato come sito pubblico, marketplace, social network, piattaforma pubblicitaria o servizio di hosting per contenuti generati dagli utenti.</p><p>Per richieste privacy, accessibilita', sicurezza o legali, usa il contatto operativo configurato dall'operatore dell'istanza e includi dettagli sufficienti a identificare account, URL, request ID o timestamp interessati.</p>`,
       "prefs.language": "Lingua",
       "prefs.theme": "Tema",
       "theme.system": "Sistema",
@@ -855,6 +865,7 @@
       "auth.title": "Autenticazione",
       "auth.desc": "Protegge UI e admin API. Gli endpoint webhook (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) restano sempre pubblici a prescindere dalla modalità — gli emitter non possono fare OIDC.<br>Utente loggato corrente: <code id=\"auth-current-user\">—</code>.",
       "auth.desc_before_user": "Protegge UI e admin API. Gli endpoint webhook (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) restano sempre pubblici a prescindere dalla modalità — gli emitter non possono fare OIDC.<br>Utente loggato corrente:",
+      "auth.sign_in": "Accedi",
       "auth.mode_none": "<b>Nessuna</b> — pubblico (default; adatto quando klaxond è su una rete interna fidata)",
       "auth.mode_basic": "<b>Basic</b> — singolo utente con password bcrypt (browser native)",
       "auth.mode_oidc": "<b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)",
@@ -1011,6 +1022,14 @@
     if (el && el.innerHTML !== html) el.innerHTML = html;
   }
 
+  function languageOptionButtons() {
+    return document.querySelectorAll("[data-language-option], [data-public-language-option]");
+  }
+
+  function buttonLanguage(btn) {
+    return btn.dataset.languageOption || btn.dataset.publicLanguageOption || "";
+  }
+
   function applyI18n(lang) {
     const next = normalizeLang(lang || currentLanguage());
     document.documentElement.lang = next;
@@ -1035,8 +1054,8 @@
 
     const select = document.getElementById("language-select");
     if (select) select.value = next;
-    document.querySelectorAll("[data-language-option]").forEach(btn => {
-      const active = normalizeLang(btn.dataset.languageOption) === next;
+    languageOptionButtons().forEach(btn => {
+      const active = normalizeLang(buttonLanguage(btn)) === next;
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-pressed", active ? "true" : "false");
     });
@@ -1105,8 +1124,8 @@
 
     document.getElementById("language-select")?.addEventListener("change", e => setLanguage(e.target.value));
     document.getElementById("theme-mode")?.addEventListener("change", e => setThemeMode(e.target.value));
-    document.querySelectorAll("[data-language-option]").forEach(btn => {
-      btn.addEventListener("click", () => setLanguage(btn.dataset.languageOption));
+    languageOptionButtons().forEach(btn => {
+      btn.addEventListener("click", () => setLanguage(buttonLanguage(btn)));
     });
     document.querySelectorAll("[data-theme-mode-option]").forEach(btn => {
       btn.addEventListener("click", () => setThemeMode(btn.dataset.themeModeOption));
