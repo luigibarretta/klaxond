@@ -378,11 +378,25 @@ fn authenticate_trusted_proxy(
     )
 }
 
-pub async fn oidc_login_redirect(
-    state: &AppState,
-    headers: HeaderMap,
-    uri: &str,
-) -> Response<Body> {
+pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
+    let return_to = login_return_to(uri);
+    let start = Url::parse(&format!("http://localhost{uri}"))
+        .ok()
+        .is_some_and(|u| {
+            u.query_pairs()
+                .any(|(k, v)| (k == "start" || k == "oidc") && v != "0")
+        });
+    let auth = state.cfg().auth;
+    if auth.mode == "none" {
+        return redirect(&return_to);
+    }
+    if start && auth.mode == "oidc" {
+        return oidc_login_redirect(state, headers, uri).await;
+    }
+    login_page(&auth.mode, auth.webauthn.enabled, &return_to)
+}
+
+async fn oidc_login_redirect(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
     let cfg = state.cfg().auth.oidc;
     let issuer = cfg.issuer.trim_end_matches('/').to_string();
     if issuer.is_empty() || cfg.client_id.is_empty() {
@@ -402,15 +416,7 @@ pub async fn oidc_login_redirect(
                 .into_response();
         }
     };
-    let return_to = Url::parse(&format!("http://localhost{uri}"))
-        .ok()
-        .and_then(|u| {
-            u.query_pairs()
-                .find(|(k, _)| k == "return_to")
-                .map(|(_, v)| v.to_string())
-        })
-        .unwrap_or_else(|| "/".into());
-    let return_to = sanitize_return_to(&return_to);
+    let return_to = login_return_to(uri);
     let host = headers
         .get(HOST)
         .and_then(|v| v.to_str().ok())
@@ -447,6 +453,75 @@ pub async fn oidc_login_redirect(
         .append_pair("scope", &cfg.scopes)
         .append_pair("state", &state_token);
     redirect(url.as_str())
+}
+
+fn login_return_to(uri: &str) -> String {
+    let return_to = Url::parse(&format!("http://localhost{uri}"))
+        .ok()
+        .and_then(|u| {
+            u.query_pairs()
+                .find(|(k, _)| k == "return_to")
+                .map(|(_, v)| v.to_string())
+        })
+        .unwrap_or_else(|| "/ui/status".into());
+    sanitize_return_to(&return_to)
+}
+
+fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<Body> {
+    let start_url = format!(
+        "/auth/login?start=1&return_to={}",
+        urlencoding::encode(return_to)
+    );
+    let start_url = html_attr(&start_url);
+    let return_to = html_attr(return_to);
+    let primary = match mode {
+        "oidc" => format!(r#"<a class="btn primary" href="{start_url}">Continue with SSO</a>"#),
+        "basic" => {
+            format!(r#"<a class="btn primary" href="{return_to}">Continue with Basic auth</a>"#)
+        }
+        "trusted-proxy" => {
+            format!(
+                r#"<a class="btn primary" href="{return_to}">Continue through trusted proxy</a>"#
+            )
+        }
+        _ => format!(r#"<a class="btn primary" href="{return_to}">Continue</a>"#),
+    };
+    let passkey = if passkeys_enabled {
+        r#"<a class="btn" href="/auth/passkey">Use passkey</a>"#
+    } else {
+        ""
+    };
+    let html = format!(
+        r#"<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>klaxond login</title><link rel="stylesheet" href="/ui/style.css"></head>
+<body><main class="auth-login"><section class="card"><h1>klaxond</h1><h2>Sign in</h2>
+<p class="muted">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
+<div class="login-actions">{primary}{passkey}</div>
+<nav class="login-legal" aria-label="Legal links">
+<a href="/ui/privacy">Privacy</a>
+<a href="/ui/accessibility">Accessibility</a>
+<a href="/ui/terms">Terms</a>
+<a href="/ui/cookies">Cookies</a>
+<a href="/ui/legal">Legal notice</a>
+</nav>
+<p class="muted login-byline">by <a href="https://github.com/luigibarretta" target="_blank" rel="noopener">Luigi Barretta</a></p>
+</section></main></body></html>"#
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Cache-Control", "no-store")
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(Body::from(html))
+        .unwrap()
+}
+
+fn html_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
@@ -615,7 +690,7 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
 }
 
 pub fn logout(headers: &HeaderMap) -> Response<Body> {
-    let mut resp = redirect("/");
+    let mut resp = redirect("/auth/login?logged_out=1");
     for cookie in expired_session_cookies(headers) {
         if let Ok(value) = HeaderValue::from_str(&cookie) {
             resp.headers_mut().append(SET_COOKIE, value);
@@ -905,8 +980,13 @@ mod tests {
     #[test]
     fn logout_clears_host_and_parent_domain_cookie_variants() {
         let mut headers = HeaderMap::new();
-        headers.insert(HOST, HeaderValue::from_static("klaxond.luigibarretta.com"));
+        headers.insert(HOST, HeaderValue::from_static("klaxond.example.com"));
         let resp = logout(&headers);
+        assert_eq!(resp.status(), StatusCode::FOUND);
+        assert_eq!(
+            resp.headers().get("Location").and_then(|v| v.to_str().ok()),
+            Some("/auth/login?logged_out=1")
+        );
         let cookies = resp
             .headers()
             .get_all(SET_COOKIE)
@@ -919,16 +999,8 @@ mod tests {
                 .iter()
                 .any(|c| c.starts_with("klaxond_session=;") && c.contains("Path=/;"))
         );
-        assert!(
-            cookies
-                .iter()
-                .any(|c| c.contains("Domain=luigibarretta.com"))
-        );
-        assert!(
-            cookies
-                .iter()
-                .any(|c| c.contains("Domain=.luigibarretta.com"))
-        );
+        assert!(cookies.iter().any(|c| c.contains("Domain=example.com")));
+        assert!(cookies.iter().any(|c| c.contains("Domain=.example.com")));
         assert!(cookies.iter().any(|c| c.contains("Path=/auth/callback;")));
     }
 }

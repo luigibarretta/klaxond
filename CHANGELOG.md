@@ -1,5 +1,16 @@
 # Klaxond — CHANGELOG
 
+## 0.14.9 — 2026-07-02
+
+- Rimossi i riferimenti al dominio privato dalle pagine legali, rendendo i
+  testi adatti a una distribuzione OSS/self-hosted.
+- Aggiunto hyperlink a `https://github.com/luigibarretta` sul nome Luigi
+  Barretta nel footer e nelle note legali.
+- Aggiunta una schermata login/signed-out locale con link alle pagine legali,
+  evitando il rientro SSO automatico immediato dopo logout.
+- Documentati nel README i path pubblici privacy/accessibilita'/termini/cookie
+  e note legali per le installazioni self-hosted.
+
 ## 0.14.8 — 2026-07-02
 
 - Rese pubbliche le pagine footer privacy/accessibilita'/termini/cookie/note

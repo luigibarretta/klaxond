@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.8";
+pub const VERSION: &str = "0.14.9";
 pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",
@@ -576,7 +576,7 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
             .and_then(|v| v.parse().ok())
             .unwrap_or(900),
         public_url: std::env::var("KLAXOND_PUBLIC_URL")
-            .unwrap_or_else(|_| "https://klaxond.luigibarretta.com".to_string()),
+            .unwrap_or_else(|_| "http://localhost:8181".to_string()),
         ack_default_ttl: std::env::var("ACK_DEFAULT_TTL_SECONDS")
             .ok()
             .and_then(|v| v.parse().ok())

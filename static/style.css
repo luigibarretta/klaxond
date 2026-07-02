@@ -469,14 +469,31 @@ h3 {
   margin: 0;
   font-size: 15px;
 }
+.auth-login,
 .passkey-login {
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 18px;
 }
+.auth-login .card,
 .passkey-login .card {
   width: min(420px, 100%);
+}
+.login-actions,
+.login-legal {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+.login-legal {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.login-byline {
+  margin-bottom: 0;
 }
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
@@ -644,6 +661,15 @@ tr.deliv-detail .deliv-detail-cell {
 .footer-links a {
   font-size: 12px;
   line-height: 1.4;
+}
+.footer-meta a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.footer-meta a:hover,
+.footer-meta a:focus-visible {
+  color: var(--accent);
+  text-decoration: underline;
 }
 .footer-links a {
   color: var(--muted);

@@ -179,7 +179,9 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   for (const route of ["privacy", "accessibility", "terms", "cookies", "legal"]) {
     const res = await request.get(`/ui/${route}`);
     await expect(res).toBeOK();
-    expect(await res.text()).toContain(`id="tab-${route}"`);
+    const html = await res.text();
+    expect(html).toContain(`id="tab-${route}"`);
+    expect(html).not.toContain("klaxond.luigibarretta.com");
   }
 
   await page.goto("/ui/privacy");
@@ -187,6 +189,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
   await expect(page.locator(".app-footer")).toContainText("klaxond");
   await expect(page.locator(".app-footer")).toContainText("by Luigi Barretta");
+  await expect(page.locator(".footer-meta a", { hasText: "Luigi Barretta" })).toHaveAttribute("href", "https://github.com/luigibarretta");
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
   await expect(page.locator('.footer-links a[href="/ui/accessibility"]')).toHaveText("Accessibility");
 
@@ -200,6 +203,8 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
 
   await page.click('.footer-links a[href="/ui/legal"]');
   await expect(page).toHaveURL(/\/ui\/legal$/);
+  await expect(page.locator("#tab-legal a", { hasText: "Luigi Barretta" })).toHaveAttribute("href", "https://github.com/luigibarretta");
+  await expect(page.locator("#tab-legal")).not.toContainText("klaxond.luigibarretta.com");
   const footerBottomGap = await page.locator(".app-footer").evaluate(el =>
     Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
   );
@@ -222,6 +227,19 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
 
     const publicAsset = await request.get("/ui/style.css", { maxRedirects: 0 });
     await expect(publicAsset).toBeOK();
+
+    const loginPage = await request.get("/auth/login?return_to=%2Fui%2Fstatus", { maxRedirects: 0 });
+    await expect(loginPage).toBeOK();
+    const loginHtml = await loginPage.text();
+    expect(loginHtml).toContain('href="/ui/privacy"');
+    expect(loginHtml).toContain('href="/ui/accessibility"');
+    expect(loginHtml).toContain('href="/ui/legal"');
+    expect(loginHtml).toContain('https://github.com/luigibarretta');
+    expect(loginHtml).not.toContain("klaxond.luigibarretta.com");
+
+    const logout = await request.get("/auth/logout", { maxRedirects: 0 });
+    expect(logout.status()).toBe(302);
+    expect(logout.headers().location).toBe("/auth/login?logged_out=1");
 
     const protectedAdmin = await request.get("/ui/status", { maxRedirects: 0 });
     expect(protectedAdmin.status()).toBe(401);

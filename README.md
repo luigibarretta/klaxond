@@ -40,6 +40,21 @@ docker compose up -d
 
 Open `http://localhost:8181/ui/` to access the admin UI. Edit channel URLs/topics from the Routing tab; secrets stay in your `.env`.
 
+### Public legal and accessibility pages
+
+klaxond ships public informational pages that remain reachable even when the
+admin UI is protected by SSO, Basic auth, trusted proxy auth, passkeys, API keys
+or PATs. Replace `localhost:8181` with your own self-hosted origin:
+
+- [Privacy notice](http://localhost:8181/ui/privacy)
+- [Accessibility statement](http://localhost:8181/ui/accessibility)
+- [Terms of use](http://localhost:8181/ui/terms)
+- [Cookie notice](http://localhost:8181/ui/cookies)
+- [Legal notice and contacts](http://localhost:8181/ui/legal)
+
+The same links are shown in the app footer and on the local login/signed-out
+screen.
+
 ## Endpoints
 
 ### Webhook ingress (machine-to-machine)

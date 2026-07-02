@@ -54,7 +54,7 @@ pub async fn dispatch(
         .to_string();
 
     if method == Method::GET && path.starts_with("/auth/login") {
-        return auth::oidc_login_redirect(&state, headers, &full_path).await;
+        return auth::login(&state, headers, &full_path).await;
     }
     if method == Method::GET && path.starts_with("/auth/callback") {
         return auth::oidc_callback(&state, headers, &full_path).await;
