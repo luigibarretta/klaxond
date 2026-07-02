@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import crypto from "node:crypto";
 
 const LOCAL_ORIGIN = "http://localhost:18181";
 const BASIC_USER = "admin";
@@ -47,6 +48,71 @@ async function restoreConfigBundle(request: APIRequestContext, bundle: unknown, 
     data: bundle
   });
   await expect(res).toBeOK();
+}
+
+async function createAdminBearer(request: APIRequestContext, name = "e2e-admin") {
+  const res = await request.post("/api/auth/tokens", {
+    data: { name, kind: "pat", scopes: ["admin:*"] }
+  });
+  await expect(res).toBeOK();
+  return `Bearer ${(await res.json()).token}`;
+}
+
+async function requestWithAuthFallback(request: APIRequestContext, method: "get" | "post", url: string, options: Record<string, unknown> = {}) {
+  const run = (headers: Record<string, string> = {}) => request[method](url, {
+    ...options,
+    headers: { ...((options.headers as Record<string, string> | undefined) || {}), ...headers }
+  });
+  let res = await run();
+  if ([401, 403, 428].includes(res.status())) {
+    if (method === "get") {
+      res = await run({ Authorization: BASIC_AUTH });
+    } else {
+      let me = await request.get("/auth/me");
+      if (me.status() === 401) {
+        me = await request.get("/auth/me", { headers: { Authorization: BASIC_AUTH } });
+      }
+      if (me.ok()) {
+        const csrf = (await me.json()).csrf;
+        res = await run(csrf ? { "X-Klaxond-CSRF": csrf } : {});
+      }
+    }
+  }
+  return res;
+}
+
+async function exportConfigBundleWithAuthFallback(request: APIRequestContext) {
+  const res = await requestWithAuthFallback(request, "get", "/api/config/export");
+  await expect(res).toBeOK();
+  return res.json();
+}
+
+function base32Decode(secret: string) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = "";
+  for (const raw of secret.replace(/=+$/g, "").toUpperCase()) {
+    const val = alphabet.indexOf(raw);
+    if (val < 0) continue;
+    bits += val.toString(2).padStart(5, "0");
+  }
+  const out = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    out.push(parseInt(bits.slice(i, i + 8), 2));
+  }
+  return Buffer.from(out);
+}
+
+function totp(secret: string, atSeconds = Math.floor(Date.now() / 1000)) {
+  const counter = Math.floor(atSeconds / 30);
+  const msg = Buffer.alloc(8);
+  msg.writeBigUInt64BE(BigInt(counter));
+  const hmac = crypto.createHmac("sha1", base32Decode(secret)).update(msg).digest();
+  const offset = hmac[hmac.length - 1] & 0x0f;
+  const bin = ((hmac[offset] & 0x7f) << 24)
+    | ((hmac[offset + 1] & 0xff) << 16)
+    | ((hmac[offset + 2] & 0xff) << 8)
+    | (hmac[offset + 3] & 0xff);
+  return String(bin % 1_000_000).padStart(6, "0");
 }
 
 async function addVirtualAuthenticator(page: Page) {
@@ -246,6 +312,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   expect(Math.abs(mobileFooterBottomGap)).toBeLessThanOrEqual(2);
 
   const originalBundle = await exportConfigBundle(request);
+  const cleanupBearer = await createAdminBearer(request, "e2e-legal-cleanup");
   try {
     await enableBasicAuth(request);
     for (const route of ["privacy", "accessibility", "terms", "cookies", "legal"]) {
@@ -284,7 +351,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
     await expect(page.locator("#tab-privacy h2")).toContainText(/Privacy notice|Informativa privacy/);
   } finally {
-    await restoreConfigBundle(request, originalBundle, { Authorization: BASIC_AUTH });
+    await restoreConfigBundle(request, originalBundle, { Authorization: cleanupBearer });
   }
 });
 
@@ -553,6 +620,7 @@ test("authentication separates API keys and PATs", async ({ page }) => {
 
 test("API keys and PATs support prefixes, last-use tracking, revocation and scope denial", async ({ request }) => {
   const originalBundle = await exportConfigBundle(request);
+  const adminBearer = await createAdminBearer(request, "e2e-token-admin");
   const pat = await request.post("/api/auth/tokens", {
     data: { name: "e2e-logs-reader", kind: "pat", scopes: ["logs:read"] }
   });
@@ -580,13 +648,20 @@ test("API keys and PATs support prefixes, last-use tracking, revocation and scop
     await enableBasicAuth(request);
 
     const cascadeBefore = await request.get("/api/cascade-config", {
-      headers: { Authorization: BASIC_AUTH }
+      headers: { Authorization: adminBearer }
     });
     await expect(cascadeBefore).toBeOK();
     const cascadeBeforePayload = await cascadeBefore.json();
     const desiredRuntime = !cascadeBeforePayload.default_enabled_for_webhook;
-    const cascadeToggle = await request.post("/api/cascade/toggle", {
+    const basicMutationDenied = await request.post("/api/cascade/toggle", {
       headers: { Authorization: BASIC_AUTH },
+      data: { enabled: desiredRuntime }
+    });
+    expect(basicMutationDenied.status()).toBe(403);
+    expect(await basicMutationDenied.text()).toContain("CSRF");
+
+    const cascadeToggle = await request.post("/api/cascade/toggle", {
+      headers: { Authorization: adminBearer },
       data: { enabled: desiredRuntime }
     });
     await expect(cascadeToggle).toBeOK();
@@ -597,13 +672,13 @@ test("API keys and PATs support prefixes, last-use tracking, revocation and scop
     await expect(bearerAllowed).toBeOK();
 
     const cascadeAfter = await request.get("/api/cascade-config", {
-      headers: { Authorization: BASIC_AUTH }
+      headers: { Authorization: adminBearer }
     });
     await expect(cascadeAfter).toBeOK();
     expect((await cascadeAfter.json()).runtime_enabled).toBe(desiredRuntime);
 
     const afterUse = await request.get("/api/auth/tokens", {
-      headers: { Authorization: BASIC_AUTH }
+      headers: { Authorization: adminBearer }
     });
     await expect(afterUse).toBeOK();
     const usedRecord = (await afterUse.json()).tokens.find((token: { id: string }) => token.id === patPayload.record.id);
@@ -616,7 +691,7 @@ test("API keys and PATs support prefixes, last-use tracking, revocation and scop
     expect(bearerDeniedByScope.status()).toBe(403);
 
     const revoke = await request.post("/api/auth/tokens/revoke", {
-      headers: { Authorization: BASIC_AUTH },
+      headers: { Authorization: adminBearer },
       data: { id: patPayload.record.id }
     });
     await expect(revoke).toBeOK();
@@ -626,12 +701,13 @@ test("API keys and PATs support prefixes, last-use tracking, revocation and scop
     });
     expect(bearerRevoked.status()).toBe(401);
   } finally {
-    await restoreConfigBundle(request, originalBundle, { Authorization: BASIC_AUTH });
+    await restoreConfigBundle(request, originalBundle, { Authorization: adminBearer });
   }
 });
 
 test("passkeys can be registered, used for login, and deleted", async ({ page, request }) => {
   const originalBundle = await exportConfigBundle(request);
+  const cleanupBearer = await createAdminBearer(request, "e2e-passkey-cleanup");
   let cleanupAuthenticator: (() => Promise<void>) | undefined;
 
   try {
@@ -646,6 +722,7 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     await expect(page.locator("#t-passkeys tbody")).toContainText("e2e virtual key");
     await expect(page.locator(".toast-success").last()).toContainText("Passkey registered");
 
+    await page.setExtraHTTPHeaders({});
     await page.goto(`${LOCAL_ORIGIN}/auth/passkey`);
     await page.fill("#user", BASIC_USER);
     await page.click("#login");
@@ -660,7 +737,7 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     await expect(page.locator("#t-passkeys tbody")).toContainText("No passkeys registered.");
   } finally {
     await cleanupAuthenticator?.();
-    await restoreConfigBundle(request, originalBundle, { Authorization: BASIC_AUTH });
+    await restoreConfigBundle(request, originalBundle, { Authorization: cleanupBearer });
     await page.setExtraHTTPHeaders({});
   }
 });
@@ -828,6 +905,95 @@ test("full config export includes TOML sidecars and runtime settings", async ({ 
       "auth-config.json"
     ]
   });
+});
+
+test("operational readiness endpoints cover import preview, audit, setup, channel matrix and policy simulation", async ({ request }) => {
+  const bundle = await exportConfigBundle(request);
+
+  const preview = await request.post("/api/config/import-preview", {
+    headers: { "Content-Type": "application/json" },
+    data: bundle
+  });
+  await expect(preview).toBeOK();
+  expect(await preview.json()).toMatchObject({
+    ok: true,
+    source_kind: "full-bundle",
+    backup_will_be_created: true,
+    would_restore: [
+      "klaxond.toml",
+      "render-config.json",
+      "ntfy-topics.json",
+      "dedup-config.json",
+      "auth-config.json"
+    ]
+  });
+
+  await restoreConfigBundle(request, bundle);
+  const audit = await request.get("/api/audit?limit=10&q=config.restore");
+  await expect(audit).toBeOK();
+  const auditBody = await audit.json();
+  expect(auditBody.entries[0]).toMatchObject({
+    action: "config.restore",
+    outcome: "ok"
+  });
+
+  const setup = await request.get("/api/setup-status");
+  await expect(setup).toBeOK();
+  const setupBody = await setup.json();
+  expect(setupBody.items).toEqual(expect.arrayContaining([
+    expect.objectContaining({ key: "auth" }),
+    expect.objectContaining({ key: "ingest_auth" }),
+    expect.objectContaining({ key: "channels" }),
+    expect.objectContaining({ key: "backups" })
+  ]));
+
+  const matrix = await request.get("/api/channel-test-matrix");
+  await expect(matrix).toBeOK();
+  expect(await matrix.json()).toMatchObject({
+    dry_run: true,
+    channels: expect.arrayContaining([
+      expect.objectContaining({ name: "ntfy" }),
+      expect.objectContaining({ name: "telegram" }),
+      expect.objectContaining({ name: "smtp" })
+    ])
+  });
+
+  const simulated = await request.post("/api/policy-simulate", {
+    data: {
+      source: "grafana",
+      severity: "critical",
+      labels: {
+        alertname: "HostLoadHigh",
+        component: "host",
+        host: "it1-prd-dev-01"
+      }
+    }
+  });
+  await expect(simulated).toBeOK();
+  expect(await simulated.json()).toMatchObject({
+    source: "grafana",
+    severity: "critical",
+    inhibition: expect.objectContaining({ would_send: expect.any(Boolean) }),
+    delivery: expect.objectContaining({ policy: expect.any(String), tiers: expect.any(Array) }),
+    dedup: expect.objectContaining({ enabled: expect.any(Boolean) })
+  });
+});
+
+test("operational readiness tabs render diagnostics, simulator and audit views", async ({ page, request }) => {
+  await request.get("/api/setup-status");
+
+  await page.goto("/ui/setup");
+  await expect(page.locator("#tab-setup")).toHaveClass(/active/);
+  await expect(page.locator('[data-tab="setup"]')).toBeVisible();
+  await expect(page.locator("#setup-checklist")).toBeVisible();
+
+  await page.goto("/ui/simulator");
+  await expect(page.locator("#tab-simulator")).toHaveClass(/active/);
+  await expect(page.locator("#policy-sim-run")).toBeVisible();
+
+  await page.goto("/ui/audit");
+  await expect(page.locator("#tab-audit")).toHaveClass(/active/);
+  await expect(page.locator("#audit-filter")).toBeVisible();
 });
 
 test("config restore rejects bad bundles without changing current settings", async ({ request }) => {
@@ -1045,6 +1211,36 @@ test("backend logs require admin auth when auth is enabled", async ({ request })
   await expect(wrongToken).toBeOK();
   const wrongPayload = await wrongToken.json();
 
+  const viewerToken = await request.post("/api/auth/tokens", {
+    data: {
+      name: "viewer-role",
+      kind: "pat",
+      scopes: ["viewer:*"]
+    }
+  });
+  await expect(viewerToken).toBeOK();
+  const viewerPayload = await viewerToken.json();
+
+  const configReaderToken = await request.post("/api/auth/tokens", {
+    data: {
+      name: "config-reader",
+      kind: "pat",
+      scopes: ["config:read"]
+    }
+  });
+  await expect(configReaderToken).toBeOK();
+  const configReaderPayload = await configReaderToken.json();
+
+  const authWriterToken = await request.post("/api/auth/tokens", {
+    data: {
+      name: "auth-writer",
+      kind: "pat",
+      scopes: ["auth:write"]
+    }
+  });
+  await expect(authWriterToken).toBeOK();
+  const authWriterPayload = await authWriterToken.json();
+
   const update = await request.post("/api/auth-config", {
     data: {
       settings: {
@@ -1080,4 +1276,145 @@ test("backend logs require admin auth when auth is enabled", async ({ request })
     headers: { Authorization: `Bearer ${wrongPayload.token}` }
   });
   expect(bearerDenied.status()).toBe(403);
+
+  const secretExportDenied = await request.get("/api/config/export", {
+    headers: { Authorization: `Bearer ${configReaderPayload.token}` }
+  });
+  expect(secretExportDenied.status()).toBe(403);
+
+  const authWriterEscalationDenied = await request.post("/api/auth/tokens", {
+    headers: { Authorization: `Bearer ${authWriterPayload.token}` },
+    data: {
+      name: "should-not-escalate",
+      kind: "pat",
+      scopes: ["admin:*"]
+    }
+  });
+  expect(authWriterEscalationDenied.status()).toBe(403);
+
+  const viewerStatus = await request.get("/api/status", {
+    headers: { Authorization: `Bearer ${viewerPayload.token}` }
+  });
+  await expect(viewerStatus).toBeOK();
+
+  const viewerAudit = await request.get("/api/audit?limit=1", {
+    headers: { Authorization: `Bearer ${viewerPayload.token}` }
+  });
+  await expect(viewerAudit).toBeOK();
+
+  const viewerExportDenied = await request.get("/api/config/export", {
+    headers: { Authorization: `Bearer ${viewerPayload.token}` }
+  });
+  expect(viewerExportDenied.status()).toBe(403);
+
+  const viewerWriteDenied = await request.post("/api/cascade/toggle", {
+    headers: { Authorization: `Bearer ${viewerPayload.token}` },
+    data: {}
+  });
+  expect(viewerWriteDenied.status()).toBe(403);
+});
+
+test("local login supports TOTP, CSRF protection and sudo reauth", async ({ request }) => {
+  const originalBundle = await exportConfigBundleWithAuthFallback(request);
+  const cleanupToken = await requestWithAuthFallback(request, "post", "/api/auth/tokens", {
+    data: { name: "e2e-cleanup-admin", kind: "pat", scopes: ["admin:*"] }
+  });
+  await expect(cleanupToken).toBeOK();
+  const cleanupBearer = `Bearer ${(await cleanupToken.json()).token}`;
+
+  try {
+    const update = await requestWithAuthFallback(request, "post", "/api/auth-config", {
+      data: {
+        settings: {
+          mode: "basic",
+          basic: {
+            username: BASIC_USER,
+            password: BASIC_PASSWORD,
+            realm: "klaxond"
+          }
+        }
+      }
+    });
+    await expect(update).toBeOK();
+
+    const basic = `Basic ${Buffer.from(`${BASIC_USER}:${BASIC_PASSWORD}`).toString("base64")}`;
+    const basicMutationDenied = await request.post("/api/cascade/toggle", {
+      headers: { Authorization: basic },
+      data: {}
+    });
+    expect(basicMutationDenied.status()).toBe(403);
+    expect(await basicMutationDenied.text()).toContain("CSRF");
+
+    const setup = await request.post("/api/auth/totp/start", {
+      headers: { Authorization: cleanupBearer },
+      data: {}
+    });
+    await expect(setup).toBeOK();
+    const setupBody = await setup.json();
+    expect(setupBody.secret).toMatch(/^[A-Z2-7]+$/);
+    expect(setupBody.otpauth_uri).toContain("otpauth://totp/");
+
+    const enable = await request.post("/api/auth/totp/enable", {
+      headers: { Authorization: cleanupBearer },
+      data: { secret: setupBody.secret, code: totp(setupBody.secret) }
+    });
+    await expect(enable).toBeOK();
+
+    const noTotp = await request.post("/auth/login", {
+      headers: { "X-Klaxond-Request": "fetch" },
+      data: { username: BASIC_USER, password: BASIC_PASSWORD, return_to: "/ui/status" }
+    });
+    expect(noTotp.status()).toBe(401);
+    expect(await noTotp.text()).toContain("TOTP");
+
+    const login = await request.post("/auth/login", {
+      headers: { "X-Klaxond-Request": "fetch" },
+      data: {
+        username: BASIC_USER,
+        password: BASIC_PASSWORD,
+        totp: totp(setupBody.secret),
+        return_to: "/ui/status"
+      }
+    });
+    await expect(login).toBeOK();
+    const loginBody = await login.json();
+    expect(loginBody.csrf).toMatch(/^klx_csrf_/);
+
+    const me = await request.get("/auth/me");
+    await expect(me).toBeOK();
+    const csrf = (await me.json()).csrf;
+    expect(csrf).toBe(loginBody.csrf);
+
+    const missingCsrf = await request.post("/api/cascade/toggle", { data: {} });
+    expect(missingCsrf.status()).toBe(403);
+    expect(await missingCsrf.text()).toContain("CSRF");
+
+    const needsSudo = await request.post("/api/cascade/toggle", {
+      headers: { "X-Klaxond-CSRF": csrf },
+      data: {}
+    });
+    expect(needsSudo.status()).toBe(428);
+    expect(needsSudo.headers()["x-klaxond-reauth"]).toBe("required");
+
+    const badSudo = await request.post("/auth/sudo", {
+      headers: { "X-Klaxond-CSRF": csrf },
+      data: { password: "wrong", totp: totp(setupBody.secret) }
+    });
+    expect(badSudo.status()).toBe(401);
+
+    const sudo = await request.post("/auth/sudo", {
+      headers: { "X-Klaxond-CSRF": csrf },
+      data: { password: BASIC_PASSWORD, totp: totp(setupBody.secret) }
+    });
+    await expect(sudo).toBeOK();
+    expect((await sudo.json()).sudo_until).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+    const allowedMutation = await request.post("/api/cascade/toggle", {
+      headers: { "X-Klaxond-CSRF": csrf },
+      data: {}
+    });
+    await expect(allowedMutation).toBeOK();
+  } finally {
+    await restoreConfigBundle(request, originalBundle, { Authorization: cleanupBearer });
+  }
 });

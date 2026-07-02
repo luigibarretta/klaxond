@@ -1,3 +1,4 @@
+use crate::audit;
 use crate::auth::{self, AuthOutcome, User};
 use crate::config::{
     AuthConfig, AuthToken, DEDUP_SOURCES, DedupSetting, InhibitionRule, NtfyTopic, PasskeyRecord,
@@ -6,7 +7,7 @@ use crate::config::{
     save_toml,
 };
 use crate::dedup;
-use crate::delivery::deliver;
+use crate::delivery::{deliver, pick_policy};
 use crate::inhibition;
 use crate::log_buffer;
 use crate::parsers::{
@@ -75,6 +76,18 @@ pub async fn dispatch(
         }
     }
 
+    if method == Method::POST
+        && !auth::is_public(&path)
+        && let Some(user) = authed_user.as_ref()
+    {
+        if auth::csrf_required(&headers, &path, user) && !auth::csrf_valid(&headers, user) {
+            return auth::csrf_rejected();
+        }
+        if auth::sudo_required(&headers, &path, user) && !auth::sudo_valid(user) {
+            return auth::sudo_required_response();
+        }
+    }
+
     let mut resp = match method {
         Method::GET => handle_get(&state, &path, &full_path, authed_user).await,
         Method::POST => {
@@ -104,6 +117,7 @@ async fn handle_get(
         "/api/status" => json_response(status_payload(state).await),
         "/api/deliveries" => json_response(state.recent_deliveries()),
         "/api/logs" => json_response(logs_payload(full_path)),
+        "/api/audit" => json_response(audit_payload(full_path)),
         "/api/render-config" => {
             let cfg = state.cfg();
             json_response(
@@ -119,47 +133,15 @@ async fn handle_get(
             }))
         }
         "/api/auth-config" => {
-            let mut settings = serde_json::to_value(state.cfg().auth).unwrap_or_else(|_| json!({}));
-            if !settings
-                .get("basic")
-                .and_then(|b| b.get("password_hash"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .is_empty()
-            {
-                settings["basic"]["password_hash"] = json!("***SET***");
-            }
-            if !settings
-                .get("oidc")
-                .and_then(|b| b.get("client_secret"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .is_empty()
-            {
-                settings["oidc"]["client_secret"] = json!("***SET***");
-            }
             let cfg = state.cfg();
-            settings["api_keys"] = json!(
-                cfg.auth
-                    .api_keys
-                    .iter()
-                    .map(auth::public_token)
-                    .collect::<Vec<_>>()
-            );
-            settings["passkeys"] = json!(
-                cfg.auth
-                    .passkeys
-                    .iter()
-                    .map(public_passkey)
-                    .collect::<Vec<_>>()
-            );
+            let settings = redacted_auth_settings(&cfg.auth);
             json_response(json!({
                 "settings": settings,
                 "available_modes": ["none", "basic", "oidc", "trusted-proxy"],
                 "available_token_scopes": auth::TOKEN_SCOPES,
                 "bcrypt_available": true,
                 "jwt_available": true,
-                "current_user": authed_user.unwrap_or(User { sub: "anonymous".into(), email: String::new(), name: String::new(), groups: vec![], mode: "none".into(), exp: 0 }),
+                "current_user": authed_user.unwrap_or_else(anonymous_user),
             }))
         }
         "/api/auth/tokens" => {
@@ -229,20 +211,69 @@ async fn handle_get(
         "/api/config/backup" => config_backup_response(state),
         "/api/config/export" => config_full_export_response(state),
         "/api/config/backups" => json_response(config_backups_payload(state)),
-        "/auth/me" => json_response(authed_user.unwrap_or(User {
-            sub: "anonymous".into(),
-            email: String::new(),
-            name: String::new(),
-            groups: vec![],
-            mode: "none".into(),
-            exp: 0,
-        })),
+        "/api/setup-status" => json_response(setup_status_payload(state)),
+        "/api/channel-test-matrix" => json_response(channel_test_matrix_payload(state).await),
+        "/auth/me" => json_response(authed_user.unwrap_or_else(anonymous_user)),
         "/auth/passkey" | "/auth/passkey/" => passkey_login_page(),
         _ if path.starts_with("/img/") => image_response(state, path),
         _ if path.starts_with("/ui/") => ui_response(state, path.trim_start_matches("/ui/")),
         _ if path.starts_with("/api/ack/") => ack_response(state, path),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+fn anonymous_user() -> User {
+    User {
+        sub: "anonymous".into(),
+        email: String::new(),
+        name: String::new(),
+        groups: vec![],
+        mode: "none".into(),
+        exp: 0,
+        csrf: String::new(),
+        sudo_until: 0,
+        via_authorization: false,
+    }
+}
+
+fn redacted_auth_settings(auth_cfg: &AuthConfig) -> Value {
+    let mut settings = serde_json::to_value(auth_cfg).unwrap_or_else(|_| json!({}));
+    if !settings["basic"]["password_hash"]
+        .as_str()
+        .unwrap_or("")
+        .is_empty()
+    {
+        settings["basic"]["password_hash"] = json!("***SET***");
+    }
+    if !settings["basic"]["totp_secret"]
+        .as_str()
+        .unwrap_or("")
+        .is_empty()
+    {
+        settings["basic"]["totp_secret"] = json!("***SET***");
+    }
+    if !settings["oidc"]["client_secret"]
+        .as_str()
+        .unwrap_or("")
+        .is_empty()
+    {
+        settings["oidc"]["client_secret"] = json!("***SET***");
+    }
+    settings["api_keys"] = json!(
+        auth_cfg
+            .api_keys
+            .iter()
+            .map(auth::public_token)
+            .collect::<Vec<_>>()
+    );
+    settings["passkeys"] = json!(
+        auth_cfg
+            .passkeys
+            .iter()
+            .map(public_passkey)
+            .collect::<Vec<_>>()
+    );
+    settings
 }
 
 async fn handle_post(
@@ -254,13 +285,19 @@ async fn handle_post(
     peer: SocketAddr,
     authed_user: Option<User>,
 ) -> Response<Body> {
-    match path {
+    let body_len = body.len();
+    let resp = match path {
+        "/auth/login" => auth::local_login(state, body).await,
+        "/auth/sudo" => auth::sudo(state, body, authed_user.as_ref()),
         "/auth/passkey/start" => passkey_login_start(state, body),
         "/auth/passkey/finish" => passkey_login_finish(state, body),
         "/api/client-log" => client_log_response(body, authed_user.as_ref()),
         "/api/auth-config" => update_auth_config(state, body, authed_user.as_ref(), peer, headers),
-        "/api/auth/tokens" => create_auth_token(state, body),
+        "/api/auth/tokens" => create_auth_token(state, body, authed_user.as_ref()),
         "/api/auth/tokens/revoke" => revoke_auth_token(state, body),
+        "/api/auth/totp/start" => auth::totp_start(state),
+        "/api/auth/totp/enable" => auth::totp_enable(state, body),
+        "/api/auth/totp/disable" => auth::totp_disable(state),
         "/api/auth/passkeys/register/start" => {
             passkey_register_start(state, body, authed_user.as_ref())
         }
@@ -275,14 +312,64 @@ async fn handle_post(
         "/api/dedup-config" => update_dedup_config(state, body),
         "/api/ntfy-topics" => update_ntfy_topics(state, body),
         "/api/inhibition-rules" => update_inhibition_rules(state, body),
-        "/api/config/restore" => restore_config(state, body),
+        "/api/config/import-preview" => config_import_preview_response(state, body),
+        "/api/config/restore" => restore_config(state, body, authed_user.as_ref()),
         "/api/ingest-auth" => update_ingest_auth(state, body),
         "/api/schedules" => update_schedules(state, body),
         "/api/acks/clear" => clear_acks(state, body),
         "/api/inhibitions/clear" => clear_inhibitions(state, body),
         "/api/inhibition-rules/test" => inhibition_rules_test(state, body),
+        "/api/policy-simulate" => policy_simulate(state, body),
         _ if path.starts_with("/api/test/") => api_test(state, path, body).await,
         _ => ingest(state, path, full_path, headers, body, peer).await,
+    };
+    record_admin_post_audit(path, resp.status(), authed_user.as_ref(), body_len);
+    resp
+}
+
+fn record_admin_post_audit(
+    path: &str,
+    status: StatusCode,
+    authed_user: Option<&User>,
+    body_len: usize,
+) {
+    let Some(action) = audit_action_for_post(path) else {
+        return;
+    };
+    audit::record(
+        audit_actor(authed_user),
+        action,
+        if status.is_success() { "ok" } else { "error" },
+        format!("{} status={} bytes={}", path, status.as_u16(), body_len),
+    );
+}
+
+fn audit_action_for_post(path: &str) -> Option<&'static str> {
+    match path {
+        "/api/auth-config" => Some("auth.update"),
+        "/api/auth/tokens" => Some("auth.token.create"),
+        "/api/auth/tokens/revoke" => Some("auth.token.revoke"),
+        "/api/auth/totp/start" => Some("auth.totp.start"),
+        "/api/auth/totp/enable" => Some("auth.totp.enable"),
+        "/api/auth/totp/disable" => Some("auth.totp.disable"),
+        "/api/auth/passkeys/register/start" => Some("auth.passkey.register.start"),
+        "/api/auth/passkeys/register/finish" => Some("auth.passkey.register.finish"),
+        "/api/auth/passkeys/delete" => Some("auth.passkey.delete"),
+        "/api/cascade/toggle" => Some("cascade.toggle"),
+        "/api/render-config" => Some("config.render.update"),
+        "/api/cascade-config" => Some("config.cascade.update"),
+        "/api/channel-config" => Some("config.channel.update"),
+        "/api/delivery-config" => Some("config.delivery.update"),
+        "/api/dedup-config" => Some("config.dedup.update"),
+        "/api/ntfy-topics" => Some("config.ntfy_topics.update"),
+        "/api/inhibition-rules" => Some("config.inhibition_rules.update"),
+        "/api/config/import-preview" => Some("config.import_preview"),
+        "/api/config/restore" => Some("config.restore"),
+        "/api/ingest-auth" => Some("config.ingest_auth.update"),
+        "/api/schedules" => Some("config.schedules.update"),
+        "/api/acks/clear" => Some("runtime.acks.clear"),
+        "/api/inhibitions/clear" => Some("runtime.inhibitions.clear"),
+        _ => None,
     }
 }
 
@@ -804,6 +891,9 @@ fn validate_auth_config(
             if auth.basic.password_hash.trim().is_empty() {
                 return Err("basic auth requires a password before it can be enabled".into());
             }
+            if auth.basic.totp_enabled && auth.basic.totp_secret.trim().is_empty() {
+                return Err("basic auth TOTP is enabled but no TOTP secret is configured".into());
+            }
             Ok(())
         }
         "oidc" => {
@@ -977,42 +1067,14 @@ fn update_auth_config(
             }
             let mut cfg = state.cfg();
             cfg.auth = auth;
-            let mut redacted = serde_json::to_value(&cfg.auth).unwrap();
-            if !redacted["basic"]["password_hash"]
-                .as_str()
-                .unwrap_or("")
-                .is_empty()
-            {
-                redacted["basic"]["password_hash"] = json!("***SET***");
-            }
-            if !redacted["oidc"]["client_secret"]
-                .as_str()
-                .unwrap_or("")
-                .is_empty()
-            {
-                redacted["oidc"]["client_secret"] = json!("***SET***");
-            }
-            redacted["api_keys"] = json!(
-                cfg.auth
-                    .api_keys
-                    .iter()
-                    .map(auth::public_token)
-                    .collect::<Vec<_>>()
-            );
-            redacted["passkeys"] = json!(
-                cfg.auth
-                    .passkeys
-                    .iter()
-                    .map(public_passkey)
-                    .collect::<Vec<_>>()
-            );
+            let redacted = redacted_auth_settings(&cfg.auth);
             state.replace_config(cfg);
             json_response(json!({"ok": true, "settings": redacted}))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
-fn create_auth_token(state: &AppState, body: Bytes) -> Response<Body> {
+fn create_auth_token(state: &AppState, body: Bytes, current_user: Option<&User>) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
@@ -1049,6 +1111,12 @@ fn create_auth_token(state: &AppState, body: Bytes) -> Response<Body> {
         if !auth::TOKEN_SCOPES.contains(&scope.as_str()) {
             return text(StatusCode::BAD_REQUEST, &format!("invalid scope '{scope}'"));
         }
+    }
+    if !token_scopes_allowed_for_actor(current_user, &scopes) {
+        return text(
+            StatusCode::FORBIDDEN,
+            "requested token scopes exceed the authenticated token scope",
+        );
     }
     let now = crate::util::now_epoch_i64();
     let expires_at = payload
@@ -1094,6 +1162,18 @@ fn create_auth_token(state: &AppState, body: Bytes) -> Response<Body> {
             }))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn token_scopes_allowed_for_actor(current_user: Option<&User>, requested: &[String]) -> bool {
+    let Some(user) = current_user else {
+        return true;
+    };
+    if !user.via_authorization {
+        return true;
+    }
+    requested
+        .iter()
+        .all(|scope| auth::scopes_allow(&user.groups, scope))
 }
 
 fn revoke_auth_token(state: &AppState, body: Bytes) -> Response<Body> {
@@ -1452,6 +1532,9 @@ fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
                 groups: vec!["passkey".into()],
                 mode: "passkey".into(),
                 exp: 0,
+                csrf: String::new(),
+                sudo_until: auth::sudo_until_deadline(),
+                via_authorization: false,
             };
             if let Err(err) = save_auth(&state.paths, &cfg.auth) {
                 return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
@@ -1940,7 +2023,7 @@ struct BundleSidecar {
     text: String,
 }
 
-fn restore_config(state: &AppState, body: Bytes) -> Response<Body> {
+fn restore_config(state: &AppState, body: Bytes, _authed_user: Option<&User>) -> Response<Body> {
     if body.is_empty() || body.len() > 5_000_000 {
         return text(StatusCode::BAD_REQUEST, "empty or oversized body");
     }
@@ -1949,14 +2032,8 @@ fn restore_config(state: &AppState, body: Bytes) -> Response<Body> {
         Ok(input) => input,
         Err(err) => return text(StatusCode::BAD_REQUEST, &err),
     };
-    if !["cascade", "delivery", "render", "ntfy", "auth"]
-        .iter()
-        .any(|k| input.parsed.get(k).is_some())
-    {
-        return text(
-            StatusCode::BAD_REQUEST,
-            "no recognised top-level sections; refusing as likely empty",
-        );
+    if let Err(err) = validate_restore_input(&input) {
+        return text(StatusCode::BAD_REQUEST, &err);
     }
     let (backup, restored_sidecars) = match state.with_config_write_lock(|| {
         let backup = config_auto_backup(state).ok().flatten();
@@ -1987,6 +2064,139 @@ fn restore_config(state: &AppState, body: Bytes) -> Response<Body> {
     json_response(
         json!({"ok": true, "source_kind": input.source_kind, "bytes_written": body_len, "toml_bytes_written": input.toml_text.len(), "pre_restore_backup": backup, "restored_sidecars": restored_sidecars}),
     )
+}
+
+fn config_import_preview_response(state: &AppState, body: Bytes) -> Response<Body> {
+    if body.is_empty() || body.len() > 5_000_000 {
+        return text(StatusCode::BAD_REQUEST, "empty or oversized body");
+    }
+    let input = match parse_restore_input(&body) {
+        Ok(input) => input,
+        Err(err) => return text(StatusCode::BAD_REQUEST, &err),
+    };
+    if let Err(err) = validate_restore_input(&input) {
+        return text(StatusCode::BAD_REQUEST, &err);
+    }
+    let current = match config_current_files(state) {
+        Ok(files) => files,
+        Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
+    };
+    let incoming = restore_input_files(&input);
+    let would_restore = restore_input_would_restore(&input);
+    let mut changed_files = Vec::new();
+    let mut unchanged_files = Vec::new();
+    for (name, text) in &incoming {
+        if current.get(*name).map(String::as_str) == Some(*text) {
+            unchanged_files.push(*name);
+        } else {
+            changed_files.push(*name);
+        }
+    }
+    for name in &would_restore {
+        if !incoming
+            .iter()
+            .any(|(incoming_name, _)| incoming_name == name)
+            && !changed_files.contains(name)
+        {
+            changed_files.push(*name);
+        }
+    }
+    let warnings = if input.source_kind == "full-bundle" {
+        vec!["full bundle includes secrets; keep exported files private"]
+    } else {
+        vec!["TOML import may regenerate supported sidecar files from TOML sections"]
+    };
+    json_response(json!({
+        "ok": true,
+        "source_kind": input.source_kind,
+        "bytes_received": body.len(),
+        "toml_bytes": input.toml_text.len(),
+        "would_restore": would_restore,
+        "changed_files": changed_files,
+        "unchanged_files": unchanged_files,
+        "warnings": warnings,
+        "backup_will_be_created": state.paths.config.exists(),
+    }))
+}
+
+fn validate_restore_input(input: &RestoreInput) -> Result<(), String> {
+    if !["cascade", "delivery", "render", "ntfy", "auth"]
+        .iter()
+        .any(|k| input.parsed.get(k).is_some())
+    {
+        return Err("no recognised top-level sections; refusing as likely empty".into());
+    }
+    Ok(())
+}
+
+fn restore_input_files(input: &RestoreInput) -> Vec<(&'static str, &str)> {
+    let mut files = vec![("klaxond.toml", input.toml_text.as_str())];
+    for sidecar in &input.sidecars {
+        files.push((sidecar.name, sidecar.text.as_str()));
+    }
+    files
+}
+
+fn restore_input_would_restore(input: &RestoreInput) -> Vec<&'static str> {
+    let mut names = restore_input_files(input)
+        .iter()
+        .map(|(name, _)| *name)
+        .collect::<Vec<_>>();
+    if input.sidecars.is_empty() {
+        if input
+            .parsed
+            .get("render")
+            .and_then(|v| v.get("component_dashboards"))
+            .is_some()
+        {
+            push_unique(&mut names, "render-config.json");
+        }
+        if input.parsed.get("dedup").is_some() {
+            push_unique(&mut names, "dedup-config.json");
+        }
+        if input.parsed.get("auth").is_some() {
+            push_unique(&mut names, "auth-config.json");
+        }
+        if input
+            .parsed
+            .get("ntfy")
+            .and_then(|v| v.get("topics"))
+            .is_some()
+        {
+            push_unique(&mut names, "ntfy-topics.json");
+        }
+    }
+    names
+}
+
+fn push_unique(list: &mut Vec<&'static str>, value: &'static str) {
+    if !list.contains(&value) {
+        list.push(value);
+    }
+}
+
+fn config_current_files(state: &AppState) -> Result<HashMap<String, String>, String> {
+    let payload = config_full_export_payload(state)?;
+    let files = payload
+        .get("files")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "current export missing files object".to_string())?;
+    Ok(files
+        .iter()
+        .filter_map(|(name, value)| value.as_str().map(|text| (name.clone(), text.to_string())))
+        .collect())
+}
+
+fn audit_actor(user: Option<&User>) -> String {
+    user.map(|u| {
+        let sub = if u.sub.trim().is_empty() {
+            "anonymous"
+        } else {
+            u.sub.as_str()
+        };
+        format!("{}:{sub}", u.mode)
+    })
+    .unwrap_or_else(|| "anonymous".into())
 }
 
 fn parse_restore_input(body: &Bytes) -> Result<RestoreInput, String> {
@@ -2230,6 +2440,107 @@ fn inhibition_rules_test(state: &AppState, body: Bytes) -> Response<Body> {
     )
 }
 
+fn policy_simulate(state: &AppState, body: Bytes) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let source = payload
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or("grafana")
+        .trim()
+        .to_ascii_lowercase();
+    if !DEDUP_SOURCES.contains(&source.as_str()) {
+        return text(StatusCode::BAD_REQUEST, "unknown source");
+    }
+    let severity = payload
+        .get("severity")
+        .and_then(Value::as_str)
+        .unwrap_or("warning")
+        .trim()
+        .to_ascii_lowercase();
+    let mut labels = payload
+        .get("payload")
+        .map(|body| normalize_labels(&source, body))
+        .unwrap_or_else(|| {
+            HashMap::from([
+                ("source".to_string(), source.clone()),
+                ("status".to_string(), "firing".to_string()),
+            ])
+        });
+    if let Some(obj) = payload.get("labels").and_then(Value::as_object) {
+        for (key, value) in obj {
+            labels.insert(key.clone(), crate::parsers::scalar_to_string(value));
+        }
+    }
+    labels.insert("severity".into(), severity.clone());
+
+    let (would_send, reason) = inhibition::apply_inhibition(state, &source, &labels, true);
+    let cfg = state.cfg();
+    let considered = cfg
+        .inhibition_rules
+        .iter()
+        .filter(|rule| rule.applies_to.is_empty() || rule.applies_to.contains(&source))
+        .map(|rule| rule.source.clone())
+        .collect::<Vec<_>>();
+    let arm_idx = if source == "grafana" {
+        inhibition::alert_is_source(&labels, &cfg.inhibition_rules)
+    } else {
+        None
+    };
+    let matched_rule = if let Some(idx) = arm_idx {
+        cfg.inhibition_rules
+            .get(idx)
+            .map(|rule| rule.source.clone())
+    } else {
+        reason
+            .strip_prefix("inhibited-by-")
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                reason
+                    .strip_prefix("scheduled-mute-")
+                    .map(ToOwned::to_owned)
+            })
+            .or_else(|| reason.strip_prefix("ack-snoozed-").map(ToOwned::to_owned))
+    };
+    let (policy, matched_by) = pick_policy(&cfg, &labels);
+    let defaults = default_dedup();
+    let dedup = cfg
+        .dedup
+        .get(&source)
+        .or_else(|| defaults.get(&source))
+        .cloned();
+    json_response(json!({
+        "source": source,
+        "severity": severity,
+        "labels": labels,
+        "inhibition": {
+            "would_send": would_send,
+            "reason": reason,
+            "matched_rule": matched_rule,
+            "would_arm_suppression": arm_idx.is_some(),
+            "considered_rules": considered,
+        },
+        "delivery": {
+            "policy": policy.name,
+            "mode": policy.mode,
+            "matched_by": matched_by,
+            "tiers": policy.tiers,
+        },
+        "dedup": dedup.map(|d| json!({
+            "enabled": d.enabled,
+            "window_s": d.window_s,
+            "strategy": d.strategy,
+            "override_critical": d.override_critical,
+        })).unwrap_or_else(|| json!({
+            "enabled": false,
+            "window_s": 0,
+            "strategy": "none",
+            "override_critical": false,
+        })),
+    }))
+}
+
 fn verify_ingest_auth(
     state: &AppState,
     source: &str,
@@ -2323,6 +2634,120 @@ async fn status_payload(state: &AppState) -> Value {
         "smtp_host": cfg.smtp_host,
         "telegram_configured": !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
         "logs": log_buffer::stats_global(),
+    })
+}
+
+fn setup_status_payload(state: &AppState) -> Value {
+    let cfg = state.cfg();
+    let secrets_configured = DEDUP_SOURCES
+        .iter()
+        .filter(|src| !ingest_secret_for(state, src).is_empty())
+        .count();
+    let channel_count = [
+        !cfg.ntfy_url.is_empty() && !cfg.ntfy_topics.is_empty(),
+        !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
+        !cfg.smtp_host.is_empty() && !cfg.smtp_from.is_empty() && !cfg.smtp_to.is_empty(),
+    ]
+    .iter()
+    .filter(|v| **v)
+    .count();
+    let backup_ready = state.paths.backup_dir.is_dir();
+    let items = vec![
+        json!({
+            "key": "auth",
+            "label": "Authentication",
+            "status": if cfg.auth.mode == "none" { "warn" } else { "ok" },
+            "detail": if cfg.auth.mode == "none" { "admin UI is unauthenticated" } else { "authentication is enabled" },
+            "values": {"mode": cfg.auth.mode},
+        }),
+        json!({
+            "key": "ingest_auth",
+            "label": "Inbound webhook auth",
+            "status": if secrets_configured == DEDUP_SOURCES.len() { "ok" } else if secrets_configured == 0 { "warn" } else { "partial" },
+            "detail": format!("{secrets_configured}/{} sources have a shared secret", DEDUP_SOURCES.len()),
+            "values": {"configured": secrets_configured, "total": DEDUP_SOURCES.len()},
+        }),
+        json!({
+            "key": "channels",
+            "label": "Notification channels",
+            "status": if channel_count > 0 { "ok" } else { "warn" },
+            "detail": format!("{channel_count}/3 channel families configured"),
+            "values": {"configured": channel_count, "total": 3},
+        }),
+        json!({
+            "key": "backups",
+            "label": "Config backups",
+            "status": if backup_ready { "ok" } else { "error" },
+            "detail": state.paths.backup_dir.to_string_lossy(),
+            "values": {"path": state.paths.backup_dir.to_string_lossy()},
+        }),
+        json!({
+            "key": "public_url",
+            "label": "Public URL",
+            "status": if cfg.public_url.trim().is_empty() { "warn" } else { "ok" },
+            "detail": if cfg.public_url.trim().is_empty() { "not configured".into() } else { cfg.public_url.clone() },
+            "values": {"url": cfg.public_url},
+        }),
+        json!({
+            "key": "passkeys",
+            "label": "Passkeys",
+            "status": if cfg.auth.webauthn.enabled { "ok" } else { "info" },
+            "detail": if cfg.auth.webauthn.enabled { "WebAuthn enabled" } else { "optional WebAuthn disabled" },
+            "values": {"enabled": cfg.auth.webauthn.enabled},
+        }),
+    ];
+    let errors = items
+        .iter()
+        .filter(|item| item.get("status").and_then(Value::as_str) == Some("error"))
+        .count();
+    let warnings = items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item.get("status").and_then(Value::as_str),
+                Some("warn" | "partial")
+            )
+        })
+        .count();
+    json!({
+        "ok": errors == 0,
+        "summary": { "errors": errors, "warnings": warnings, "items": items.len() },
+        "items": items,
+    })
+}
+
+async fn channel_test_matrix_payload(state: &AppState) -> Value {
+    let cfg = state.cfg();
+    let reach = check_channel_reachability(state).await;
+    let reach_bool = |name: &str| reach.get(name).and_then(Value::as_bool).unwrap_or(false);
+    json!({
+        "dry_run": true,
+        "generated_at": Utc::now().to_rfc3339(),
+        "note": "Connectivity checks only; no notification message is sent.",
+        "channels": [
+            {
+                "name": "ntfy",
+                "configured": !cfg.ntfy_url.is_empty() && !cfg.ntfy_topics.is_empty(),
+                "reachable": reach_bool("ntfy"),
+                "endpoint": cfg.ntfy_url,
+                "checks": ["GET /v1/health", "topic severity coverage"],
+                "severity_coverage": cfg.known_severities(),
+            },
+            {
+                "name": "telegram",
+                "configured": !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
+                "reachable": reach_bool("telegram"),
+                "endpoint": if cfg.tg_token.is_empty() { "" } else { cfg.telegram_api_base.as_str() },
+                "checks": ["bot getMe", "chat id configured"],
+            },
+            {
+                "name": "smtp",
+                "configured": !cfg.smtp_host.is_empty() && !cfg.smtp_from.is_empty() && !cfg.smtp_to.is_empty(),
+                "reachable": reach_bool("smtp"),
+                "endpoint": if cfg.smtp_host.is_empty() { String::new() } else { format!("{}:{}", cfg.smtp_host, cfg.smtp_port) },
+                "checks": ["TCP connect", "from/to configured"],
+            }
+        ],
     })
 }
 
@@ -2455,6 +2880,8 @@ const UI_ROUTES: &[&str] = &[
     "inhibitions",
     "deliveries",
     "logs",
+    "audit",
+    "setup",
     "render",
     "routing",
     "cascade",
@@ -2462,6 +2889,7 @@ const UI_ROUTES: &[&str] = &[
     "grouping",
     "auth",
     "preview",
+    "simulator",
     "test",
     "privacy",
     "accessibility",
@@ -2922,6 +3350,20 @@ fn logs_payload(full_path: &str) -> log_buffer::LogQuery {
     let query = qs.get("q").map(String::as_str).unwrap_or("");
     let level = qs.get("level").map(String::as_str).unwrap_or("all");
     log_buffer::query_global(query, level, limit, offset)
+}
+
+fn audit_payload(full_path: &str) -> Value {
+    let qs = parse_query(full_path);
+    let limit = qs
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(100);
+    let offset = qs
+        .get("offset")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    let query = qs.get("q").map(String::as_str).unwrap_or("");
+    audit::query(query, limit, offset)
 }
 
 fn config_auto_backup(state: &AppState) -> anyhow::Result<Option<String>> {

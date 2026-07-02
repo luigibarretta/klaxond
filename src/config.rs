@@ -194,6 +194,10 @@ pub struct BasicAuthConfig {
     pub username: String,
     pub password_hash: String,
     pub realm: String,
+    #[serde(default)]
+    pub totp_enabled: bool,
+    #[serde(default)]
+    pub totp_secret: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -276,6 +280,8 @@ impl Default for AuthConfig {
                 username: String::new(),
                 password_hash: String::new(),
                 realm: "klaxond".to_string(),
+                totp_enabled: false,
+                totp_secret: String::new(),
             },
             oidc: OidcConfig {
                 provider: "authentik".to_string(),

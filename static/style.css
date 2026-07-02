@@ -258,6 +258,46 @@ nav.tabs {
   vertical-align: 2px;
   title: "Unsaved changes";
 }
+
+.import-preview {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-light);
+}
+.import-preview-grid {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+  gap: 6px 10px;
+  margin-top: 8px;
+}
+.setup-checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+.setup-item {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.setup-item p { margin: 2px 0 0; }
+body.viewer-readonly main::before {
+  content: attr(data-viewer-readonly-label);
+  display: block;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--yellow) 60%, var(--border));
+  border-radius: 6px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--yellow) 12%, transparent);
+}
 .sidebar-user {
   margin-top: auto;
   display: flex;
@@ -602,6 +642,25 @@ h3 {
 }
 .login-actions .btn {
   min-height: 36px;
+}
+.login-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.login-form label {
+  display: grid;
+  gap: 5px;
+}
+.login-form input {
+  width: 100%;
+}
+.auth-totp-panel {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 .login-legal {
   padding-top: 12px;

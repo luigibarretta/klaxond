@@ -338,7 +338,10 @@ pub async fn post_to_smtp(state: &AppState, severity: &str, parts: &Parts, timeo
     }
 }
 
-fn pick_policy(cfg: &RuntimeConfig, labels: &HashMap<String, String>) -> (DeliveryPolicy, String) {
+pub fn pick_policy(
+    cfg: &RuntimeConfig,
+    labels: &HashMap<String, String>,
+) -> (DeliveryPolicy, String) {
     for (idx, rule) in cfg.delivery.rules.iter().enumerate() {
         if matcher_matches(&rule.r#match, labels)
             && let Some(policy) = resolve_policy(cfg, &rule.policy)

@@ -4,6 +4,10 @@ const $ = sel => document.querySelector(sel);
 const $$ = sel => document.querySelectorAll(sel);
 
 let _authRedirectStarted = false;
+let _currentUser = { sub: "anonymous", mode: "none", groups: [] };
+let _csrfToken = "";
+let _reauthInFlight = null;
+let _localTotpEnabled = null;
 
 class AuthRedirectError extends Error {
   constructor() {
@@ -89,7 +93,11 @@ function shouldApiFetch(url) {
 async function apiFetch(url, opts = {}) {
   if (!shouldApiFetch(url)) return fetch(url, opts);
   const headers = new Headers(opts.headers || {});
+  const method = String(opts.method || "GET").toUpperCase();
   headers.set("X-Klaxond-Request", "fetch");
+  if (_csrfToken && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-Klaxond-CSRF", _csrfToken);
+  }
   const res = await fetch(url, { ...opts, headers, redirect: "manual" });
   const loginHint = res.headers.get("X-Klaxond-Login") || res.headers.get("Location") || "";
   const isLoginRedirect = res.status >= 300 && res.status < 400 && loginHint.includes("/auth/login");
@@ -97,7 +105,74 @@ async function apiFetch(url, opts = {}) {
     beginAuthRedirect(loginHint);
     throw new AuthRedirectError();
   }
+  if (res.status === 428 && res.headers.get("X-Klaxond-Reauth") === "required" && !opts.__sudoRetry && !String(url).includes("/auth/sudo")) {
+    const ok = await requestSudoReauth();
+    if (ok) return apiFetch(url, { ...opts, __sudoRetry: true });
+  }
   return res;
+}
+
+async function requestSudoReauth() {
+  if (_reauthInFlight) return _reauthInFlight;
+  _reauthInFlight = (async () => {
+    if ((_currentUser?.mode || "") === "passkey") {
+      return requestPasskeyReauth();
+    }
+    const password = window.prompt(tr("auth.reauth_password"));
+    if (password === null) return false;
+    const totp = _localTotpEnabled === false ? "" : (window.prompt(tr("auth.reauth_totp")) || "");
+    const res = await apiFetch("/auth/sudo", {
+      method: "POST",
+      body: JSON.stringify({ password, totp }),
+      headers: { "Content-Type": "application/json" },
+      __sudoRetry: true,
+    });
+    if (!res.ok) {
+      notifyResponseError("auth-reauth", res, await res.text(), null);
+      return false;
+    }
+    const body = await res.json().catch(() => ({}));
+    if (body.csrf) _csrfToken = body.csrf;
+    notifySuccess(tr("auth.reauth_ok"));
+    return true;
+  })().finally(() => {
+    _reauthInFlight = null;
+  });
+  return _reauthInFlight;
+}
+
+async function requestPasskeyReauth() {
+  if (!window.PublicKeyCredential || !navigator.credentials?.get) {
+    notifyError("auth-reauth", new Error(tr("auth.passkey_unsupported")));
+    return false;
+  }
+  const user = _currentUser?.sub || _currentUser?.email || _currentUser?.name || "";
+  const start = await apiFetch("/auth/passkey/start", {
+    method: "POST",
+    body: JSON.stringify({ user }),
+    headers: { "Content-Type": "application/json" },
+    __sudoRetry: true,
+  });
+  if (!start.ok) {
+    notifyResponseError("auth-reauth", start, await start.text(), null);
+    return false;
+  }
+  const challenge = await start.json();
+  const credential = await navigator.credentials.get({ publicKey: webauthnGetOptions(challenge.publicKey) });
+  const finish = await apiFetch("/auth/passkey/finish", {
+    method: "POST",
+    body: JSON.stringify({ request_id: challenge.request_id, credential: webauthnGetPayload(credential) }),
+    headers: { "Content-Type": "application/json" },
+    __sudoRetry: true,
+  });
+  if (!finish.ok) {
+    notifyResponseError("auth-reauth", finish, await finish.text(), null);
+    return false;
+  }
+  const body = await finish.json().catch(() => ({}));
+  if (body.user) updateCurrentUserUI(body.user);
+  notifySuccess(tr("auth.reauth_ok"));
+  return true;
 }
 
 const J = async (url, opts) => {
@@ -165,6 +240,9 @@ function _onTabActivated(tabId) {
       case "grouping":    if (typeof loadDedup === "function")       loadDedup(); break;
       case "inhibitions": if (typeof loadInhibRules === "function") loadInhibRules(); if (typeof loadSchedules === "function") loadSchedules(); if (typeof loadAcks === "function") loadAcks(); break;
       case "logs":        if (typeof loadLogs === "function")        loadLogs(); break;
+      case "audit":       if (typeof loadAudit === "function")       loadAudit({ reset: true }); break;
+      case "setup":       if (typeof loadSetup === "function")       loadSetup(); break;
+      case "simulator":   if (typeof runPolicySimulation === "function") runPolicySimulation({ silent: true }); break;
     }
   } catch (e) { setTimeout(() => notifyError(`tab-${tabId}`, e), 0); }
 }
@@ -437,9 +515,40 @@ function displayUserName(user = {}) {
   return user.name || user.email || user.sub || "anonymous";
 }
 
+function isReadOnlyViewer(user = {}) {
+  const groups = Array.isArray(user.groups) ? user.groups : [];
+  if (groups.some(g => ["viewer", "klaxond-viewer", "klaxond:viewer", "viewer:*"].includes(g))) return true;
+  if ((user.mode === "pat" || user.mode === "api-key") && groups.length) {
+    return groups.every(scope => String(scope).endsWith(":read") || scope === "viewer:*" || scope === "admin:read");
+  }
+  return false;
+}
+
+function applyReadOnlyViewerMode(user = {}) {
+  const readOnly = isReadOnlyViewer(user);
+  document.body.classList.toggle("viewer-readonly", readOnly);
+  document.body.setAttribute("data-viewer-readonly-label", tr("auth.viewer_readonly"));
+  document.querySelector("main")?.setAttribute("data-viewer-readonly-label", tr("auth.viewer_readonly"));
+  const writeSelectors = [
+    "#btn-cascade-toggle", "#cfg-import-apply", "#inhib-add", "#inhib-save", "#inhib-clear-all",
+    "#sched-add", "#sched-save", "#btn-rc-add", "#btn-rc-save", "#ntfy-topic-add",
+    "#ntfy-topics-save", "#btn-routing-save", "#btn-cas-add", "#btn-cas-save",
+    "#btn-pol-add", "#btn-rule-add", "#btn-delivery-save", "#dedup-save", "#auth-save",
+    "#token-create", "#passkey-register", "#totp-start", "#totp-enable", "#totp-disable", "#btn-preview", "#inhib-test-run", "#btn-test-fire",
+    "button.danger", "[data-clear-suppression]", "[data-clear-ack]", "[data-del]", "[data-revoke]", "[data-passkey-del]", "button[data-act]"
+  ];
+  document.querySelectorAll(writeSelectors.join(",")).forEach(el => {
+    el.disabled = readOnly;
+    if (readOnly) el.title = tr("auth.viewer_readonly");
+  });
+}
+
 function updateCurrentUserUI(user = {}) {
+  _currentUser = user || { sub: "anonymous", mode: "none", groups: [] };
+  if (user.csrf) _csrfToken = user.csrf;
   const name = displayUserName(user);
   const mode = user.mode || "none";
+  const readOnly = isReadOnlyViewer(user);
   const initials = name
     .split(/[\s@._-]+/)
     .filter(Boolean)
@@ -451,10 +560,11 @@ function updateCurrentUserUI(user = {}) {
   const modeEl = $("#sidebar-user-mode");
   const avatar = $("#sidebar-avatar");
   if (nameEl) nameEl.textContent = name;
-  if (modeEl) modeEl.textContent = `mode=${mode}`;
+  if (modeEl) modeEl.textContent = readOnly ? `mode=${mode} · viewer` : `mode=${mode}`;
   if (avatar) avatar.textContent = initials;
   const authUser = $("#auth-current-user");
   if (authUser) authUser.textContent = `${user.sub || "?"} (mode=${mode})`;
+  applyReadOnlyViewerMode(user);
 }
 
 async function loadCurrentUser() {
@@ -498,6 +608,7 @@ const _TABLE_PAGER_CONFIG = {
   "t-rules": { pageSize: 10 },
   "t-tokens": { pageSize: 10 },
   "t-passkeys": { pageSize: 10 },
+  "t-channel-matrix": { pageSize: 10 },
 };
 const _tablePagerState = new Map();
 
@@ -569,6 +680,7 @@ function applyTablePager(tableId, opts = {}) {
   if (total <= state.pageSize) {
     rows.forEach(row => { row.style.display = ""; });
     pager.hidden = true;
+    if (document.body.classList.contains("viewer-readonly")) applyReadOnlyViewerMode(_currentUser);
     return;
   }
   const pageCount = Math.max(1, Math.ceil(total / state.pageSize));
@@ -587,6 +699,7 @@ function applyTablePager(tableId, opts = {}) {
   pager.querySelector("[data-pager-prev]").disabled = state.page <= 1;
   pager.querySelector("[data-pager-next]").disabled = state.page >= pageCount;
   pager.querySelector("[data-pager-last]").disabled = state.page >= pageCount;
+  if (document.body.classList.contains("viewer-readonly")) applyReadOnlyViewerMode(_currentUser);
 }
 
 function refreshTablePagers() {
@@ -680,41 +793,106 @@ async function loadConfigBackups() {
   }
 }
 
+let _pendingConfigImport = null;
+
+function clearConfigImportPreview(opts = {}) {
+  _pendingConfigImport = null;
+  const box = $("#cfg-import-preview");
+  if (box) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+  }
+  $("#cfg-import-apply") && ($("#cfg-import-apply").hidden = true);
+  $("#cfg-import-clear") && ($("#cfg-import-clear").hidden = true);
+  if (!opts.keepStatus) setInlineStatus("#cfg-restore-status", "");
+}
+
+function renderConfigImportPreview(file, preview) {
+  const box = $("#cfg-import-preview");
+  if (!box) return;
+  const warnings = (preview.warnings || []).map(w => `<li>${escapeHtml(w)}</li>`).join("");
+  box.classList.remove("hidden");
+  box.innerHTML = `
+    <strong>${escapeHtml(tr("config.import_preview_title", { name: file.name }))}</strong>
+    <div class="import-preview-grid">
+      <span>${escapeHtml(tr("config.import_kind"))}</span><code>${escapeHtml(preview.source_kind || "")}</code>
+      <span>${escapeHtml(tr("config.import_changed"))}</span><code>${escapeHtml((preview.changed_files || []).join(", ") || tr("status.none"))}</code>
+      <span>${escapeHtml(tr("config.import_unchanged"))}</span><code>${escapeHtml((preview.unchanged_files || []).join(", ") || tr("status.none"))}</code>
+      <span>${escapeHtml(tr("config.import_restore"))}</span><code>${escapeHtml((preview.would_restore || []).join(", ") || tr("status.none"))}</code>
+    </div>
+    ${warnings ? `<ul class="muted">${warnings}</ul>` : ""}`;
+  $("#cfg-import-apply") && ($("#cfg-import-apply").hidden = false);
+  $("#cfg-import-clear") && ($("#cfg-import-clear").hidden = false);
+}
+
+async function previewConfigImportFile(file) {
+  const status = $("#cfg-restore-status");
+  clearConfigImportPreview();
+  setInlineStatus(status, tr("config.previewing"));
+  const raw = await file.text();
+  const isJson = raw.trimStart().startsWith("{");
+  const res = await apiFetch("/api/config/import-preview", {
+    method: "POST",
+    headers: {"Content-Type": isJson ? "application/json" : "application/toml"},
+    body: raw,
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    notifyResponseError("config-import-preview", res, txt.slice(0, 300), status);
+    return;
+  }
+  const preview = await res.json();
+  _pendingConfigImport = { file, raw, contentType: isJson ? "application/json" : "application/toml", preview };
+  renderConfigImportPreview(file, preview);
+  setInlineStatus(status, tr("config.preview_ready"));
+}
+
+async function applyConfigImport() {
+  const pending = _pendingConfigImport;
+  const status = $("#cfg-restore-status");
+  if (!pending) return;
+  if (!confirm(tr("config.restore_confirm", { name: pending.file.name, size: pending.file.size }))) return;
+  setInlineStatus(status, tr("status.uploading"));
+  try {
+    const res = await apiFetch("/api/config/restore", {
+      method: "POST",
+      headers: {"Content-Type": pending.contentType},
+      body: pending.raw,
+    });
+    if (!res.ok) {
+      const txt = await res.text();
+      notifyResponseError("config-restore", res, txt.slice(0, 300), status);
+      return;
+    }
+    const j = await res.json();
+    notifySuccess(tr("config.restored_toast"), {
+      status,
+      inlineText: tr("status.restored", { bytes: j.bytes_written, backup: j.pre_restore_backup || tr("status.none") }),
+      durationMs: 6000,
+    });
+    clearConfigImportPreview({ keepStatus: true });
+    loadConfigBackups();
+  } catch (err) {
+    notifyError("config-restore", err, { status, inlineText: "❌ " + errorText(err) });
+  }
+}
+
 // Download is a plain anchor href — the browser handles content-disposition.
 document.addEventListener("DOMContentLoaded", () => {
   const dl = document.getElementById("cfg-backup-download");
   if (dl) dl.href = "/api/config/backup";
   const full = document.getElementById("cfg-full-export-download");
   if (full) full.href = "/api/config/export";
+  $("#cfg-import-apply")?.addEventListener("click", applyConfigImport);
+  $("#cfg-import-clear")?.addEventListener("click", clearConfigImportPreview);
 
   const fileInput = document.getElementById("cfg-restore-file");
   if (fileInput) fileInput.addEventListener("change", async e => {
     const f = e.target.files[0]; if (!f) return;
-    const status = $("#cfg-restore-status");
-    if (!confirm(tr("config.restore_confirm", { name: f.name, size: f.size }))) {
-      e.target.value = ""; return;
-    }
-    setInlineStatus(status, tr("status.uploading"));
     try {
-      const raw = await f.text();
-      const isJson = raw.trimStart().startsWith("{");
-      const res = await apiFetch("/api/config/restore", {
-        method: "POST", headers: {"Content-Type": isJson ? "application/json" : "application/toml"}, body: raw,
-      });
-      if (!res.ok) {
-        const txt = await res.text();
-        notifyResponseError("config-restore", res, txt.slice(0, 200), status);
-        return;
-      }
-      const j = await res.json();
-      notifySuccess(tr("config.restored_toast"), {
-        status,
-        inlineText: tr("status.restored", { bytes: j.bytes_written, backup: j.pre_restore_backup || tr("status.none") }),
-        durationMs: 6000,
-      });
-      loadConfigBackups();
+      await previewConfigImportFile(f);
     } catch (err) {
-      notifyError("config-restore", err, { status, inlineText: "❌ " + errorText(err) });
+      notifyError("config-import-preview", err, { status: "#cfg-restore-status", inlineText: "❌ " + errorText(err) });
     } finally {
       e.target.value = "";
     }
@@ -1577,12 +1755,249 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#logs-filter")?.addEventListener("input", scheduleLogsLoad);
   $("#logs-level")?.addEventListener("change", () => loadLogs({ reset: true }));
   $("#logs-limit")?.addEventListener("change", () => loadLogs({ reset: true }));
+  $("#logs-frontend-filter")?.addEventListener("click", () => {
+    $("#logs-filter").value = "klaxond::frontend";
+    $("#logs-level").value = "ERROR";
+    loadLogs({ reset: true });
+  });
+  $("#logs-clear-filter")?.addEventListener("click", () => {
+    $("#logs-filter").value = "";
+    $("#logs-level").value = "all";
+    loadLogs({ reset: true });
+  });
   $("#logs-first")?.addEventListener("click", () => changeLogsPage("first"));
   $("#logs-prev")?.addEventListener("click", () => changeLogsPage("prev"));
   $("#logs-next")?.addEventListener("click", () => changeLogsPage("next"));
   $("#logs-last")?.addEventListener("click", () => changeLogsPage("last"));
   $("#logs-autorefresh")?.addEventListener("change", updateLogsAutorefresh);
   updateLogsAutorefresh();
+});
+
+// ---- Audit log ----
+let _auditCache = { entries: [], total: 0, limit: 50, offset: 0 };
+let _auditOffset = 0;
+let _auditFilterTimer = null;
+let _auditRequestSeq = 0;
+
+function auditPageSize() {
+  const raw = parseInt($("#audit-limit")?.value || "50", 10);
+  if (!Number.isFinite(raw)) return 50;
+  return Math.max(1, Math.min(raw, 500));
+}
+
+async function loadAudit(opts = {}) {
+  clearTimeout(_auditFilterTimer);
+  _auditFilterTimer = null;
+  if (opts.reset) _auditOffset = 0;
+  const params = new URLSearchParams();
+  const q = ($("#audit-filter")?.value || "").trim();
+  const limit = auditPageSize();
+  if (q) params.set("q", q);
+  params.set("limit", String(limit));
+  params.set("offset", String(Math.max(0, _auditOffset)));
+  const requestSeq = ++_auditRequestSeq;
+  try {
+    const payload = await J("/api/audit?" + params.toString());
+    if (requestSeq !== _auditRequestSeq) return;
+    _auditCache = payload;
+    _auditOffset = payload.offset || 0;
+    renderAudit();
+  } catch (e) {
+    if (requestSeq !== _auditRequestSeq) return;
+    fetchError("audit", e);
+    _auditCache = { entries: [], total: 0, limit: auditPageSize(), offset: 0 };
+    _auditOffset = 0;
+    const tb = $("#t-audit tbody");
+    if (tb) tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("common.error"))}: ${escapeHtml(errorText(e))}</td></tr>`;
+    const count = $("#audit-count");
+    if (count) count.textContent = "";
+    updateAuditPager();
+  }
+}
+
+function renderAudit() {
+  const tb = $("#t-audit tbody"); if (!tb) return;
+  const entries = _auditCache.entries || [];
+  tb.innerHTML = "";
+  for (const entry of entries) {
+    const row = document.createElement("tr");
+    const outcome = String(entry.outcome || "").toLowerCase();
+    row.innerHTML = `
+      <td class="log-time">${escapeHtml(new Date((entry.ts || 0) * 1000).toLocaleString())}</td>
+      <td><code>${escapeHtml(entry.actor || "")}</code></td>
+      <td><code>${escapeHtml(entry.action || "")}</code></td>
+      <td><span class="log-level ${outcome === "ok" ? "info" : "error"}">${escapeHtml(entry.outcome || "")}</span></td>
+      <td class="log-message">${escapeHtml(entry.detail || "")}</td>`;
+    tb.appendChild(row);
+  }
+  if (!entries.length) {
+    tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("audit.empty"))}</td></tr>`;
+  }
+  const count = $("#audit-count");
+  const total = _auditCache.total || 0;
+  const offset = _auditCache.offset || 0;
+  const from = entries.length ? offset + 1 : 0;
+  const to = entries.length ? offset + entries.length : 0;
+  if (count) count.textContent = tr("audit.showing_range", { from, to, total });
+  updateAuditPager();
+}
+
+function updateAuditPager() {
+  const total = _auditCache.total || 0;
+  const limit = _auditCache.limit || auditPageSize();
+  const offset = _auditCache.offset || 0;
+  const pageCount = total ? Math.ceil(total / limit) : 1;
+  const page = total ? Math.floor(offset / limit) + 1 : 0;
+  const info = $("#audit-page-info");
+  if (info) info.textContent = total ? tr("logs.page_info", { page, pages: pageCount }) : tr("logs.page_info_empty");
+  const atStart = offset <= 0;
+  const atEnd = !total || offset + limit >= total;
+  $("#audit-first") && ($("#audit-first").disabled = atStart);
+  $("#audit-prev") && ($("#audit-prev").disabled = atStart);
+  $("#audit-next") && ($("#audit-next").disabled = atEnd);
+  $("#audit-last") && ($("#audit-last").disabled = atEnd);
+}
+
+function scheduleAuditLoad() {
+  _auditRequestSeq++;
+  clearTimeout(_auditFilterTimer);
+  _auditFilterTimer = setTimeout(() => loadAudit({ reset: true }), 250);
+}
+
+function changeAuditPage(direction) {
+  const total = _auditCache.total || 0;
+  const limit = _auditCache.limit || auditPageSize();
+  if (!total) return;
+  const lastOffset = Math.floor((total - 1) / limit) * limit;
+  if (direction === "first") _auditOffset = 0;
+  if (direction === "prev") _auditOffset = Math.max(0, (_auditCache.offset || 0) - limit);
+  if (direction === "next") _auditOffset = Math.min(lastOffset, (_auditCache.offset || 0) + limit);
+  if (direction === "last") _auditOffset = lastOffset;
+  loadAudit();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  $("#audit-refresh")?.addEventListener("click", () => loadAudit());
+  $("#audit-filter")?.addEventListener("input", scheduleAuditLoad);
+  $("#audit-limit")?.addEventListener("change", () => loadAudit({ reset: true }));
+  $("#audit-first")?.addEventListener("click", () => changeAuditPage("first"));
+  $("#audit-prev")?.addEventListener("click", () => changeAuditPage("prev"));
+  $("#audit-next")?.addEventListener("click", () => changeAuditPage("next"));
+  $("#audit-last")?.addEventListener("click", () => changeAuditPage("last"));
+});
+
+// ---- Setup / diagnostics ----
+async function loadSetup() {
+  try {
+    const [setup, matrix] = await Promise.all([
+      J("/api/setup-status"),
+      J("/api/channel-test-matrix"),
+    ]);
+    renderSetupChecklist(setup);
+    renderChannelMatrix(matrix);
+  } catch (e) {
+    fetchError("setup", e);
+    const box = $("#setup-checklist");
+    if (box) box.innerHTML = `<p class="muted">${escapeHtml(tr("common.error"))}: ${escapeHtml(errorText(e))}</p>`;
+  }
+}
+
+function statusBadge(status) {
+  const label = status || "info";
+  const cls = label === "ok" ? "info" : label === "error" ? "error" : "warn";
+  return `<span class="log-level ${cls}">${escapeHtml(label)}</span>`;
+}
+
+function renderSetupChecklist(payload) {
+  const box = $("#setup-checklist"); if (!box) return;
+  const items = payload.items || [];
+  $("#setup-summary").textContent = tr("setup.summary", {
+    errors: payload.summary?.errors || 0,
+    warnings: payload.summary?.warnings || 0,
+  });
+  box.innerHTML = items.map(item => `
+    <div class="setup-item">
+      <div>${statusBadge(item.status)}</div>
+      <div>
+        <strong>${escapeHtml(setupItemLabel(item))}</strong>
+        <p class="muted">${escapeHtml(setupItemDetail(item))}</p>
+      </div>
+    </div>`).join("");
+}
+
+function setupItemLabel(item) {
+  const key = `setup.item.${item.key}`;
+  const translated = tr(key);
+  return translated === key ? (item.label || item.key || "") : translated;
+}
+
+function setupItemDetail(item) {
+  const key = `setup.detail.${item.key}.${item.status || "info"}`;
+  const values = item.values || {};
+  const translated = tr(key, { ...values, detail: item.detail || "" });
+  return translated === key ? (item.detail || "") : translated;
+}
+
+function renderChannelMatrix(payload) {
+  const tb = $("#t-channel-matrix tbody"); if (!tb) return;
+  tb.innerHTML = "";
+  for (const channel of (payload.channels || [])) {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td><code>${escapeHtml(channel.name || "")}</code></td>
+      <td>${channel.configured ? escapeHtml(tr("common.configured")) : escapeHtml(tr("common.missing"))}</td>
+      <td>${channel.reachable ? escapeHtml(tr("channel.up")) : escapeHtml(tr("channel.down"))}</td>
+      <td><code>${escapeHtml(channel.endpoint || "—")}</code></td>
+      <td>${(channel.checks || []).map(x => `<code>${escapeHtml(x)}</code>`).join(" ")}</td>`;
+    tb.appendChild(row);
+  }
+  if (!(payload.channels || []).length) {
+    tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("matrix.empty"))}</td></tr>`;
+  }
+  applyTablePager("t-channel-matrix", { reset: true });
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  $("#setup-refresh")?.addEventListener("click", loadSetup);
+});
+
+// ---- Policy simulator ----
+function parseLabelLines(raw) {
+  const labels = {};
+  String(raw || "").split(/\r?\n/).forEach(line => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) return;
+    const idx = trimmed.indexOf("=");
+    if (idx <= 0) return;
+    labels[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + 1).trim();
+  });
+  return labels;
+}
+
+async function runPolicySimulation(opts = {}) {
+  const status = $("#policy-sim-status");
+  if (!opts.silent) setInlineStatus(status, tr("status.testing"));
+  try {
+    const payload = {
+      source: $("#policy-sim-source")?.value || "grafana",
+      severity: $("#policy-sim-severity")?.value || "warning",
+      labels: parseLabelLines($("#policy-sim-labels")?.value || ""),
+    };
+    const result = await J("/api/policy-simulate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+      headers: {"Content-Type": "application/json"},
+    });
+    $("#policy-sim-output").textContent = JSON.stringify(result, null, 2);
+    setInlineStatus(status, tr("sim.done"));
+  } catch (e) {
+    if (!opts.silent) notifyError("policy-simulate", e, { status });
+    $("#policy-sim-output").textContent = `${tr("common.error")}: ${errorText(e)}`;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  $("#policy-sim-run")?.addEventListener("click", () => runPolicySimulation());
 });
 
 const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -2016,6 +2431,7 @@ async function loadIngestAuth() {
     tb.querySelectorAll("button[data-act]").forEach(btn => {
       btn.addEventListener("click", () => _ingestAuthAction(btn.dataset.src, btn.dataset.act));
     });
+    if (document.body.classList.contains("viewer-readonly")) applyReadOnlyViewerMode(_currentUser);
   } catch (e) { fetchError("ingest-auth", e); }
 }
 
@@ -2388,6 +2804,7 @@ document.querySelectorAll('[data-tab="grouping"]').forEach(btn => {
 let authData = { settings: {}, current_user: {} };
 let _authTokens = [];
 let _activeTokenKind = "api-key";
+let _pendingTotpSecret = "";
 
 const OIDC_ISSUER_HINTS = {
   authentik: "https://idp.example.com/application/o/klaxond/",
@@ -2481,6 +2898,7 @@ function selectedTokenScopes() {
 function renderTokens(tokens = [], opts = {}) {
   if (!opts.preserveSource) _authTokens = Array.isArray(tokens) ? tokens : [];
   const filtered = _authTokens.filter(token => normalizeTokenKind(token.kind) === _activeTokenKind);
+  const readOnly = document.body.classList.contains("viewer-readonly");
   updateTokenKindUI();
   const tb = $("#t-tokens tbody"); if (!tb) return;
   tb.innerHTML = "";
@@ -2498,7 +2916,7 @@ function renderTokens(tokens = [], opts = {}) {
       <td>${escapeHtml(fmtAuthTs(token.created_at))}</td>
       <td>${escapeHtml(fmtAuthTs(token.last_used_at))}</td>
       <td>${token.enabled ? `<span style="color:var(--green)">${escapeHtml(tr("auth.enabled"))}</span>` : `<span class="muted">${escapeHtml(tr("auth.revoked"))}</span>`}</td>
-      <td><button class="danger" data-revoke="${escapeHtml(token.id)}" ${token.enabled ? "" : "disabled"}>${escapeHtml(tr("auth.revoke"))}</button></td>`;
+      <td><button class="danger" data-revoke="${escapeHtml(token.id)}" ${token.enabled && !readOnly ? "" : "disabled"}>${escapeHtml(tr("auth.revoke"))}</button></td>`;
     trEl.querySelector("[data-revoke]")?.addEventListener("click", () => revokeAuthToken(token.id));
     tb.appendChild(trEl);
   }
@@ -2507,6 +2925,7 @@ function renderTokens(tokens = [], opts = {}) {
 
 function renderPasskeys(passkeys = []) {
   const tb = $("#t-passkeys tbody"); if (!tb) return;
+  const readOnly = document.body.classList.contains("viewer-readonly");
   tb.innerHTML = "";
   if (!passkeys.length) {
     tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("auth.no_passkeys"))}</td></tr>`;
@@ -2520,11 +2939,75 @@ function renderPasskeys(passkeys = []) {
       <td>${escapeHtml(key.user_name || key.user_email || key.user_sub || "")}</td>
       <td>${escapeHtml(fmtAuthTs(key.created_at))}</td>
       <td>${escapeHtml(fmtAuthTs(key.last_used_at))}</td>
-      <td><button class="danger" data-passkey-del="${escapeHtml(key.id)}">${escapeHtml(tr("auth.delete"))}</button></td>`;
+      <td><button class="danger" data-passkey-del="${escapeHtml(key.id)}" ${readOnly ? "disabled" : ""}>${escapeHtml(tr("auth.delete"))}</button></td>`;
     trEl.querySelector("[data-passkey-del]")?.addEventListener("click", () => deletePasskey(key.id));
     tb.appendChild(trEl);
   }
   applyTablePager("t-passkeys", { reset: true });
+}
+
+function renderTotp(basic = {}) {
+  const enabled = !!basic.totp_enabled;
+  _localTotpEnabled = enabled;
+  const status = $("#auth-totp-status");
+  if (status) status.textContent = enabled ? tr("auth.totp_enabled") : tr("auth.totp_disabled");
+  $("#totp-disable")?.toggleAttribute("disabled", !enabled || document.body.classList.contains("viewer-readonly"));
+  if (!enabled) $("#totp-setup")?.classList.add("hidden");
+  if (!enabled) _pendingTotpSecret = "";
+}
+
+async function startTotpSetup() {
+  const status = $("#totp-status");
+  setInlineStatus(status, tr("status.loading"));
+  try {
+    const r = await J("/api/auth/totp/start", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    _pendingTotpSecret = r.secret || "";
+    $("#totp-secret").value = _pendingTotpSecret;
+    $("#totp-uri").value = r.otpauth_uri || "";
+    $("#totp-code").value = "";
+    $("#totp-setup")?.classList.remove("hidden");
+    setInlineStatus(status, tr("auth.totp_scan"), { clearMs: 6000 });
+  } catch (e) {
+    notifyError("totp-start", e, { status });
+  }
+}
+
+async function enableTotp() {
+  const status = $("#totp-status");
+  const secret = _pendingTotpSecret || $("#totp-secret")?.value || "";
+  const code = $("#totp-code")?.value || "";
+  try {
+    await J("/api/auth/totp/enable", {
+      method: "POST",
+      body: JSON.stringify({ secret, code }),
+      headers: { "Content-Type": "application/json" },
+    });
+    $("#totp-setup")?.classList.add("hidden");
+    await loadAuth();
+    notifySuccess(tr("auth.totp_enabled_ok"), { status });
+  } catch (e) {
+    notifyError("totp-enable", e, { status });
+  }
+}
+
+async function disableTotp() {
+  if (!confirm(tr("auth.totp_disable_confirm"))) return;
+  const status = $("#totp-status");
+  try {
+    await J("/api/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "Content-Type": "application/json" },
+    });
+    await loadAuth();
+    notifySuccess(tr("auth.totp_disabled_ok"), { status });
+  } catch (e) {
+    notifyError("totp-disable", e, { status });
+  }
 }
 
 function b64urlToBuffer(s) {
@@ -2557,6 +3040,27 @@ function webauthnCreatePayload(credential) {
       attestationObject: bufferToB64url(credential.response.attestationObject),
       clientDataJSON: bufferToB64url(credential.response.clientDataJSON),
       transports: credential.response.getTransports ? credential.response.getTransports() : undefined,
+    },
+    extensions: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
+  };
+}
+
+function webauthnGetOptions(publicKey) {
+  publicKey.challenge = b64urlToBuffer(publicKey.challenge);
+  (publicKey.allowCredentials || []).forEach(cred => { cred.id = b64urlToBuffer(cred.id); });
+  return publicKey;
+}
+
+function webauthnGetPayload(credential) {
+  return {
+    id: credential.id,
+    rawId: bufferToB64url(credential.rawId),
+    type: credential.type,
+    response: {
+      authenticatorData: bufferToB64url(credential.response.authenticatorData),
+      clientDataJSON: bufferToB64url(credential.response.clientDataJSON),
+      signature: bufferToB64url(credential.response.signature),
+      userHandle: credential.response.userHandle ? bufferToB64url(credential.response.userHandle) : null,
     },
     extensions: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {},
   };
@@ -2597,6 +3101,7 @@ async function loadAuth() {
     $("#auth-basic-realm").value = b.realm || "klaxond";
     $("#auth-basic-pwd").value = "";
     $("#auth-basic-status").textContent = b.password_hash === "***SET***" ? tr("auth.set") : tr("auth.not_set");
+    renderTotp(b);
     // oidc
     const o = s.oidc || {};
     $("#auth-oidc-provider").value = o.provider || "authentik";
@@ -2773,6 +3278,9 @@ async function deletePasskey(id) {
 
 $("#token-create")?.addEventListener("click", createAuthToken);
 $("#passkey-register")?.addEventListener("click", registerPasskey);
+$("#totp-start")?.addEventListener("click", startTotpSetup);
+$("#totp-enable")?.addEventListener("click", enableTotp);
+$("#totp-disable")?.addEventListener("click", disableTotp);
 
 document.querySelectorAll('[data-tab="auth"]').forEach(btn => {
   btn.addEventListener("click", () => { loadAuth(); });

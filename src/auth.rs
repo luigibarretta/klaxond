@@ -1,19 +1,27 @@
 use crate::config::{AuthConfig, AuthToken, save_auth};
 use crate::state::{AppState, lock_mutex};
-use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch_i64, token_urlsafe};
-use axum::body::Body;
-use axum::http::header::{AUTHORIZATION, COOKIE, HOST, SET_COOKIE, WWW_AUTHENTICATE};
+use crate::util::{
+    b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch, now_epoch_i64, random_bytes,
+    token_urlsafe,
+};
+use axum::body::{Body, Bytes};
+use axum::http::header::{
+    AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HOST, SET_COOKIE, WWW_AUTHENTICATE,
+};
 use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use axum::response::IntoResponse;
 use bcrypt::verify;
 use constant_time_eq::constant_time_eq;
+use hmac::{Hmac, Mac};
 use ipnet::IpNet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use url::Url;
+use url::{Url, form_urlencoded};
 
 const PUBLIC_PREFIXES: &[&str] = &[
     "/webhook/",
@@ -46,12 +54,18 @@ const PUBLIC_PATHS: &[&str] = &[
 ];
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
+const SUDO_WINDOW_SECS: i64 = 10 * 60;
+const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+const AUTH_FAILURE_WINDOW_SECS: f64 = 300.0;
+const AUTH_FAILURE_MAX: usize = 10;
 
 pub const TOKEN_SCOPES: &[&str] = &[
     "admin:*",
     "admin:read",
+    "viewer:*",
     "status:read",
     "logs:read",
+    "audit:read",
     "config:read",
     "config:write",
     "auth:read",
@@ -77,6 +91,12 @@ pub struct User {
     pub mode: String,
     #[serde(default)]
     pub exp: i64,
+    #[serde(default)]
+    pub csrf: String,
+    #[serde(default)]
+    pub sudo_until: i64,
+    #[serde(default, skip_serializing)]
+    pub via_authorization: bool,
 }
 
 pub enum AuthOutcome {
@@ -118,6 +138,9 @@ pub async fn authenticate(
                 groups: vec![],
                 mode: "none".into(),
                 exp: 0,
+                csrf: String::new(),
+                sudo_until: 0,
+                via_authorization: false,
             },
             None,
         );
@@ -127,13 +150,25 @@ pub async fn authenticate(
     }
     if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
         for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
-            if let Some(user) = verify_session(state, value) {
-                return AuthOutcome::Authorized(user, None);
+            if let Some(mut user) = verify_session(state, value) {
+                let refresh_cookie = ensure_session_security_fields(state, &cfg, &mut user);
+                return authorize_interactive_user(user, refresh_cookie, method, path);
             }
         }
     }
-    match cfg.mode.as_str() {
-        "basic" => authenticate_basic(state, &cfg, headers),
+    let outcome = match cfg.mode.as_str() {
+        "basic" => {
+            let outcome = authenticate_basic(state, &cfg, headers);
+            match outcome {
+                AuthOutcome::Rejected(resp)
+                    if resp.status() == StatusCode::UNAUTHORIZED && is_ui_fetch(headers) =>
+                {
+                    let location = format!("/auth/login?return_to={}", urlencoding::encode(path));
+                    AuthOutcome::Rejected(auth_required(&location))
+                }
+                other => other,
+            }
+        }
         "trusted-proxy" => authenticate_trusted_proxy(&cfg, headers, peer),
         "oidc" => {
             let location = format!("/auth/login?return_to={}", urlencoding::encode(path));
@@ -144,7 +179,53 @@ pub async fn authenticate(
             }
         }
         _ => AuthOutcome::Rejected(StatusCode::FORBIDDEN.into_response()),
+    };
+    match outcome {
+        AuthOutcome::Authorized(user, cookie) => {
+            authorize_interactive_user(user, cookie, method, path)
+        }
+        rejected => rejected,
     }
+}
+
+fn ensure_session_security_fields(
+    state: &AppState,
+    cfg: &AuthConfig,
+    user: &mut User,
+) -> Option<String> {
+    let needs_refresh = user.csrf.is_empty();
+    if user.csrf.is_empty() {
+        user.csrf = format!("klx_csrf_{}", token_urlsafe(24));
+    }
+    needs_refresh.then(|| issue_session(state, cfg, user))
+}
+
+fn authorize_interactive_user(
+    user: User,
+    cookie: Option<String>,
+    method: &Method,
+    path: &str,
+) -> AuthOutcome {
+    let required = required_scope(method, path);
+    if user_has_viewer_role(&user) && !viewer_allows_scope(required) {
+        return AuthOutcome::Rejected(
+            (
+                StatusCode::FORBIDDEN,
+                format!("viewer user missing required scope '{required}'"),
+            )
+                .into_response(),
+        );
+    }
+    AuthOutcome::Authorized(user, cookie)
+}
+
+fn user_has_viewer_role(user: &User) -> bool {
+    user.groups.iter().any(|group| {
+        matches!(
+            group.as_str(),
+            "viewer" | "klaxond-viewer" | "klaxond:viewer" | "viewer:*"
+        )
+    })
 }
 
 fn is_ui_fetch(headers: &HeaderMap) -> bool {
@@ -152,6 +233,89 @@ fn is_ui_fetch(headers: &HeaderMap) -> bool {
         .get("x-klaxond-request")
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.eq_ignore_ascii_case("fetch"))
+}
+
+pub fn csrf_required(_headers: &HeaderMap, path: &str, user: &User) -> bool {
+    user.mode != "none"
+        && !user.via_authorization
+        && is_mutation_path(path)
+        && path != "/api/client-log"
+}
+
+pub fn csrf_valid(headers: &HeaderMap, user: &User) -> bool {
+    let Some(expected) = (!user.csrf.is_empty()).then_some(user.csrf.as_bytes()) else {
+        return false;
+    };
+    headers
+        .get("X-Klaxond-CSRF")
+        .or_else(|| headers.get("X-CSRF-Token"))
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|actual| constant_time_eq(actual.as_bytes(), expected))
+}
+
+pub fn csrf_rejected() -> Response<Body> {
+    (StatusCode::FORBIDDEN, "CSRF token missing or invalid").into_response()
+}
+
+pub fn sudo_required(_headers: &HeaderMap, path: &str, user: &User) -> bool {
+    matches!(user.mode.as_str(), "basic" | "passkey")
+        && !user.via_authorization
+        && is_sensitive_mutation_path(path)
+}
+
+pub fn sudo_valid(user: &User) -> bool {
+    user.sudo_until > now_epoch_i64()
+}
+
+pub fn sudo_required_response() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::PRECONDITION_REQUIRED)
+        .header("X-Klaxond-Reauth", "required")
+        .header("Cache-Control", "no-store")
+        .body(Body::from("reauthentication required"))
+        .unwrap()
+}
+
+pub fn sudo_until_deadline() -> i64 {
+    now_epoch_i64() + sudo_window_seconds()
+}
+
+fn is_mutation_path(path: &str) -> bool {
+    !matches!(
+        path,
+        "/api/config/import-preview"
+            | "/api/render-preview"
+            | "/api/policy-simulate"
+            | "/api/inhibition-rules/test"
+    )
+}
+
+fn is_sensitive_mutation_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/auth-config"
+            | "/api/auth/tokens"
+            | "/api/auth/tokens/revoke"
+            | "/api/auth/passkeys/register/start"
+            | "/api/auth/passkeys/register/finish"
+            | "/api/auth/passkeys/delete"
+            | "/api/auth/totp/start"
+            | "/api/auth/totp/enable"
+            | "/api/auth/totp/disable"
+            | "/api/config/restore"
+            | "/api/channel-config"
+            | "/api/ntfy-topics"
+            | "/api/ingest-auth"
+            | "/api/render-config"
+            | "/api/cascade-config"
+            | "/api/cascade/toggle"
+            | "/api/delivery-config"
+            | "/api/dedup-config"
+            | "/api/inhibition-rules"
+            | "/api/schedules"
+            | "/api/acks/clear"
+            | "/api/inhibitions/clear"
+    )
 }
 
 const TOKEN_LAST_USED_PERSIST_INTERVAL_SECS: i64 = 60;
@@ -229,6 +393,9 @@ fn authenticate_api_token(
             groups: record.scopes.clone(),
             mode: record.kind.clone(),
             exp: record.expires_at.unwrap_or(0),
+            csrf: String::new(),
+            sudo_until: 0,
+            via_authorization: true,
         },
         None,
     )
@@ -268,10 +435,18 @@ pub fn public_token(record: &AuthToken) -> Value {
 pub fn required_scope(method: &Method, path: &str) -> &'static str {
     if *method == Method::GET {
         return match path {
-            "/api/auth-config" | "/auth/me" => "auth:read",
+            "/auth/me" => "status:read",
+            "/api/auth-config" => "auth:read",
             "/api/logs" => "logs:read",
-            "/api/config/backup" | "/api/config/export" | "/api/config/backups" => "config:read",
-            "/api/status" | "/api/deliveries" | "/api/cascade-config" => "status:read",
+            "/api/audit" => "audit:read",
+            "/api/config/backups" => "status:read",
+            "/api/config/export" => "admin:*",
+            "/api/config/backup" => "config:read",
+            "/api/status"
+            | "/api/deliveries"
+            | "/api/cascade-config"
+            | "/api/setup-status"
+            | "/api/channel-test-matrix" => "status:read",
             _ => "admin:read",
         };
     }
@@ -279,14 +454,19 @@ pub fn required_scope(method: &Method, path: &str) -> &'static str {
         "/api/auth-config"
         | "/api/auth/tokens"
         | "/api/auth/tokens/revoke"
+        | "/api/auth/totp/start"
+        | "/api/auth/totp/enable"
+        | "/api/auth/totp/disable"
         | "/api/auth/passkeys/register/start"
         | "/api/auth/passkeys/register/finish"
         | "/api/auth/passkeys/delete" => "auth:write",
+        "/api/config/import-preview" => "config:read",
         "/api/config/restore" => "config:write",
         "/api/channel-config" | "/api/ntfy-topics" | "/api/ingest-auth" => "routing:write",
         "/api/render-config" | "/api/render-preview" => "render:write",
         "/api/cascade-config" | "/api/cascade/toggle" => "cascade:write",
         "/api/client-log" => "admin:read",
+        "/api/policy-simulate" => "status:read",
         "/api/delivery-config" => "delivery:write",
         "/api/dedup-config" => "dedup:write",
         "/api/inhibition-rules"
@@ -305,12 +485,21 @@ fn has_scope(scopes: &[String], required: &str) -> bool {
         scope == "admin:*"
             || scope == required
             || (scope == "admin:read" && required.ends_with(":read"))
+            || (scope == "viewer:*" && viewer_allows_scope(required))
             || scope
                 .strip_suffix(":*")
                 .zip(required.split_once(':'))
                 .map(|(prefix, (group, _))| prefix == group)
                 .unwrap_or(false)
     })
+}
+
+pub fn scopes_allow(scopes: &[String], required: &str) -> bool {
+    has_scope(scopes, required)
+}
+
+fn viewer_allows_scope(required: &str) -> bool {
+    matches!(required, "status:read" | "logs:read" | "audit:read")
 }
 
 fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -> AuthOutcome {
@@ -322,6 +511,13 @@ fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -
         && cfg.basic.username == user
         && !cfg.basic.password_hash.is_empty()
         && verify(pwd, &cfg.basic.password_hash).unwrap_or(false)
+        && (!cfg.basic.totp_enabled
+            || headers
+                .get("X-Klaxond-TOTP")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|code| {
+                    verify_totp_code(&cfg.basic.totp_secret, code, now_epoch_i64())
+                }))
     {
         let mut u = User {
             sub: user.to_string(),
@@ -330,6 +526,9 @@ fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -
             groups: vec![],
             mode: "basic".into(),
             exp: 0,
+            csrf: String::new(),
+            sudo_until: now_epoch_i64() + sudo_window_seconds(),
+            via_authorization: false,
         };
         let cookie = issue_session(state, cfg, &mut u);
         return AuthOutcome::Authorized(u, Some(cookie));
@@ -374,6 +573,9 @@ fn authenticate_trusted_proxy(
             name: String::new(),
             mode: "trusted-proxy".into(),
             exp: 0,
+            csrf: String::new(),
+            sudo_until: 0,
+            via_authorization: false,
         },
         None,
     )
@@ -381,6 +583,9 @@ fn authenticate_trusted_proxy(
 
 pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
     let return_to = login_return_to(uri);
+    let logged_out = Url::parse(&format!("http://localhost{uri}"))
+        .ok()
+        .is_some_and(|u| u.query_pairs().any(|(k, _)| k == "logged_out"));
     let start = Url::parse(&format!("http://localhost{uri}"))
         .ok()
         .is_some_and(|u| {
@@ -391,10 +596,200 @@ pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<
     if auth.mode == "none" {
         return redirect(&return_to);
     }
+    if !logged_out && let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
+        for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
+            if verify_session(state, value).is_some() {
+                return redirect(&return_to);
+            }
+        }
+    }
     if start && auth.mode == "oidc" {
         return oidc_login_redirect(state, headers, uri).await;
     }
     login_page(&auth.mode, auth.webauthn.enabled, &return_to)
+}
+
+pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
+    let cfg = state.cfg().auth;
+    if cfg.mode != "basic" {
+        return (
+            StatusCode::BAD_REQUEST,
+            "local login is available only in basic mode",
+        )
+            .into_response();
+    }
+    let payload = login_payload(&body);
+    let username = payload
+        .get("username")
+        .map(String::as_str)
+        .unwrap_or("")
+        .trim();
+    let password = payload.get("password").map(String::as_str).unwrap_or("");
+    let code = payload.get("totp").map(String::as_str).unwrap_or("");
+    let rate_key = auth_rate_key("login", username);
+    if auth_rate_limited(state, &rate_key) {
+        record_auth_failure(state, &rate_key, "auth.login", "rate_limited");
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many authentication failures",
+        )
+            .into_response();
+    }
+    let return_to = sanitize_return_to(
+        payload
+            .get("return_to")
+            .map(String::as_str)
+            .unwrap_or("/ui/status"),
+    );
+    if username != cfg.basic.username
+        || cfg.basic.password_hash.is_empty()
+        || !verify(password, &cfg.basic.password_hash).unwrap_or(false)
+    {
+        record_auth_failure(
+            state,
+            &rate_key,
+            "auth.login",
+            "invalid username or password",
+        );
+        return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
+    }
+    if cfg.basic.totp_enabled && !verify_totp_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
+        record_auth_failure(state, &rate_key, "auth.login", "invalid TOTP code");
+        return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
+    }
+    clear_auth_failures(state, &rate_key);
+    let mut user = User {
+        sub: username.to_string(),
+        email: String::new(),
+        name: String::new(),
+        groups: vec![],
+        mode: "basic".into(),
+        exp: 0,
+        csrf: String::new(),
+        sudo_until: 0,
+        via_authorization: false,
+    };
+    let cookie = issue_session(state, &cfg, &mut user);
+    let mut resp = if payload
+        .get("fetch")
+        .map(|v| v == "1")
+        .unwrap_or_else(|| body_is_json(&body))
+    {
+        json_response(json!({"ok": true, "return_to": return_to, "csrf": user.csrf}))
+    } else {
+        redirect(&return_to)
+    };
+    resp.headers_mut()
+        .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    resp
+}
+
+pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body> {
+    let Some(user) = user else {
+        return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
+    };
+    if user.mode != "basic" {
+        return (
+            StatusCode::BAD_REQUEST,
+            "sudo reauth is available only for local login",
+        )
+            .into_response();
+    }
+    let cfg = state.cfg().auth;
+    let payload = login_payload(&body);
+    let password = payload.get("password").map(String::as_str).unwrap_or("");
+    let code = payload.get("totp").map(String::as_str).unwrap_or("");
+    let rate_key = auth_rate_key("sudo", &user.sub);
+    if auth_rate_limited(state, &rate_key) {
+        record_auth_failure(state, &rate_key, "auth.sudo", "rate_limited");
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many authentication failures",
+        )
+            .into_response();
+    }
+    if cfg.basic.password_hash.is_empty()
+        || !verify(password, &cfg.basic.password_hash).unwrap_or(false)
+    {
+        record_auth_failure(state, &rate_key, "auth.sudo", "invalid password");
+        return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
+    }
+    if cfg.basic.totp_enabled && !verify_totp_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
+        record_auth_failure(state, &rate_key, "auth.sudo", "invalid TOTP code");
+        return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
+    }
+    clear_auth_failures(state, &rate_key);
+    let mut refreshed = user.clone();
+    refreshed.sudo_until = now_epoch_i64() + sudo_window_seconds();
+    let cookie = issue_session(state, &cfg, &mut refreshed);
+    let mut resp = json_response(
+        json!({"ok": true, "sudo_until": refreshed.sudo_until, "csrf": refreshed.csrf}),
+    );
+    resp.headers_mut()
+        .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    resp
+}
+
+pub fn totp_start(state: &AppState) -> Response<Body> {
+    let cfg = state.cfg().auth;
+    let secret = base32_encode(&random_bytes::<20>());
+    let label = if cfg.basic.username.trim().is_empty() {
+        "klaxond".to_string()
+    } else {
+        format!("klaxond:{}", cfg.basic.username)
+    };
+    let issuer = "klaxond";
+    let otpauth_uri = format!(
+        "otpauth://totp/{}?secret={}&issuer={}&algorithm=SHA1&digits=6&period=30",
+        urlencoding::encode(&label),
+        secret,
+        urlencoding::encode(issuer)
+    );
+    json_response(json!({"ok": true, "secret": secret, "otpauth_uri": otpauth_uri}))
+}
+
+pub fn totp_enable(state: &AppState, body: Bytes) -> Response<Body> {
+    let payload = login_payload(&body);
+    let secret = payload
+        .get("secret")
+        .map(String::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_uppercase();
+    let code = payload.get("code").map(String::as_str).unwrap_or("").trim();
+    if base32_decode(&secret).is_none() {
+        return (StatusCode::BAD_REQUEST, "invalid TOTP secret").into_response();
+    }
+    if !verify_totp_code(&secret, code, now_epoch_i64()) {
+        return (StatusCode::BAD_REQUEST, "invalid TOTP code").into_response();
+    }
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            cfg.auth.basic.totp_enabled = true;
+            cfg.auth.basic.totp_secret = secret.clone();
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+            }
+            state.replace_config(cfg);
+            json_response(json!({"ok": true, "enabled": true}))
+        })
+        .unwrap_or_else(|err| (StatusCode::INTERNAL_SERVER_ERROR, err).into_response())
+}
+
+pub fn totp_disable(state: &AppState) -> Response<Body> {
+    state
+        .with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            cfg.auth.basic.totp_enabled = false;
+            cfg.auth.basic.totp_secret.clear();
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
+            }
+            state.replace_config(cfg);
+            json_response(json!({"ok": true, "enabled": false}))
+        })
+        .unwrap_or_else(|err| (StatusCode::INTERNAL_SERVER_ERROR, err).into_response())
 }
 
 async fn oidc_login_redirect(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
@@ -477,9 +872,15 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
     let return_to = html_attr(return_to);
     let primary = match mode {
         "oidc" => format!(r#"<a class="btn primary" href="{start_url}">Continue with SSO</a>"#),
-        "basic" => {
-            format!(r#"<a class="btn primary" href="{return_to}">Continue with Basic auth</a>"#)
-        }
+        "basic" => format!(
+            r#"<form class="login-form" method="post" action="/auth/login">
+<input type="hidden" name="return_to" value="{return_to}">
+<label><span>Username</span><input name="username" autocomplete="username" required></label>
+<label><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
+<label><span>TOTP code</span><input name="totp" inputmode="numeric" pattern="[0-9]{{6}}" autocomplete="one-time-code" placeholder="000000"></label>
+<button class="btn primary" type="submit">Sign in</button>
+</form>"#
+        ),
         "trusted-proxy" => {
             format!(
                 r#"<a class="btn primary" href="{return_to}">Continue through trusted proxy</a>"#
@@ -539,6 +940,162 @@ fn html_attr(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+fn json_response(value: Value) -> Response<Body> {
+    let body = serde_json::to_vec_pretty(&value).unwrap_or_else(|_| b"{}".to_vec());
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/json")
+        .header(CONTENT_LENGTH, body.len().to_string())
+        .body(Body::from(body))
+        .unwrap()
+}
+
+fn login_payload(body: &Bytes) -> HashMap<String, String> {
+    let raw = std::str::from_utf8(body).unwrap_or("");
+    if body_is_json(body) {
+        return serde_json::from_str::<Value>(raw)
+            .ok()
+            .and_then(|v| v.as_object().cloned())
+            .map(|obj| {
+                obj.into_iter()
+                    .map(|(key, value)| {
+                        let value = value
+                            .as_str()
+                            .map(ToOwned::to_owned)
+                            .unwrap_or_else(|| value.to_string());
+                        (key, value)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    form_urlencoded::parse(raw.as_bytes())
+        .into_owned()
+        .collect()
+}
+
+fn body_is_json(body: &Bytes) -> bool {
+    std::str::from_utf8(body)
+        .map(|s| s.trim_start().starts_with('{'))
+        .unwrap_or(false)
+}
+
+fn auth_rate_key(action: &str, subject: &str) -> String {
+    let subject = subject.trim().to_ascii_lowercase();
+    format!(
+        "{action}:{}",
+        if subject.is_empty() {
+            "unknown"
+        } else {
+            subject.as_str()
+        }
+    )
+}
+
+fn auth_rate_limited(state: &AppState, key: &str) -> bool {
+    let now = now_epoch();
+    let cutoff = now - AUTH_FAILURE_WINDOW_SECS;
+    let mut failures = lock_mutex(&state.auth_failures, "auth failures");
+    let entries = failures.entry(key.to_string()).or_default();
+    entries.retain(|ts| *ts >= cutoff);
+    entries.len() >= AUTH_FAILURE_MAX
+}
+
+fn record_auth_failure(state: &AppState, key: &str, action: &'static str, detail: &'static str) {
+    let now = now_epoch();
+    let cutoff = now - AUTH_FAILURE_WINDOW_SECS;
+    {
+        let mut failures = lock_mutex(&state.auth_failures, "auth failures");
+        let entries = failures.entry(key.to_string()).or_default();
+        entries.retain(|ts| *ts >= cutoff);
+        entries.push(now);
+    }
+    crate::audit::record(key.to_string(), action, "error", detail.to_string());
+}
+
+fn clear_auth_failures(state: &AppState, key: &str) {
+    lock_mutex(&state.auth_failures, "auth failures").remove(key);
+}
+
+fn sudo_window_seconds() -> i64 {
+    SUDO_WINDOW_SECS
+}
+
+fn base32_encode(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity((bytes.len() * 8).div_ceil(5));
+    let mut buffer = 0u16;
+    let mut bits = 0u8;
+    for byte in bytes {
+        buffer = (buffer << 8) | u16::from(*byte);
+        bits += 8;
+        while bits >= 5 {
+            let idx = ((buffer >> (bits - 5)) & 0x1f) as usize;
+            output.push(BASE32_ALPHABET[idx] as char);
+            bits -= 5;
+        }
+    }
+    if bits > 0 {
+        let idx = ((buffer << (5 - bits)) & 0x1f) as usize;
+        output.push(BASE32_ALPHABET[idx] as char);
+    }
+    output
+}
+
+fn base32_decode(value: &str) -> Option<Vec<u8>> {
+    let mut output = Vec::with_capacity(value.len() * 5 / 8);
+    let mut buffer = 0u32;
+    let mut bits = 0u8;
+    for ch in value.chars().filter(|ch| !ch.is_whitespace()) {
+        if ch == '=' {
+            break;
+        }
+        let ch = ch.to_ascii_uppercase();
+        let val = match ch {
+            'A'..='Z' => ch as u8 - b'A',
+            '2'..='7' => ch as u8 - b'2' + 26,
+            _ => return None,
+        };
+        buffer = (buffer << 5) | u32::from(val);
+        bits += 5;
+        while bits >= 8 {
+            output.push(((buffer >> (bits - 8)) & 0xff) as u8);
+            bits -= 8;
+        }
+    }
+    (!output.is_empty()).then_some(output)
+}
+
+fn verify_totp_code(secret: &str, code: &str, now: i64) -> bool {
+    let code = code.trim();
+    if code.len() != 6 || !code.as_bytes().iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let Ok(expected) = code.parse::<u32>() else {
+        return false;
+    };
+    let Some(secret) = base32_decode(secret) else {
+        return false;
+    };
+    let counter = now.max(0) / 30;
+    (-1..=1).any(|skew| {
+        let step = counter + skew;
+        step >= 0 && hotp(&secret, step as u64).is_some_and(|value| value == expected)
+    })
+}
+
+fn hotp(secret: &[u8], counter: u64) -> Option<u32> {
+    type HmacSha1 = Hmac<Sha1>;
+    let mut mac = HmacSha1::new_from_slice(secret).ok()?;
+    mac.update(&counter.to_be_bytes());
+    let out = mac.finalize().into_bytes();
+    let offset = usize::from(out[19] & 0x0f);
+    let binary = (u32::from(out[offset] & 0x7f) << 24)
+        | (u32::from(out[offset + 1]) << 16)
+        | (u32::from(out[offset + 2]) << 8)
+        | u32::from(out[offset + 3]);
+    Some(binary % 1_000_000)
 }
 
 pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
@@ -693,6 +1250,9 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
             .unwrap_or_default(),
         mode: "oidc".into(),
         exp: 0,
+        csrf: String::new(),
+        sudo_until: 0,
+        via_authorization: false,
     };
     let cfg_all = state.cfg().auth;
     let cookie = issue_session(state, &cfg_all, &mut user);
@@ -717,6 +1277,9 @@ pub fn logout(headers: &HeaderMap) -> Response<Body> {
 }
 
 fn issue_session(state: &AppState, cfg: &AuthConfig, user: &mut User) -> String {
+    if user.csrf.is_empty() {
+        user.csrf = format!("klx_csrf_{}", token_urlsafe(24));
+    }
     user.exp = now_epoch_i64() + (cfg.session_timeout_hours * 3600) as i64;
     let payload = serde_json::to_vec(user).unwrap_or_default();
     let body = b64url_no_pad(&payload);

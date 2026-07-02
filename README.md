@@ -20,12 +20,16 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 
 ## Features
 
-- **Two webhook formats**: `/webhook/<sev>` (Grafana Alertmanager-shape) and `/beszel/<sev>` (Beszel-shape).
+- **Multiple webhook formats**: Grafana Alertmanager, Beszel, Healthchecks, WUD, Authentik, Shelfmark, Prowlarr and Decypharr.
 - **3-tier cascade fallback** — ntfy → Telegram → SMTP. Always on for Beszel, gated for Grafana.
 - **Rich ntfy push rendering**: severity emoji in title (RFC 2047 base64-encoded for non-ASCII), priority + tag mapping, up to 2 action buttons via `component` label → dashboard URL.
 - **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
-- **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, render mappings, inhibition rules. Auto-bootstrapped on first run from the bundled default.
-- **Admin UI** (vanilla HTML+JS, zero build) at `/ui/`: channel health, active inhibitions, recent deliveries, render config CRUD with deep-link test, visual ntfy push preview, cascade tier editor, channel routing config.
+- **Full settings export/import**: TOML plus sidecar JSON files, import preview, automatic pre-restore backup and validated restore.
+- **Authentication**: local username/password login, optional TOTP/MFA, OIDC, trusted proxy, passkeys, API keys and PATs with granular scopes plus read-only viewer support.
+- **Operational diagnostics**: audit log, backend/frontend log search, setup checklist, notification test matrix and policy simulator.
+- **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
+- **Admin UI** (vanilla HTML+JS, zero build) at `/ui/`: channel health, active inhibitions, recent deliveries, logs, audit, import/export, render config CRUD, visual ntfy push preview, cascade tier editor, channel routing config and auth management.
+- **Prometheus/Grafana ready**: `/metrics` exposes runtime counters/gauges and `docs/grafana-dashboard.json` is importable in Grafana.
 - **Rust backend** — single `klaxond` binary built with Cargo, served from a small Alpine runtime image.
 
 ## Quick start
@@ -55,6 +59,16 @@ or PATs. Replace `localhost:8181` with your own self-hosted origin:
 The same links are shown in the app footer and on the local login/signed-out
 screen.
 
+### Authentication and browser safety
+
+The admin UI supports local username/password login backed by bcrypt, optional
+TOTP/MFA, OIDC, trusted proxy headers, passkeys, API keys and PATs. Browser
+sessions receive a CSRF token and every same-origin mutation must send it back.
+Sensitive browser actions also require a short local reauthentication window
+when using local username/password login. Machine clients should use scoped
+Bearer tokens or explicit Basic auth headers; those paths are not gated by
+browser CSRF/sudo prompts.
+
 ## Endpoints
 
 ### Webhook ingress (machine-to-machine)
@@ -71,6 +85,7 @@ screen.
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/healthz` | Plain `OK`, for Docker `HEALTHCHECK` |
+| `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/` / `/ui/` | Static admin UI |
 
 ### Admin API (consumed by UI)
@@ -78,8 +93,23 @@ screen.
 | Method | Path | Returns / Effect |
 |---|---|---|
 | `GET` | `/api/status` | Cascade flag + channel reachability |
+| `GET` | `/api/setup-status` | Setup/readiness checklist |
+| `GET` | `/api/channel-test-matrix` | Dry-run channel connectivity matrix; sends no notification |
 | `GET` | `/api/inhibitions` | Active in-memory suppressions with TTL |
 | `GET` | `/api/deliveries` | Rolling buffer of the last 50 deliveries |
+| `GET` | `/api/logs` | Runtime/backend/frontend log buffer with keyword, level and pagination filters |
+| `GET` | `/api/audit` | Security/configuration audit ring buffer with keyword and pagination filters |
+| `GET` | `/auth/me` | Current authenticated user, auth mode, scopes and browser CSRF token |
+| `POST` | `/auth/login` | Local username/password login; accepts optional TOTP code |
+| `POST` | `/auth/sudo` | Refresh the short reauthentication window for sensitive local-session actions |
+| `POST` | `/api/auth/totp/start` | Generate a one-time TOTP setup secret and otpauth URI |
+| `POST` | `/api/auth/totp/enable` | Enable local TOTP after validating the current code |
+| `POST` | `/api/auth/totp/disable` | Disable local TOTP |
+| `GET` | `/api/config/backup` | Download current `klaxond.toml` |
+| `GET` | `/api/config/export` | Admin-only full settings bundle: TOML, sidecars, auth sidecars and runtime-derived secrets |
+| `GET` | `/api/config/backups` | List automatic config backups |
+| `POST` | `/api/config/import-preview` | Validate and compare a TOML/full bundle before restore |
+| `POST` | `/api/config/restore` | Restore a TOML/full bundle after automatic pre-restore backup |
 | `GET` | `/api/render-config` | `component → [label, url]` mapping |
 | `POST` | `/api/render-config` | Replace mapping (persists to `/data/render-config.json`) |
 | `GET` | `/api/cascade-config` | Cascade tier list + default-enabled flag |
@@ -87,8 +117,24 @@ screen.
 | `GET` | `/api/channel-config` | ntfy URL + topics, Telegram chat_id, SMTP host/port/from/to. Secrets shown as configured/missing badges only. |
 | `POST` | `/api/channel-config` | Update non-secret channel fields (persists to `/data/klaxond.toml`) |
 | `POST` | `/api/render-preview` | Body `{severity, payload}` → returns ntfy headers + body without sending |
+| `POST` | `/api/policy-simulate` | Dry-run inhibition, delivery policy and dedup decisions |
 | `POST` | `/api/test/<sev>` | Fire a synthetic alert through the cascade |
 | `POST` | `/api/cascade/toggle` | Body `{enabled: bool}` or empty (flip) — runtime override of CASCADE_ENABLED |
+
+## Observability
+
+Scrape `GET /metrics` with Prometheus. The endpoint includes:
+
+- `klaxond_info{version=...}`
+- `klaxond_uptime_seconds`
+- `klaxond_deliveries_total{source,severity,channel,ok}`
+- `klaxond_suppressions_active`
+- `klaxond_suppressions_armed_total{rule}`
+- `klaxond_render_errors_total{source}`
+- `klaxond_dedup_pending{source}`
+- `klaxond_dedup_buffered_total{source}` and `klaxond_dedup_flushed_total{source}`
+
+Import [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) into Grafana and select your Prometheus datasource.
 
 ## Configuration
 

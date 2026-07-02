@@ -51,6 +51,8 @@
         <button class="tab" data-tab="inhibitions" data-i18n-title="tab.inhibitions" title="Inhibitions" aria-label="Inhibitions"><span class="tab-icon" aria-hidden="true">⊘</span><span class="tab-label" data-i18n="tab.inhibitions">Inhibitions</span></button>
         <button class="tab" data-tab="deliveries" data-i18n-title="tab.deliveries" title="Recent deliveries" aria-label="Recent deliveries"><span class="tab-icon" aria-hidden="true">⇢</span><span class="tab-label" data-i18n="tab.deliveries">Recent deliveries</span></button>
         <button class="tab" data-tab="logs" data-i18n-title="tab.logs" title="Logs" aria-label="Logs"><span class="tab-icon" aria-hidden="true">≡</span><span class="tab-label" data-i18n="tab.logs">Logs</span></button>
+        <button class="tab" data-tab="audit" data-i18n-title="tab.audit" title="Audit" aria-label="Audit"><span class="tab-icon" aria-hidden="true">◇</span><span class="tab-label" data-i18n="tab.audit">Audit</span></button>
+        <button class="tab" data-tab="setup" data-i18n-title="tab.setup" title="Setup" aria-label="Setup"><span class="tab-icon" aria-hidden="true">◎</span><span class="tab-label" data-i18n="tab.setup">Setup</span></button>
       </div>
       <div class="tab-group" data-group="settings">
         <span class="tab-group-label" data-i18n="nav.settings">Settings</span>
@@ -64,6 +66,7 @@
       <div class="tab-group" data-group="tools">
         <span class="tab-group-label" data-i18n="nav.tools">Tools</span>
         <button class="tab" data-tab="preview" data-i18n-title="tab.preview" title="Render preview" aria-label="Render preview"><span class="tab-icon" aria-hidden="true">◉</span><span class="tab-label" data-i18n="tab.preview">Render preview</span></button>
+        <button class="tab" data-tab="simulator" data-i18n-title="tab.simulator" title="Policy simulator" aria-label="Policy simulator"><span class="tab-icon" aria-hidden="true">⌁</span><span class="tab-label" data-i18n="tab.simulator">Policy simulator</span></button>
         <button class="tab" data-tab="test" data-i18n-title="tab.test" title="Send test" aria-label="Send test"><span class="tab-icon" aria-hidden="true">✓</span><span class="tab-label" data-i18n="tab.test">Send test</span></button>
       </div>
     </nav>
@@ -169,8 +172,11 @@
         <input type="file" id="cfg-restore-file" accept=".toml,.json,application/toml,application/json,text/plain" style="display:none">
         <span data-i18n="status.restore_toml">Restore from TOML/bundle…</span>
       </label>
+      <button id="cfg-import-apply" class="btn primary" hidden data-i18n="config.apply_import">Apply import</button>
+      <button id="cfg-import-clear" class="btn" hidden data-i18n="common.dismiss">Dismiss</button>
       <span id="cfg-restore-status" class="muted"></span>
     </div>
+    <div id="cfg-import-preview" class="import-preview hidden" aria-live="polite"></div>
     <p class="muted" style="margin-top:0.8em"><small data-i18n="status.latest_backups">Latest auto-backups (newest first):</small></p>
     <ul id="cfg-backup-list" class="muted" style="font-size:12px; padding-left:1.5em; margin:0"><li>—</li></ul>
   </div>
@@ -366,6 +372,8 @@
       </select>
     </label>
     <button id="logs-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
+    <button id="logs-frontend-filter" class="btn" data-i18n="logs.frontend_errors">Frontend errors</button>
+    <button id="logs-clear-filter" class="btn" data-i18n="logs.clear_filters">Clear filters</button>
     <label class="inline-check"><input type="checkbox" id="logs-autorefresh" checked> <span data-i18n="logs.auto_refresh">Auto-refresh</span></label>
     <span id="logs-count" class="muted"></span>
   </div>
@@ -389,6 +397,90 @@
       <tbody></tbody>
     </table>
   </div>
+</section>
+
+<section id="tab-audit" class="tabpane">
+  <h2><span data-i18n="audit.title">Audit log</span> <small class="muted" data-i18n="audit.sub">(security and configuration actions)</small></h2>
+  <div class="logs-toolbar">
+    <label>
+      <span data-i18n="logs.keyword">Keyword</span>
+      <input type="search" id="audit-filter" placeholder="Search actor, action or detail…" autocomplete="off" data-i18n-placeholder="audit.search_placeholder">
+    </label>
+    <label>
+      <span data-i18n="logs.page_size">Page size</span>
+      <select id="audit-limit">
+        <option>25</option>
+        <option selected>50</option>
+        <option>100</option>
+        <option>200</option>
+      </select>
+    </label>
+    <button id="audit-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
+    <span id="audit-count" class="muted"></span>
+  </div>
+  <div class="logs-pager">
+    <button id="audit-first" class="btn" data-i18n-title="logs.first_page" title="First page" aria-label="First page">&lt;&lt;</button>
+    <button id="audit-prev" class="btn" data-i18n-title="logs.previous_page" title="Previous page" aria-label="Previous page">&lt;</button>
+    <span id="audit-page-info" class="muted">—</span>
+    <button id="audit-next" class="btn" data-i18n-title="logs.next_page" title="Next page" aria-label="Next page">&gt;</button>
+    <button id="audit-last" class="btn" data-i18n-title="logs.last_page" title="Last page" aria-label="Last page">&gt;&gt;</button>
+  </div>
+  <div class="table-scroll">
+    <table id="t-audit" class="logs-table">
+      <thead><tr><th data-i18n="common.time">Time</th><th data-i18n="audit.actor">Actor</th><th data-i18n="audit.action">Action</th><th data-i18n="audit.outcome">Outcome</th><th data-i18n="audit.detail">Detail</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-setup" class="tabpane">
+  <h2 data-i18n="setup.title">Setup checklist</h2>
+  <div class="row" style="margin-bottom:0.8em">
+    <button id="setup-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
+    <span id="setup-summary" class="muted"></span>
+  </div>
+  <div id="setup-checklist" class="setup-checklist"></div>
+
+  <h2 style="margin-top:2em" data-i18n="matrix.title">Notification test matrix</h2>
+  <p class="muted" data-i18n="matrix.desc">Connectivity-only dry-run checks. No notification is sent.</p>
+  <div class="table-scroll">
+    <table id="t-channel-matrix">
+      <thead><tr><th data-i18n="common.channel">Channel</th><th data-i18n="common.configured">Configured</th><th data-i18n="channel.reachable">Reachable</th><th>Endpoint</th><th data-i18n="matrix.checks">Checks</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="tab-simulator" class="tabpane">
+  <h2 data-i18n="sim.title">Policy simulator</h2>
+  <p class="muted" data-i18n="sim.desc">Dry-run inhibition, delivery policy and dedup decisions without sending a notification or changing state.</p>
+  <div class="grid2">
+    <label><span data-i18n="common.source">Source</span>
+      <select id="policy-sim-source">
+        <option value="grafana">grafana</option>
+        <option value="beszel">beszel</option>
+        <option value="healthchecks">healthchecks</option>
+        <option value="wud">wud</option>
+        <option value="authentik">authentik</option>
+        <option value="shelfmark">shelfmark</option>
+        <option value="prowlarr">prowlarr</option>
+        <option value="decypharr">decypharr</option>
+      </select>
+    </label>
+    <label><span data-i18n="common.severity">Severity</span>
+      <select id="policy-sim-severity"><option>info</option><option selected>warning</option><option>critical</option></select>
+    </label>
+  </div>
+  <label><span data-i18n-html="sim.labels">Labels (one per line, <code>label=value</code>)</span>
+    <textarea id="policy-sim-labels" rows="7" style="font-family:ui-monospace,monospace;font-size:12px">alertname=HostLoadHigh
+component=host
+host=it1-prd-dev-01</textarea>
+  </label>
+  <div class="row">
+    <button id="policy-sim-run" class="btn primary" data-i18n="common.test">Test</button>
+    <span id="policy-sim-status" class="muted"></span>
+  </div>
+  <pre id="policy-sim-output">—</pre>
 </section>
 
 <section id="tab-render" class="tabpane">
@@ -633,6 +725,28 @@
       <input type="password" id="auth-basic-pwd" autocomplete="new-password" placeholder="new password (bcrypt-hashed before storage)" data-i18n-placeholder="auth.password_placeholder">
     </label>
     <p class="muted"><small><span data-i18n="auth.password_hash_status">Password hash status:</span> <code id="auth-basic-status">—</code></small></p>
+    <div class="auth-totp-panel">
+      <p class="muted"><small><span data-i18n="auth.totp_status">TOTP status:</span> <code id="auth-totp-status">—</code></small></p>
+      <div class="row">
+        <button type="button" class="btn" id="totp-start" data-i18n="auth.totp_start">Set up TOTP</button>
+        <button type="button" class="danger" id="totp-disable" data-i18n="auth.totp_disable">Disable TOTP</button>
+        <span id="totp-status" class="muted"></span>
+      </div>
+      <div id="totp-setup" class="notice hidden">
+        <label><span data-i18n="auth.totp_secret">Secret</span>
+          <input type="text" id="totp-secret" readonly autocomplete="off">
+        </label>
+        <label><span data-i18n="auth.totp_uri">Authenticator URI</span>
+          <input type="text" id="totp-uri" readonly autocomplete="off">
+        </label>
+        <div class="row">
+          <label style="margin:0"><span data-i18n="auth.totp_code">6-digit code</span>
+            <input type="text" id="totp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+          </label>
+          <button type="button" class="btn primary" id="totp-enable" data-i18n="auth.totp_enable">Enable TOTP</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <h3 id="auth-oidc-h" data-i18n="auth.oidc_config">OIDC config</h3>

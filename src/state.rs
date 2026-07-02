@@ -33,6 +33,7 @@ pub struct AppState {
     pub oidc_states: Arc<Mutex<HashMap<String, (f64, String)>>>,
     pub passkey_registrations: Arc<Mutex<HashMap<String, PendingPasskeyRegistration>>>,
     pub passkey_authentications: Arc<Mutex<HashMap<String, PendingPasskeyAuthentication>>>,
+    pub auth_failures: Arc<Mutex<HashMap<String, Vec<f64>>>>,
 }
 
 #[derive(Clone)]
@@ -131,6 +132,7 @@ impl AppState {
             oidc_states: Arc::new(Mutex::new(HashMap::new())),
             passkey_registrations: Arc::new(Mutex::new(HashMap::new())),
             passkey_authentications: Arc::new(Mutex::new(HashMap::new())),
+            auth_failures: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
