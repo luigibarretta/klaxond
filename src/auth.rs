@@ -1,4 +1,4 @@
-use crate::config::{AuthConfig, AuthToken};
+use crate::config::{AuthConfig, AuthToken, save_auth};
 use crate::state::{AppState, lock_mutex};
 use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch_i64, token_urlsafe};
 use axum::body::Body;
@@ -104,7 +104,7 @@ pub async fn authenticate(
         );
     }
     if let Some(token) = bearer_token(headers) {
-        return authenticate_api_token(&cfg, &token, method, path);
+        return authenticate_api_token(state, &token, method, path);
     }
     if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
         for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
@@ -135,12 +135,15 @@ fn is_ui_fetch(headers: &HeaderMap) -> bool {
         .is_some_and(|v| v.eq_ignore_ascii_case("fetch"))
 }
 
+const TOKEN_LAST_USED_PERSIST_INTERVAL_SECS: i64 = 60;
+
 fn authenticate_api_token(
-    cfg: &AuthConfig,
+    state: &AppState,
     token: &str,
     method: &Method,
     path: &str,
 ) -> AuthOutcome {
+    let cfg = state.cfg().auth;
     let hash = token_hash(token);
     let now = now_epoch_i64();
     let Some(record) = cfg.api_keys.iter().find(|record| {
@@ -164,6 +167,39 @@ fn authenticate_api_token(
             )
                 .into_response(),
         );
+    }
+    let record = record.clone();
+    let should_persist_last_used = record
+        .last_used_at
+        .map(|last| now.saturating_sub(last) >= TOKEN_LAST_USED_PERSIST_INTERVAL_SECS)
+        .unwrap_or(true);
+    if should_persist_last_used {
+        let record_id = record.id.clone();
+        if let Err(err) = state.with_config_write_lock(|| {
+            let mut cfg = state.cfg();
+            if let Some(stored) = cfg
+                .auth
+                .api_keys
+                .iter_mut()
+                .find(|stored| stored.id == record_id && stored.token_hash == hash)
+            {
+                let still_due = stored
+                    .last_used_at
+                    .map(|last| now.saturating_sub(last) >= TOKEN_LAST_USED_PERSIST_INTERVAL_SECS)
+                    .unwrap_or(true);
+                if !still_due {
+                    return;
+                }
+                stored.last_used_at = Some(now);
+                if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                    tracing::warn!("failed to persist auth token last_used_at: {err}");
+                    return;
+                }
+                state.replace_config_preserving_runtime(cfg);
+            }
+        }) {
+            tracing::warn!("failed to update auth token last_used_at: {err}");
+        }
     }
 
     AuthOutcome::Authorized(
@@ -806,10 +842,7 @@ mod tests {
 
     #[test]
     fn sanitize_return_to_allows_only_local_non_auth_paths() {
-        assert_eq!(
-            sanitize_return_to("/ui/inhibitions"),
-            "/ui/inhibitions"
-        );
+        assert_eq!(sanitize_return_to("/ui/inhibitions"), "/ui/inhibitions");
         assert_eq!(sanitize_return_to("https://example.test/"), "/");
         assert_eq!(sanitize_return_to("//example.test/"), "/");
         assert_eq!(sanitize_return_to("/ui\r\nLocation: //example.test"), "/");

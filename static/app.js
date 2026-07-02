@@ -81,10 +81,11 @@ const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key,
 
 // ---- Tab switching (with URL path routing) ----
 const UI_TABS = new Set(Array.from(document.querySelectorAll(".tab[data-tab]"), t => t.dataset.tab));
+const UI_PAGES = new Set(Array.from(document.querySelectorAll(".tabpane[id^='tab-']"), p => p.id.replace(/^tab-/, "")));
 const DEFAULT_TAB = "status";
 
 function isKnownTab(tabId) {
-  return UI_TABS.has(tabId);
+  return UI_PAGES.has(tabId);
 }
 
 function canonicalUiPath(tabId) {
@@ -96,8 +97,8 @@ function activateTab(tabId) {
   $$(".tabpane").forEach(x => x.classList.remove("active"));
   const btn = document.querySelector(`.tab[data-tab="${tabId}"]`);
   const pane = $("#tab-" + tabId);
-  if (btn && pane) {
-    btn.classList.add("active");
+  if (pane) {
+    if (btn) btn.classList.add("active");
     pane.classList.add("active");
     _onTabActivated(tabId);
     return true;
@@ -416,7 +417,11 @@ async function loadCurrentUser() {
 
 (function setupSidebar() {
   const collapsed = (() => {
-    try { return localStorage.getItem("klaxond.sidebarCollapsed") === "1"; } catch (e) { return false; }
+    try {
+      const saved = localStorage.getItem("klaxond.sidebarCollapsed");
+      if (saved === "1" || saved === "0") return saved === "1";
+    } catch (e) {}
+    return window.matchMedia?.("(max-width: 760px)")?.matches || false;
   })();
   document.body.classList.toggle("sidebar-collapsed", collapsed);
   document.addEventListener("DOMContentLoaded", () => {

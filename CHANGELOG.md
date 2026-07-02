@@ -1,5 +1,19 @@
 # Klaxond — CHANGELOG
 
+## 0.14.7 — 2026-07-02
+
+- Estesa la suite con copertura WebAuthn/passkey, lifecycle API key/PAT,
+  restore config negativo, paginazione tabelle admin, persistenza POST/GET
+  admin, pagine legali footer e parity parser per
+  Beszel/Authentik/PVE/Shelfmark/Decypharr.
+- Aggiornato `last_used_at` dei token API/PAT quando un bearer token valido
+  viene usato con scope sufficiente, con persistenza debounced per ridurre
+  scritture ripetute in caso di polling.
+- Rafforzato il restore dei full bundle: file sidecar extra/non supportati ora
+  vengono rifiutati invece di essere ignorati silenziosamente.
+- Aggiunte pagine footer per privacy/GDPR, accessibilita' WCAG, termini, cookie
+  e note legali/contatti, con routing path-based e contenuti IT/EN.
+
 ## 0.14.6 — 2026-07-02
 
 - Aggiunto un easter egg nel footer: dopo 7 click sulla versione compare un

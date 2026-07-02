@@ -1,9 +1,109 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+
+const LOCAL_ORIGIN = "http://localhost:18181";
+const BASIC_USER = "admin";
+const BASIC_PASSWORD = "test-password";
+const BASIC_AUTH = `Basic ${Buffer.from(`${BASIC_USER}:${BASIC_PASSWORD}`).toString("base64")}`;
 
 async function revealVersionEgg(page: Page) {
   for (let i = 0; i < 7; i++) {
     await page.click("#footer-version");
   }
+}
+
+async function enableBasicAuth(request: APIRequestContext) {
+  const res = await request.post("/api/auth-config", {
+    headers: { Authorization: BASIC_AUTH },
+    data: {
+      settings: {
+        mode: "basic",
+        basic: {
+          username: BASIC_USER,
+          password: BASIC_PASSWORD,
+          realm: "klaxond"
+        },
+        webauthn: {
+          enabled: true,
+          origin: LOCAL_ORIGIN,
+          rp_id: "localhost"
+        }
+      }
+    }
+  });
+  await expect(res).toBeOK();
+}
+
+async function exportConfigBundle(request: APIRequestContext) {
+  const res = await request.get("/api/config/export");
+  await expect(res).toBeOK();
+  return res.json();
+}
+
+async function restoreConfigBundle(request: APIRequestContext, bundle: unknown, headers: Record<string, string> = {}) {
+  const res = await request.post("/api/config/restore", {
+    headers: { "Content-Type": "application/json", ...headers },
+    data: bundle
+  });
+  await expect(res).toBeOK();
+}
+
+async function addVirtualAuthenticator(page: Page) {
+  const client = await page.context().newCDPSession(page);
+  await client.send("WebAuthn.enable");
+  const { authenticatorId } = await client.send("WebAuthn.addVirtualAuthenticator", {
+    options: {
+      protocol: "ctap2",
+      transport: "usb",
+      hasResidentKey: true,
+      hasUserVerification: true,
+      isUserVerified: true,
+      automaticPresenceSimulation: true
+    }
+  });
+  return async () => {
+    await client.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }).catch(() => {});
+    await client.send("WebAuthn.disable").catch(() => {});
+  };
+}
+
+async function countPagerRows(page: Page, tableId: string) {
+  return page.locator(`#${tableId} tbody tr`).evaluateAll(rows =>
+    rows.filter(row => (row as HTMLElement).style.display !== "none").length
+  );
+}
+
+async function assertTablePagerWorks(page: Page, tab: string, tableId: string) {
+  await page.goto(`/ui/${tab}`);
+  if (tab === "auth") {
+    await expect(page.locator("#auth-current-user")).not.toHaveText("—");
+  }
+  await page.evaluate(id => {
+    const table = document.getElementById(id) as HTMLTableElement | null;
+    if (!table?.tBodies[0]) throw new Error(`missing table ${id}`);
+    const cols = Math.max(1, table.tHead?.querySelectorAll("th").length || 1);
+    table.tBodies[0].innerHTML = "";
+    for (let i = 0; i < 12; i++) {
+      const row = document.createElement("tr");
+      row.className = "pager-probe-row";
+      for (let c = 0; c < cols; c++) {
+        const cell = document.createElement("td");
+        cell.textContent = `${id} row ${i + 1}`;
+        row.appendChild(cell);
+      }
+      table.tBodies[0].appendChild(row);
+    }
+    (window as unknown as { applyTablePager: (id: string, opts?: unknown) => void }).applyTablePager(id, { reset: true });
+  }, tableId);
+
+  const pager = page.locator(`[data-table-pager="${tableId}"]`);
+  await expect(pager).toBeVisible();
+  await page.selectOption(`[data-table-pager="${tableId}"] [data-pager-size]`, "10");
+  await expect(pager.locator("[data-pager-range]")).toContainText("1-10 / 12");
+  expect(await countPagerRows(page, tableId)).toBe(10);
+  await expect(pager.locator("[data-pager-next]")).toBeEnabled();
+  await pager.locator("[data-pager-next]").click();
+  await expect(pager.locator("[data-pager-range]")).toContainText("11-12 / 12");
+  expect(await countPagerRows(page, tableId)).toBe(2);
 }
 
 test("serves health and admin UI", async ({ page, request }) => {
@@ -73,6 +173,45 @@ test("legacy hash UI URLs migrate to path routes", async ({ page, request }) => 
   await page.goto("/ui/status#deliveries");
   await expect(page).toHaveURL(/\/ui\/deliveries$/);
   await expect(page.locator("#tab-deliveries")).toHaveClass(/active/);
+});
+
+test("footer legal pages are routeable, localized and bottom-aligned", async ({ page, request }) => {
+  for (const route of ["privacy", "accessibility", "terms", "cookies", "legal"]) {
+    const res = await request.get(`/ui/${route}`);
+    await expect(res).toBeOK();
+    expect(await res.text()).toContain(`id="tab-${route}"`);
+  }
+
+  await page.goto("/ui/privacy");
+  await expect(page).toHaveURL(/\/ui\/privacy$/);
+  await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
+  await expect(page.locator(".app-footer")).toContainText("klaxond");
+  await expect(page.locator(".app-footer")).toContainText("by Luigi Barretta");
+  await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
+  await expect(page.locator('.footer-links a[href="/ui/accessibility"]')).toHaveText("Accessibility");
+
+  await page.click('.footer-links a[href="/ui/accessibility"]');
+  await expect(page).toHaveURL(/\/ui\/accessibility$/);
+  await expect(page.locator("#tab-accessibility")).toHaveClass(/active/);
+
+  await page.click('[data-language-option="it"]');
+  await expect(page.locator("#tab-accessibility h2")).toHaveText("Dichiarazione di accessibilita'");
+  await expect(page.locator('.footer-links a[href="/ui/legal"]')).toHaveText("Note legali");
+
+  await page.click('.footer-links a[href="/ui/legal"]');
+  await expect(page).toHaveURL(/\/ui\/legal$/);
+  const footerBottomGap = await page.locator(".app-footer").evaluate(el =>
+    Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
+  );
+  expect(Math.abs(footerBottomGap)).toBeLessThanOrEqual(2);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/ui/legal");
+  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  const mobileFooterBottomGap = await page.locator(".app-footer").evaluate(el =>
+    Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
+  );
+  expect(Math.abs(mobileFooterBottomGap)).toBeLessThanOrEqual(2);
 });
 
 test("footer version reveals a major-version easter egg", async ({ page, request }) => {
@@ -207,6 +346,25 @@ test("recent deliveries are paginated", async ({ page, request }) => {
   await expect(pager.locator("[data-pager-prev]")).toBeEnabled();
 });
 
+test("all configured finite admin tables use the shared pager", async ({ page }) => {
+  const tables = [
+    ["inhibitions", "t-inhib-rules"],
+    ["inhibitions", "t-inhib"],
+    ["inhibitions", "t-acks"],
+    ["inhibitions", "t-schedules"],
+    ["render", "t-rc"],
+    ["cascade", "t-cas"],
+    ["delivery", "t-pol"],
+    ["delivery", "t-rules"],
+    ["auth", "t-tokens"],
+    ["auth", "t-passkeys"]
+  ] as const;
+
+  for (const [tab, tableId] of tables) {
+    await assertTablePagerWorks(page, tab, tableId);
+  }
+});
+
 test("backend logs fetch failure clears stale count", async ({ page }) => {
   await page.goto("/ui/logs");
   await expect(page.locator("#logs-count")).toContainText(/log line/);
@@ -317,6 +475,120 @@ test("authentication separates API keys and PATs", async ({ page }) => {
   await expect(page.locator("#token-create")).toHaveText("Create PAT");
   await expect(page.locator("#token-table-title")).toHaveText("PATs");
   await expect(page.locator("#t-tokens tbody")).toContainText("No PATs.");
+});
+
+test("API keys and PATs support prefixes, last-use tracking, revocation and scope denial", async ({ request }) => {
+  const originalBundle = await exportConfigBundle(request);
+  const pat = await request.post("/api/auth/tokens", {
+    data: { name: "e2e-logs-reader", kind: "pat", scopes: ["logs:read"] }
+  });
+  await expect(pat).toBeOK();
+  const patPayload = await pat.json();
+  expect(patPayload.token).toMatch(/^klx_pat_/);
+  expect(patPayload.record).toMatchObject({
+    name: "e2e-logs-reader",
+    kind: "pat",
+    prefix: patPayload.token.slice(0, 18),
+    enabled: true,
+    last_used_at: null
+  });
+
+  const apiKey = await request.post("/api/auth/tokens", {
+    data: { name: "e2e-status-only", kind: "api-key", scopes: ["status:read"], expires_in_days: 1 }
+  });
+  await expect(apiKey).toBeOK();
+  const apiKeyPayload = await apiKey.json();
+  expect(apiKeyPayload.token).toMatch(/^klx_key_/);
+  expect(apiKeyPayload.record.kind).toBe("api-key");
+  expect(apiKeyPayload.record.expires_at).toBeGreaterThan(apiKeyPayload.record.created_at);
+
+  try {
+    await enableBasicAuth(request);
+
+    const cascadeBefore = await request.get("/api/cascade-config", {
+      headers: { Authorization: BASIC_AUTH }
+    });
+    await expect(cascadeBefore).toBeOK();
+    const cascadeBeforePayload = await cascadeBefore.json();
+    const desiredRuntime = !cascadeBeforePayload.default_enabled_for_webhook;
+    const cascadeToggle = await request.post("/api/cascade/toggle", {
+      headers: { Authorization: BASIC_AUTH },
+      data: { enabled: desiredRuntime }
+    });
+    await expect(cascadeToggle).toBeOK();
+
+    const bearerAllowed = await request.get("/api/logs?limit=1", {
+      headers: { Authorization: `Bearer ${patPayload.token}` }
+    });
+    await expect(bearerAllowed).toBeOK();
+
+    const cascadeAfter = await request.get("/api/cascade-config", {
+      headers: { Authorization: BASIC_AUTH }
+    });
+    await expect(cascadeAfter).toBeOK();
+    expect((await cascadeAfter.json()).runtime_enabled).toBe(desiredRuntime);
+
+    const afterUse = await request.get("/api/auth/tokens", {
+      headers: { Authorization: BASIC_AUTH }
+    });
+    await expect(afterUse).toBeOK();
+    const usedRecord = (await afterUse.json()).tokens.find((token: { id: string }) => token.id === patPayload.record.id);
+    expect(usedRecord.last_used_at).toEqual(expect.any(Number));
+    expect(usedRecord.last_used_at).toBeGreaterThanOrEqual(patPayload.record.created_at);
+
+    const bearerDeniedByScope = await request.get("/api/logs?limit=1", {
+      headers: { Authorization: `Bearer ${apiKeyPayload.token}` }
+    });
+    expect(bearerDeniedByScope.status()).toBe(403);
+
+    const revoke = await request.post("/api/auth/tokens/revoke", {
+      headers: { Authorization: BASIC_AUTH },
+      data: { id: patPayload.record.id }
+    });
+    await expect(revoke).toBeOK();
+
+    const bearerRevoked = await request.get("/api/logs?limit=1", {
+      headers: { Authorization: `Bearer ${patPayload.token}` }
+    });
+    expect(bearerRevoked.status()).toBe(401);
+  } finally {
+    await restoreConfigBundle(request, originalBundle, { Authorization: BASIC_AUTH });
+  }
+});
+
+test("passkeys can be registered, used for login, and deleted", async ({ page, request }) => {
+  const originalBundle = await exportConfigBundle(request);
+  let cleanupAuthenticator: (() => Promise<void>) | undefined;
+
+  try {
+    await enableBasicAuth(request);
+    await page.setExtraHTTPHeaders({ Authorization: BASIC_AUTH });
+    cleanupAuthenticator = await addVirtualAuthenticator(page);
+
+    await page.goto(`${LOCAL_ORIGIN}/ui/auth`);
+    await expect(page.locator("#auth-current-user")).toContainText("admin (mode=basic)");
+    await page.fill("#passkey-name", "e2e virtual key");
+    await page.click("#passkey-register");
+    await expect(page.locator("#t-passkeys tbody")).toContainText("e2e virtual key");
+    await expect(page.locator(".toast-success").last()).toContainText("Passkey registered");
+
+    await page.goto(`${LOCAL_ORIGIN}/auth/passkey`);
+    await page.fill("#user", BASIC_USER);
+    await page.click("#login");
+    await expect(page).toHaveURL(/\/ui\/status$/);
+    const passkeyUser = await page.evaluate(() => fetch("/auth/me").then(r => r.json()));
+    expect(passkeyUser).toMatchObject({ sub: BASIC_USER, mode: "passkey" });
+
+    await page.goto(`${LOCAL_ORIGIN}/ui/auth`);
+    await expect(page.locator("#auth-current-user")).toContainText("admin (mode=passkey)");
+    await page.once("dialog", dialog => dialog.accept());
+    await page.locator("#t-passkeys tbody tr", { hasText: "e2e virtual key" }).locator("[data-passkey-del]").click();
+    await expect(page.locator("#t-passkeys tbody")).toContainText("No passkeys registered.");
+  } finally {
+    await cleanupAuthenticator?.();
+    await restoreConfigBundle(request, originalBundle, { Authorization: BASIC_AUTH });
+    await page.setExtraHTTPHeaders({});
+  }
 });
 
 test("supports Italian and English plus system/light/dark theme modes", async ({ page }) => {
@@ -484,17 +756,169 @@ test("full config export includes TOML sidecars and runtime settings", async ({ 
   });
 });
 
+test("config restore rejects bad bundles without changing current settings", async ({ request }) => {
+  const beforeBundle = await exportConfigBundle(request);
+
+  const unsupportedVersion = await request.post("/api/config/restore", {
+    headers: { "Content-Type": "application/json" },
+    data: {
+      kind: "klaxond.full-settings",
+      format_version: 999,
+      files: {
+        "klaxond.toml": beforeBundle.files["klaxond.toml"]
+      }
+    }
+  });
+  expect(unsupportedVersion.status()).toBe(400);
+  expect(await unsupportedVersion.text()).toContain("unsupported config bundle format_version");
+
+  const unsupportedSidecar = await request.post("/api/config/restore", {
+    headers: { "Content-Type": "application/json" },
+    data: {
+      kind: "klaxond.full-settings",
+      format_version: 1,
+      files: {
+        ...beforeBundle.files,
+        "not-a-sidecar.json": "{}"
+      }
+    }
+  });
+  expect(unsupportedSidecar.status()).toBe(400);
+  expect(await unsupportedSidecar.text()).toContain("unsupported sidecar");
+
+  const invalidSidecarJson = await request.post("/api/config/restore", {
+    headers: { "Content-Type": "application/json" },
+    data: {
+      kind: "klaxond.full-settings",
+      format_version: 1,
+      files: {
+        ...beforeBundle.files,
+        "render-config.json": "{not json"
+      }
+    }
+  });
+  expect(invalidSidecarJson.status()).toBe(400);
+  expect(await invalidSidecarJson.text()).toContain("invalid render-config.json");
+
+  const afterBundle = await exportConfigBundle(request);
+  expect(afterBundle.files["klaxond.toml"]).toBe(beforeBundle.files["klaxond.toml"]);
+  expect(afterBundle.files["render-config.json"]).toBe(beforeBundle.files["render-config.json"]);
+  expect(afterBundle.files["auth-config.json"]).toBe(beforeBundle.files["auth-config.json"]);
+});
+
+test("admin config POST endpoints persist through their read APIs", async ({ request }) => {
+  const originalBundle = await exportConfigBundle(request);
+
+  try {
+    const renderUpdate = await request.post("/api/render-config", {
+      data: {
+        component_dashboards: {
+          e2e_component: ["E2E dashboard", "/d/e2e-dashboard"]
+        }
+      }
+    });
+    await expect(renderUpdate).toBeOK();
+    const renderRead = await request.get("/api/render-config");
+    await expect(renderRead).toBeOK();
+    expect((await renderRead.json()).component_dashboards.e2e_component).toEqual(["E2E dashboard", "/d/e2e-dashboard"]);
+
+    const topicsUpdate = await request.post("/api/ntfy-topics", {
+      data: {
+        topics: [
+          { name: "e2e-info-topic", token: "secret-info", handles: ["info"] },
+          { name: "e2e-page-topic", token: "secret-page", handles: ["critical", "page"] }
+        ]
+      }
+    });
+    await expect(topicsUpdate).toBeOK();
+    const topicsRead = await request.get("/api/ntfy-topics");
+    await expect(topicsRead).toBeOK();
+    const topicsPayload = await topicsRead.json();
+    expect(topicsPayload.topics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "e2e-info-topic", token: "***SET***", handles: ["info"] }),
+      expect.objectContaining({ name: "e2e-page-topic", token: "***SET***", handles: ["critical", "page"] })
+    ]));
+
+    const dedupUpdate = await request.post("/api/dedup-config", {
+      data: {
+        settings: {
+          grafana: { enabled: true, window_s: 42, strategy: "time", override_critical: true }
+        }
+      }
+    });
+    await expect(dedupUpdate).toBeOK();
+    const dedupRead = await request.get("/api/dedup-config");
+    await expect(dedupRead).toBeOK();
+    expect((await dedupRead.json()).settings.grafana).toMatchObject({
+      enabled: true,
+      window_s: 42,
+      strategy: "time",
+      override_critical: true
+    });
+
+    const deliveryUpdate = await request.post("/api/delivery-config", {
+      data: {
+        default_policy: "e2e-broadcast",
+        policies: [
+          {
+            name: "e2e-broadcast",
+            mode: "broadcast",
+            tiers: [{ name: "ntfy", timeout_seconds: 3 }, { name: "smtp", timeout_seconds: 4 }]
+          }
+        ],
+        rules: [{ match: { component: "e2e_component" }, policy: "e2e-broadcast" }]
+      }
+    });
+    await expect(deliveryUpdate).toBeOK();
+    const deliveryRead = await request.get("/api/delivery-config");
+    await expect(deliveryRead).toBeOK();
+    expect(await deliveryRead.json()).toMatchObject({
+      default_policy: "e2e-broadcast",
+      policies: [expect.objectContaining({ name: "e2e-broadcast", mode: "broadcast" })],
+      rules: [expect.objectContaining({ match: { component: "e2e_component" }, policy: "e2e-broadcast" })]
+    });
+
+    const ingestUpdate = await request.post("/api/ingest-auth", {
+      data: { source: "beszel", action: "set", secret: "abcdefghijklmnop" }
+    });
+    await expect(ingestUpdate).toBeOK();
+    const ingestRead = await request.get("/api/ingest-auth");
+    await expect(ingestRead).toBeOK();
+    expect((await ingestRead.json()).sources.beszel).toMatchObject({ configured: true, from: "toml" });
+
+    const schedulesUpdate = await request.post("/api/schedules", {
+      data: {
+        schedules: [{
+          name: "e2e-maintenance",
+          cron: "0 3 * * *",
+          duration_minutes: 45,
+          match: { component: "e2e_component" },
+          applies_to: ["grafana"]
+        }]
+      }
+    });
+    await expect(schedulesUpdate).toBeOK();
+    const schedulesRead = await request.get("/api/schedules");
+    await expect(schedulesRead).toBeOK();
+    expect((await schedulesRead.json()).schedules).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "e2e-maintenance", cron: "0 3 * * *", duration_minutes: 45 })
+    ]));
+  } finally {
+    await restoreConfigBundle(request, originalBundle);
+  }
+});
+
 test("backend logs require admin auth when auth is enabled", async ({ request }) => {
   const unsafeBasic = await request.post("/api/auth-config", {
     data: {
       settings: {
         mode: "basic",
-        basic: { username: "admin" }
+        basic: { username: "", password: "test-password" }
       }
     }
   });
   expect(unsafeBasic.status()).toBe(400);
-  expect(await unsafeBasic.text()).toContain("password");
+  expect(await unsafeBasic.text()).toContain("username");
 
   const unsafeOidc = await request.post("/api/auth-config", {
     data: {

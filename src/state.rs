@@ -149,6 +149,10 @@ impl AppState {
         *write_lock(&self.config, "config") = cfg;
     }
 
+    pub fn replace_config_preserving_runtime(&self, cfg: RuntimeConfig) {
+        *write_lock(&self.config, "config") = cfg;
+    }
+
     pub fn with_config_write_lock<R>(&self, f: impl FnOnce() -> R) -> Result<R, String> {
         let _guard = lock_mutex(&self.config_write_lock, "config writes");
         if let Some(parent) = self.paths.config.parent() {

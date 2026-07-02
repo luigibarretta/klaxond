@@ -2020,6 +2020,18 @@ fn parse_restore_bundle(raw: &str) -> Result<RestoreInput, String> {
         .get("files")
         .and_then(Value::as_object)
         .ok_or_else(|| "bundle missing files object".to_string())?;
+    let allowed_files = [
+        "klaxond.toml",
+        "render-config.json",
+        "ntfy-topics.json",
+        "dedup-config.json",
+        "auth-config.json",
+    ];
+    for name in files.keys() {
+        if !allowed_files.contains(&name.as_str()) {
+            return Err(format!("unsupported sidecar {name}"));
+        }
+    }
     let toml_text = bundle_file(files, "klaxond.toml")?
         .ok_or_else(|| "bundle missing files.klaxond.toml".to_string())?;
     let parsed: toml::Value =
@@ -2450,11 +2462,15 @@ const UI_ROUTES: &[&str] = &[
     "auth",
     "preview",
     "test",
+    "privacy",
+    "accessibility",
+    "terms",
+    "cookies",
+    "legal",
 ];
 
 fn sanitize_static_rel(rel: &str) -> String {
-    rel
-        .trim_start_matches('/')
+    rel.trim_start_matches('/')
         .split('/')
         .filter(|p| *p != "..")
         .collect::<Vec<_>>()
