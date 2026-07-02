@@ -1,5 +1,12 @@
 # Klaxond — CHANGELOG
 
+## 0.14.6 — 2026-07-02
+
+- Aggiunto un easter egg nel footer: dopo 7 click sulla versione compare un
+  pannello nascosto.
+- Il contenuto dell'easter egg dipende solo dalla major version, quindi resta
+  stabile tra release minor e patch.
+
 ## 0.14.5 — 2026-07-02
 
 - Separata la UI Auth per API Keys e PAT: il tipo del token ora e' scelto da

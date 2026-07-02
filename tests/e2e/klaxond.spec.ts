@@ -1,4 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function revealVersionEgg(page: Page) {
+  for (let i = 0; i < 7; i++) {
+    await page.click("#footer-version");
+  }
+}
 
 test("serves health and admin UI", async ({ page, request }) => {
   const health = await request.get("/healthz");
@@ -67,6 +73,50 @@ test("legacy hash UI URLs migrate to path routes", async ({ page, request }) => 
   await page.goto("/ui/status#deliveries");
   await expect(page).toHaveURL(/\/ui\/deliveries$/);
   await expect(page.locator("#tab-deliveries")).toHaveClass(/active/);
+});
+
+test("footer version reveals a major-version easter egg", async ({ page, request }) => {
+  const status = await request.get("/api/status");
+  await expect(status).toBeOK();
+  const baseStatus = await status.json();
+  let version = "0.14.6";
+
+  await page.route("**/api/status", async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ ...baseStatus, version }),
+    });
+  });
+
+  await page.goto("/ui/status");
+  await expect(page.locator("#footer-version")).toHaveText("v0.14.6");
+  for (let i = 0; i < 6; i++) {
+    await page.click("#footer-version");
+  }
+  await expect(page.locator("#version-easter-egg")).toBeHidden();
+  await page.click("#footer-version");
+  await expect(page.locator("#version-easter-egg")).toBeVisible();
+  await expect(page.locator("#version-easter-egg")).toHaveAttribute("data-major", "0");
+  const majorZeroEgg = await page.locator("#version-easter-egg").textContent();
+
+  version = "0.99.0";
+  await page.reload();
+  await expect(page.locator("#footer-version")).toHaveText("v0.99.0");
+  await revealVersionEgg(page);
+  await expect(page.locator("#version-easter-egg")).toBeVisible();
+  expect(await page.locator("#version-easter-egg").textContent()).toBe(majorZeroEgg);
+
+  version = "1.0.0";
+  await page.reload();
+  await expect(page.locator("#footer-version")).toHaveText("v1.0.0");
+  await revealVersionEgg(page);
+  await expect(page.locator("#version-easter-egg")).toHaveAttribute("data-major", "1");
+  expect(await page.locator("#version-easter-egg").textContent()).not.toBe(majorZeroEgg);
+  await expect(page.locator("#version-egg-close")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#version-easter-egg")).toBeHidden();
+  await expect(page.locator("#footer-version")).toBeFocused();
 });
 
 test("backend logs page searches captured errors", async ({ page, request }) => {

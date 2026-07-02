@@ -769,8 +769,16 @@
     </main>
 
     <footer>
-      <small>klaxond · <span id="footer-version" class="muted">v0.14.5</span></small>
+      <small>klaxond · <span id="footer-version" class="muted version-trigger">v0.14.6</span></small>
     </footer>
+    <div id="version-easter-egg" class="version-easter-egg hidden" role="dialog" aria-modal="false" aria-live="polite" aria-labelledby="version-egg-title">
+      <div class="version-egg-card">
+        <button id="version-egg-close" class="toast-close version-egg-close" title="Dismiss" aria-label="Dismiss">✕</button>
+        <div id="version-egg-major" class="version-egg-kicker"></div>
+        <strong id="version-egg-title"></strong>
+        <pre id="version-egg-body"></pre>
+      </div>
+    </div>
   </div>
 </div>
 

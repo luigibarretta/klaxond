@@ -720,6 +720,60 @@ a:hover { text-decoration: underline; }
   font-size: 14px; cursor: pointer; padding: 0 4px; line-height: 1;
 }
 .toast-close:hover { color: var(--text); background: transparent; }
+.version-trigger {
+  cursor: pointer;
+  user-select: none;
+}
+.version-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.version-easter-egg {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 8900;
+  width: min(360px, calc(100vw - 36px));
+}
+.version-egg-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px 16px;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.14), rgba(34, 197, 94, 0.08)),
+    var(--panel);
+  box-shadow: 0 14px 38px var(--shadow);
+}
+.version-egg-kicker {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.version-egg-card strong {
+  display: block;
+  padding-right: 28px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.version-egg-card pre {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.version-egg-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
 
 .logs-toolbar {
   display: flex;
