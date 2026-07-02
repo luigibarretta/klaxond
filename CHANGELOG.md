@@ -1,5 +1,15 @@
 # Klaxond — CHANGELOG
 
+## 0.14.11 — 2026-07-02
+
+- Fixato il refresh diretto di `/ui/flow`: la route iniziale viene attivata
+  dopo l'inizializzazione completa del bundle frontend, evitando errori TDZ.
+- I toast di errore frontend autenticati vengono inviati a `/api/client-log`
+  e compaiono nella pagina Logs come eventi `klaxond::frontend`.
+- Il pulsante Sign in delle pagine legali pubbliche prova prima la sessione
+  locale esistente e, se serve login, usa il flusso SSO diretto con
+  `start=1&return_to=/ui/status`.
+
 ## 0.14.10 — 2026-07-02
 
 - Rifinita graficamente la schermata login/signed-out pubblica con logo,

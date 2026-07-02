@@ -286,6 +286,7 @@ pub fn required_scope(method: &Method, path: &str) -> &'static str {
         "/api/channel-config" | "/api/ntfy-topics" | "/api/ingest-auth" => "routing:write",
         "/api/render-config" | "/api/render-preview" => "render:write",
         "/api/cascade-config" | "/api/cascade/toggle" => "cascade:write",
+        "/api/client-log" => "admin:read",
         "/api/delivery-config" => "delivery:write",
         "/api/dedup-config" => "dedup:write",
         "/api/inhibition-rules"

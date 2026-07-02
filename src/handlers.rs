@@ -257,6 +257,7 @@ async fn handle_post(
     match path {
         "/auth/passkey/start" => passkey_login_start(state, body),
         "/auth/passkey/finish" => passkey_login_finish(state, body),
+        "/api/client-log" => client_log_response(body, authed_user.as_ref()),
         "/api/auth-config" => update_auth_config(state, body, authed_user.as_ref(), peer, headers),
         "/api/auth/tokens" => create_auth_token(state, body),
         "/api/auth/tokens/revoke" => revoke_auth_token(state, body),
@@ -2563,6 +2564,88 @@ fn ack_response(state: &AppState, path: &str) -> Response<Body> {
             ttl / 60
         ),
     )
+}
+
+fn client_log_response(body: Bytes, authed_user: Option<&User>) -> Response<Body> {
+    if body.len() > 8192 {
+        return text(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "client log payload too large",
+        );
+    }
+    let Ok(payload) = serde_json::from_slice::<Value>(&body) else {
+        return text(StatusCode::BAD_REQUEST, "invalid client log payload");
+    };
+    let level = payload
+        .get("level")
+        .and_then(|v| v.as_str())
+        .unwrap_or("error")
+        .trim()
+        .to_ascii_lowercase();
+    let key = client_log_field(&payload, "key", 96);
+    let message = client_log_field(&payload, "message", 512);
+    let path = client_log_field(&payload, "path", 160);
+    let stack = client_log_field(&payload, "stack", 1024);
+    let user_agent = client_log_field(&payload, "userAgent", 256);
+    let user = authed_user
+        .map(|u| {
+            if u.sub.is_empty() {
+                "anonymous"
+            } else {
+                u.sub.as_str()
+            }
+        })
+        .unwrap_or("anonymous");
+
+    match level.as_str() {
+        "warn" | "warning" => tracing::warn!(
+            target: "klaxond::frontend",
+            ui_context = %key,
+            ui_path = %path,
+            ui_user = %user,
+            ui_user_agent = %user_agent,
+            ui_stack = %stack,
+            "frontend warning [{key}]: {message}"
+        ),
+        "info" => tracing::info!(
+            target: "klaxond::frontend",
+            ui_context = %key,
+            ui_path = %path,
+            ui_user = %user,
+            ui_user_agent = %user_agent,
+            ui_stack = %stack,
+            "frontend info [{key}]: {message}"
+        ),
+        _ => tracing::error!(
+            target: "klaxond::frontend",
+            ui_context = %key,
+            ui_path = %path,
+            ui_user = %user,
+            ui_user_agent = %user_agent,
+            ui_stack = %stack,
+            "frontend error [{key}]: {message}"
+        ),
+    }
+
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(Body::empty())
+        .unwrap()
+}
+
+fn client_log_field(payload: &Value, key: &str, max_chars: usize) -> String {
+    let raw = payload.get(key).and_then(|v| v.as_str()).unwrap_or("");
+    let compact = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_control() && ch != '\n' && ch != '\t' {
+                ' '
+            } else {
+                ch
+            }
+        })
+        .collect::<String>();
+    compact.chars().take(max_chars).collect()
 }
 
 fn metrics_response(state: &AppState) -> Response<Body> {

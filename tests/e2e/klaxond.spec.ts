@@ -177,6 +177,21 @@ test("legacy hash UI URLs migrate to path routes", async ({ page, request }) => 
   await expect(page.locator("#tab-deliveries")).toHaveClass(/active/);
 });
 
+test("direct flow refresh initializes without frontend TDZ errors", async ({ page, request }) => {
+  await page.goto("/ui/flow");
+  await expect(page).toHaveURL(/\/ui\/flow$/);
+  await expect(page.locator("#tab-flow")).toHaveClass(/active/);
+  await expect(page.locator(".toast-error")).toHaveCount(0);
+
+  await page.evaluate(() => notifyError("e2e-client-error", new Error("ClientSideProbe")));
+  await expect(page.locator(".toast-error").last()).toContainText("e2e-client-error");
+  await expect.poll(async () => {
+    const res = await request.get("/api/logs?q=e2e-client-error&level=ERROR&limit=5");
+    const payload = await res.json();
+    return payload.entries.some((entry: any) => entry.message.includes("frontend error"));
+  }).toBe(true);
+});
+
 test("footer legal pages are routeable, localized and bottom-aligned", async ({ page, request }) => {
   for (const route of ["privacy", "accessibility", "terms", "cookies", "legal"]) {
     const res = await request.get(`/ui/${route}`);
@@ -192,6 +207,11 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   await expect(page.locator("#public-legal-bar")).toBeVisible();
   await expect(page.locator(".sidebar")).toBeHidden();
   await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
+  await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/auth/login?start=1&return_to=%2Fui%2Fstatus");
+  await page.click(".public-login-link");
+  await expect(page).toHaveURL(/\/ui\/status$/);
+
+  await page.goto("/ui/privacy");
   await expect(page.locator(".app-footer")).toContainText("klaxond");
   await expect(page.locator(".app-footer")).toContainText(`by ${AUTHOR_NAME}`);
   await expect(page.locator(".footer-meta a", { hasText: AUTHOR_NAME })).toHaveAttribute("href", AUTHOR_URL);
@@ -248,7 +268,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(loginHtml).toContain('href="/ui/accessibility"');
     expect(loginHtml).toContain('href="/ui/legal"');
     expect(loginHtml).toContain('class="login-logo" src="/ui/favicon.svg"');
-    expect(loginHtml).toContain('class="login-version">v0.14.10</span>');
+    expect(loginHtml).toContain('class="login-version">v0.14.11</span>');
     expect(loginHtml).toContain(AUTHOR_URL);
     expect(loginHtml).not.toContain("klaxond.luigibarretta.com");
 

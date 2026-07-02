@@ -23,6 +23,35 @@ function currentReturnToPath() {
   return path;
 }
 
+function loginStartUrl(returnTo = "/ui/status") {
+  const url = new URL("/auth/login", location.origin);
+  url.searchParams.set("start", "1");
+  url.searchParams.set("return_to", returnTo);
+  return url.pathname + url.search;
+}
+
+function setupPublicLoginLinks() {
+  const target = "/ui/status";
+  const fallback = loginStartUrl(target);
+  document.querySelectorAll(".public-login-link").forEach(link => {
+    link.setAttribute("href", fallback);
+    link.addEventListener("click", async e => {
+      e.preventDefault();
+      try {
+        const res = await fetch("/auth/me", {
+          headers: { "X-Klaxond-Request": "fetch" },
+          redirect: "manual",
+        });
+        if (res.ok) {
+          location.assign(target);
+          return;
+        }
+      } catch (err) {}
+      location.assign(fallback);
+    });
+  });
+}
+
 function loginUrlForCurrentPage(loginHint = "") {
   const fallback = new URL("/auth/login", location.origin);
   fallback.searchParams.set("return_to", currentReturnToPath());
@@ -222,12 +251,12 @@ document.addEventListener("click", e => {
 });
 
 window.addEventListener("popstate", () => syncTabFromPath());
-syncTabFromPath({ replace: true });
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", updateAllTabAccessibleLabels);
 } else {
   updateAllTabAccessibleLabels();
 }
+setupPublicLoginLinks();
 
 // ---- Status ----
 async function loadStatus() {
@@ -3198,6 +3227,7 @@ function notifyError(key, e, opts = {}) {
     setInlineStatus(opts.status, opts.inlineText || `${tr("common.error")}: ${msg}`, "error");
   }
   if (!opts.dedup) {
+    reportClientError(key, e, "error");
     showToast(`${key}: ${msg}`, "error", opts.durationMs || 10000);
     return;
   }
@@ -3205,7 +3235,31 @@ function notifyError(key, e, opts = {}) {
   const last = _toastErrLast.get(key) || 0;
   if (now - last < _TOAST_DEDUP_MS) return;
   _toastErrLast.set(key, now);
+  reportClientError(key, e, "error");
   showToast(`${key}: ${msg}`, "error");
+}
+
+function reportClientError(key, e, level = "error") {
+  const payload = {
+    level,
+    key: String(key || "ui"),
+    message: errorText(e),
+    path: `${location.pathname || "/"}${location.search || ""}`,
+    stack: e && e.stack ? String(e.stack) : "",
+    userAgent: navigator.userAgent || "",
+  };
+  try {
+    fetch("/api/client-log", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Klaxond-Request": "fetch",
+      },
+      body: JSON.stringify(payload),
+      redirect: "manual",
+      keepalive: true,
+    }).catch(() => {});
+  } catch (err) {}
 }
 
 function notifyResponseError(key, res, bodyText = "", statusTarget = null) {
@@ -3293,6 +3347,7 @@ function activateTabWithDirtyGuard(tabId) {
   return _origActivateTab(tabId);
 }
 window.activateTab = activateTabWithDirtyGuard;
+syncTabFromPath({ replace: true });
 
 document.addEventListener("DOMContentLoaded", _wireDirtyTracking);
 
