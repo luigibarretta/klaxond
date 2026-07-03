@@ -890,7 +890,6 @@ paths:
       security:
         - bearerAuth: []
         - sessionCookie: []
-          csrfHeader: []
       requestBody:
         required: true
         content:
@@ -1233,7 +1232,6 @@ paths:
       security:
         - bearerAuth: []
         - sessionCookie: []
-          csrfHeader: []
       requestBody:
         required: true
         content:
@@ -1357,7 +1355,6 @@ paths:
       security:
         - bearerAuth: []
         - sessionCookie: []
-          csrfHeader: []
       requestBody:
         required: true
         content:
@@ -1413,7 +1410,6 @@ paths:
       security:
         - bearerAuth: []
         - sessionCookie: []
-          csrfHeader: []
       requestBody:
         required: true
         content:

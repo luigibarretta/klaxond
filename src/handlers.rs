@@ -8,6 +8,7 @@ use crate::config::{
 };
 use crate::dedup;
 use crate::delivery::{deliver, pick_policy};
+use crate::endpoints;
 use crate::inhibition;
 use crate::log_buffer;
 use crate::openapi;
@@ -338,7 +339,7 @@ fn record_admin_post_audit(
     authed_user: Option<&User>,
     body_len: usize,
 ) {
-    let Some(action) = audit_action_for_post(path) else {
+    let Some(action) = endpoints::audit_action_for_post(path) else {
         return;
     };
     audit::record(
@@ -347,35 +348,6 @@ fn record_admin_post_audit(
         if status.is_success() { "ok" } else { "error" },
         format!("{} status={} bytes={}", path, status.as_u16(), body_len),
     );
-}
-
-fn audit_action_for_post(path: &str) -> Option<&'static str> {
-    match path {
-        "/api/auth-config" => Some("auth.update"),
-        "/api/auth/tokens" => Some("auth.token.create"),
-        "/api/auth/tokens/revoke" => Some("auth.token.revoke"),
-        "/api/auth/totp/start" => Some("auth.totp.start"),
-        "/api/auth/totp/enable" => Some("auth.totp.enable"),
-        "/api/auth/totp/disable" => Some("auth.totp.disable"),
-        "/api/auth/passkeys/register/start" => Some("auth.passkey.register.start"),
-        "/api/auth/passkeys/register/finish" => Some("auth.passkey.register.finish"),
-        "/api/auth/passkeys/delete" => Some("auth.passkey.delete"),
-        "/api/cascade/toggle" => Some("cascade.toggle"),
-        "/api/render-config" => Some("config.render.update"),
-        "/api/cascade-config" => Some("config.cascade.update"),
-        "/api/channel-config" => Some("config.channel.update"),
-        "/api/delivery-config" => Some("config.delivery.update"),
-        "/api/dedup-config" => Some("config.dedup.update"),
-        "/api/ntfy-topics" => Some("config.ntfy_topics.update"),
-        "/api/inhibition-rules" => Some("config.inhibition_rules.update"),
-        "/api/config/import-preview" => Some("config.import_preview"),
-        "/api/config/restore" => Some("config.restore"),
-        "/api/ingest-auth" => Some("config.ingest_auth.update"),
-        "/api/schedules" => Some("config.schedules.update"),
-        "/api/acks/clear" => Some("runtime.acks.clear"),
-        "/api/inhibitions/clear" => Some("runtime.inhibitions.clear"),
-        _ => None,
-    }
 }
 
 async fn ingest(

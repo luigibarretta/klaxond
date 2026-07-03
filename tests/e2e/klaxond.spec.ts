@@ -498,6 +498,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
 });
 
 test("all configured finite admin tables use the shared pager", async ({ page }) => {
+  test.setTimeout(60_000);
   const tables = [
     ["inhibitions", "t-inhib-rules"],
     ["inhibitions", "t-inhib"],

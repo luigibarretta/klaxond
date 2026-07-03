@@ -362,6 +362,7 @@ klaxond/
 ├── static/
 │   ├── index.html          admin UI (single page)
 │   ├── style.css           dark theme, ~6KB
+│   ├── table-pager.js      shared finite-table pagination helper
 │   └── app.js              vanilla JS, fetch + DOM
 ├── tests/
 │   ├── parity.rs           parser/inhibition parity tests

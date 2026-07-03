@@ -1,4 +1,5 @@
 use crate::config::{AuthConfig, AuthToken, save_auth};
+use crate::endpoints;
 use crate::state::{AppState, lock_mutex};
 use crate::totp;
 use crate::util::{
@@ -20,38 +21,6 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use url::{Url, form_urlencoded};
-
-const PUBLIC_PREFIXES: &[&str] = &[
-    "/webhook/",
-    "/beszel/",
-    "/healthchecks/",
-    "/wud/",
-    "/authentik/",
-    "/shelfmark/",
-    "/prowlarr/",
-    "/decypharr/",
-    "/pve/",
-    "/healthz",
-    "/metrics",
-    "/api/ack/",
-    "/img/",
-    "/auth/login",
-    "/auth/callback",
-    "/auth/logout",
-    "/auth/passkey",
-    "/static/",
-    "/favicon.ico",
-];
-
-const PUBLIC_PATHS: &[&str] = &[
-    "/ui/privacy",
-    "/ui/accessibility",
-    "/ui/terms",
-    "/ui/cookies",
-    "/ui/legal",
-    "/openapi.yaml",
-    "/api/openapi.yaml",
-];
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
 const SUDO_WINDOW_SECS: i64 = 10 * 60;
@@ -104,20 +73,7 @@ pub enum AuthOutcome {
 }
 
 pub fn is_public(path: &str) -> bool {
-    if PUBLIC_PATHS.contains(&path) || is_public_ui_asset(path) {
-        return true;
-    }
-    PUBLIC_PREFIXES
-        .iter()
-        .any(|p| path == *p || path.starts_with(p))
-}
-
-fn is_public_ui_asset(path: &str) -> bool {
-    path.starts_with("/ui/")
-        && path
-            .rsplit('/')
-            .next()
-            .is_some_and(|name| name.contains('.'))
+    endpoints::is_public(path)
 }
 
 pub async fn authenticate(
@@ -235,10 +191,7 @@ fn is_ui_fetch(headers: &HeaderMap) -> bool {
 }
 
 pub fn csrf_required(_headers: &HeaderMap, path: &str, user: &User) -> bool {
-    user.mode != "none"
-        && !user.via_authorization
-        && is_mutation_path(path)
-        && path != "/api/client-log"
+    user.mode != "none" && !user.via_authorization && is_mutation_path(path)
 }
 
 pub fn csrf_valid(headers: &HeaderMap, user: &User) -> bool {
@@ -280,41 +233,11 @@ pub fn sudo_until_deadline() -> i64 {
 }
 
 fn is_mutation_path(path: &str) -> bool {
-    !matches!(
-        path,
-        "/api/config/import-preview"
-            | "/api/render-preview"
-            | "/api/policy-simulate"
-            | "/api/inhibition-rules/test"
-    )
+    !endpoints::csrf_exempt_mutation(path)
 }
 
 fn is_sensitive_mutation_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/api/auth-config"
-            | "/api/auth/tokens"
-            | "/api/auth/tokens/revoke"
-            | "/api/auth/passkeys/register/start"
-            | "/api/auth/passkeys/register/finish"
-            | "/api/auth/passkeys/delete"
-            | "/api/auth/totp/start"
-            | "/api/auth/totp/enable"
-            | "/api/auth/totp/disable"
-            | "/api/config/restore"
-            | "/api/channel-config"
-            | "/api/ntfy-topics"
-            | "/api/ingest-auth"
-            | "/api/render-config"
-            | "/api/cascade-config"
-            | "/api/cascade/toggle"
-            | "/api/delivery-config"
-            | "/api/dedup-config"
-            | "/api/inhibition-rules"
-            | "/api/schedules"
-            | "/api/acks/clear"
-            | "/api/inhibitions/clear"
-    )
+    endpoints::requires_sudo(path)
 }
 
 const TOKEN_LAST_USED_PERSIST_INTERVAL_SECS: i64 = 60;
@@ -432,50 +355,7 @@ pub fn public_token(record: &AuthToken) -> Value {
 }
 
 pub fn required_scope(method: &Method, path: &str) -> &'static str {
-    if *method == Method::GET {
-        return match path {
-            "/auth/me" => "status:read",
-            "/api/auth-config" => "auth:read",
-            "/api/logs" => "logs:read",
-            "/api/audit" => "audit:read",
-            "/api/config/backups" => "status:read",
-            "/api/config/export" => "admin:*",
-            "/api/config/backup" => "config:read",
-            "/api/status"
-            | "/api/deliveries"
-            | "/api/cascade-config"
-            | "/api/setup-status"
-            | "/api/channel-test-matrix" => "status:read",
-            _ => "admin:read",
-        };
-    }
-    match path {
-        "/api/auth-config"
-        | "/api/auth/tokens"
-        | "/api/auth/tokens/revoke"
-        | "/api/auth/totp/start"
-        | "/api/auth/totp/enable"
-        | "/api/auth/totp/disable"
-        | "/api/auth/passkeys/register/start"
-        | "/api/auth/passkeys/register/finish"
-        | "/api/auth/passkeys/delete" => "auth:write",
-        "/api/config/import-preview" => "config:read",
-        "/api/config/restore" => "config:write",
-        "/api/channel-config" | "/api/ntfy-topics" | "/api/ingest-auth" => "routing:write",
-        "/api/render-config" | "/api/render-preview" => "render:write",
-        "/api/cascade-config" | "/api/cascade/toggle" => "cascade:write",
-        "/api/client-log" => "admin:read",
-        "/api/policy-simulate" => "status:read",
-        "/api/delivery-config" => "delivery:write",
-        "/api/dedup-config" => "dedup:write",
-        "/api/inhibition-rules"
-        | "/api/inhibition-rules/test"
-        | "/api/inhibitions/clear"
-        | "/api/schedules"
-        | "/api/acks/clear" => "inhibitions:write",
-        _ if path.starts_with("/api/test/") => "test:write",
-        _ => "admin:*",
-    }
+    endpoints::required_scope(method, path)
 }
 
 fn has_scope(scopes: &[String], required: &str) -> bool {
@@ -1455,6 +1335,18 @@ mod tests {
     }
 
     #[test]
+    fn client_log_remains_csrf_exempt_for_interactive_sessions() {
+        let headers = HeaderMap::new();
+        let mut user = test_user("basic");
+
+        assert!(!csrf_required(&headers, "/api/client-log", &user));
+        assert!(csrf_required(&headers, "/api/cascade/toggle", &user));
+
+        user.via_authorization = true;
+        assert!(!csrf_required(&headers, "/api/cascade/toggle", &user));
+    }
+
+    #[test]
     fn ui_fetch_auth_required_is_machine_readable() {
         let mut headers = HeaderMap::new();
         headers.insert("X-Klaxond-Request", HeaderValue::from_static("fetch"));
@@ -1474,6 +1366,20 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("no-store")
         );
+    }
+
+    fn test_user(mode: &str) -> User {
+        User {
+            sub: "test-user".into(),
+            email: String::new(),
+            name: String::new(),
+            groups: vec![],
+            mode: mode.into(),
+            exp: 0,
+            csrf: "csrf-token".into(),
+            sudo_until: 0,
+            via_authorization: false,
+        }
     }
 
     #[test]
