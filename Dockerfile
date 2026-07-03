@@ -7,6 +7,7 @@ RUN apk add --no-cache build-base perl
 
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
+COPY docs/openapi.yaml ./docs/openapi.yaml
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \

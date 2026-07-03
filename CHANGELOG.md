@@ -1,5 +1,10 @@
 # Klaxond — CHANGELOG
 
+## 0.14.13 — 2026-07-03
+
+- Fixata la build Docker della release copiando `docs/openapi.yaml` nello
+  stage Rust: il backend embedda il contratto OpenAPI con `include_str!`.
+
 ## 0.14.12 — 2026-07-03
 
 - Centralizzata la registry degli endpoint backend per scope, route pubbliche,
