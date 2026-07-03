@@ -1,5 +1,16 @@
 # Klaxond — CHANGELOG
 
+## 0.14.12 — 2026-07-03
+
+- Centralizzata la registry degli endpoint backend per scope, route pubbliche,
+  CSRF, reauth/sudo e audit action, rimuovendo duplicazioni da auth e handler.
+- Aggiunti test anti-drift tra registry endpoint e OpenAPI per CSRF e
+  `ReauthRequired`, includendo il contratto CSRF-exempt di `/api/client-log`.
+- Estratta la paginazione delle tabelle finite in `static/table-pager.js`,
+  mantenendo le API globali usate dalla UI e dai test E2E.
+- Allineata OpenAPI per gli endpoint preview/simulator/test che non richiedono
+  CSRF perché non persistono modifiche.
+
 ## 0.14.11 — 2026-07-02
 
 - Fixato il refresh diretto di `/ui/flow`: la route iniziale viene attivata
