@@ -1,10 +1,12 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import crypto from "node:crypto";
+import fs from "node:fs";
 
 const LOCAL_ORIGIN = "http://localhost:18181";
 const BASIC_USER = "admin";
 const BASIC_PASSWORD = "test-password";
 const BASIC_AUTH = `Basic ${Buffer.from(`${BASIC_USER}:${BASIC_PASSWORD}`).toString("base64")}`;
+const APP_VERSION = fs.readFileSync("Cargo.toml", "utf8").match(/^version = "([^"]+)"/m)?.[1] || "";
 const AUTHOR_NAME = "Luigi Barretta";
 const AUTHOR_URL = "https://github.com/luigibarretta";
 
@@ -336,6 +338,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     await expect(publicMeta).toBeOK();
     const metaJs = await publicMeta.text();
     expect(metaJs).toContain("window.KLAXOND_META");
+    expect(metaJs).toContain(`version:"${APP_VERSION}"`);
     expect(metaJs).toContain(AUTHOR_URL);
 
     const loginPage = await request.get("/auth/login?return_to=%2Fui%2Fstatus", { maxRedirects: 0 });
@@ -345,7 +348,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(loginHtml).toContain('href="/ui/accessibility"');
     expect(loginHtml).toContain('href="/ui/legal"');
     expect(loginHtml).toContain('class="login-logo" src="/ui/favicon.svg"');
-    expect(loginHtml).toContain('class="login-version">v0.14.11</span>');
+    expect(loginHtml).toContain(`class="login-version">v${APP_VERSION}</span>`);
     expect(loginHtml).toContain(AUTHOR_URL);
     expect(loginHtml).not.toContain("klaxond.luigibarretta.com");
 

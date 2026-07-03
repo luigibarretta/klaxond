@@ -376,6 +376,108 @@ mod tests {
     }
 
     #[test]
+    fn openapi_info_version_matches_crate_version() {
+        let openapi = include_str!("../docs/openapi.yaml");
+        assert!(
+            openapi.contains(&format!("  version: {}", env!("CARGO_PKG_VERSION"))),
+            "OpenAPI info.version must match Cargo package version"
+        );
+    }
+
+    #[test]
+    fn all_runtime_operations_are_documented_in_openapi() {
+        let openapi = include_str!("../docs/openapi.yaml");
+        let operations = [
+            ("get", "/openapi.yaml"),
+            ("get", "/api/openapi.yaml"),
+            ("get", "/healthz"),
+            ("get", "/metrics"),
+            ("post", "/webhook/{severity}"),
+            ("post", "/beszel/{severity}"),
+            ("post", "/healthchecks/{severity}"),
+            ("post", "/wud/{severity}"),
+            ("post", "/authentik/{severity}"),
+            ("post", "/shelfmark/{severity}"),
+            ("post", "/prowlarr/{severity}"),
+            ("post", "/decypharr/{severity}"),
+            ("post", "/pve/{severity}"),
+            ("get", "/auth/login"),
+            ("post", "/auth/login"),
+            ("get", "/auth/callback"),
+            ("get", "/auth/logout"),
+            ("get", "/auth/me"),
+            ("post", "/auth/sudo"),
+            ("get", "/auth/passkey"),
+            ("post", "/auth/passkey/start"),
+            ("post", "/auth/passkey/finish"),
+            ("get", "/api/status"),
+            ("get", "/api/setup-status"),
+            ("get", "/api/channel-test-matrix"),
+            ("get", "/api/logs"),
+            ("get", "/api/audit"),
+            ("post", "/api/client-log"),
+            ("get", "/api/deliveries"),
+            ("get", "/api/auth-config"),
+            ("post", "/api/auth-config"),
+            ("get", "/api/auth/tokens"),
+            ("post", "/api/auth/tokens"),
+            ("post", "/api/auth/tokens/revoke"),
+            ("post", "/api/auth/totp/start"),
+            ("post", "/api/auth/totp/enable"),
+            ("post", "/api/auth/totp/disable"),
+            ("get", "/api/auth/passkeys"),
+            ("post", "/api/auth/passkeys/register/start"),
+            ("post", "/api/auth/passkeys/register/finish"),
+            ("post", "/api/auth/passkeys/delete"),
+            ("get", "/api/config/backup"),
+            ("get", "/api/config/export"),
+            ("get", "/api/config/backups"),
+            ("post", "/api/config/import-preview"),
+            ("post", "/api/config/restore"),
+            ("get", "/api/channel-config"),
+            ("post", "/api/channel-config"),
+            ("get", "/api/ntfy-topics"),
+            ("post", "/api/ntfy-topics"),
+            ("get", "/api/ingest-auth"),
+            ("post", "/api/ingest-auth"),
+            ("get", "/api/delivery-config"),
+            ("post", "/api/delivery-config"),
+            ("get", "/api/cascade-config"),
+            ("post", "/api/cascade-config"),
+            ("post", "/api/cascade/toggle"),
+            ("get", "/api/dedup-config"),
+            ("post", "/api/dedup-config"),
+            ("get", "/inhibitions"),
+            ("get", "/api/inhibitions"),
+            ("get", "/api/inhibition-rules"),
+            ("post", "/api/inhibition-rules"),
+            ("post", "/api/inhibition-rules/test"),
+            ("post", "/api/inhibitions/clear"),
+            ("get", "/api/schedules"),
+            ("post", "/api/schedules"),
+            ("get", "/api/acks"),
+            ("post", "/api/acks/clear"),
+            ("get", "/api/ack/{token}"),
+            ("post", "/api/policy-simulate"),
+            ("get", "/api/render-config"),
+            ("post", "/api/render-config"),
+            ("post", "/api/render-preview"),
+            ("post", "/api/test/{severity}"),
+        ];
+
+        for (method, path) in operations {
+            let block = openapi_operation_block(openapi, path, method)
+                .unwrap_or_else(|| panic!("OpenAPI missing operation {method} {path}"));
+            for required in ["operationId:", "summary:", "security:", "responses:"] {
+                assert!(
+                    block.contains(required),
+                    "OpenAPI operation {method} {path} missing {required}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn csrf_required_mutations_are_documented_with_csrf_header() {
         let openapi = include_str!("../docs/openapi.yaml");
         for policy in ENDPOINT_POLICIES

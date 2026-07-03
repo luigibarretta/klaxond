@@ -1,5 +1,11 @@
 # Klaxond — CHANGELOG
 
+## 0.14.14 — 2026-07-03
+
+- Allineata la versione `info.version` dell'OpenAPI alla versione applicativa.
+- Aggiunti test anti-drift per verificare che tutte le operation runtime siano
+  documentate in OpenAPI e che ogni operation abbia metadati minimi.
+
 ## 0.14.13 — 2026-07-03
 
 - Fixata la build Docker della release copiando `docs/openapi.yaml` nello
