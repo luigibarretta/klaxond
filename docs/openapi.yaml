@@ -1,0 +1,1860 @@
+openapi: 3.1.0
+info:
+  title: klaxond API
+  version: 0.14.11
+  summary: Notification bridge backend API
+  description: |
+    klaxond receives monitoring webhooks, renders notification payloads, manages
+    routing/inhibition policy, and exposes a zero-build admin UI.
+
+    Browser sessions use the `klaxond_session` cookie plus `X-Klaxond-CSRF` on
+    same-origin mutations. Scoped machine clients should use Bearer tokens.
+    Sensitive browser mutations can also return `428 Precondition Required`
+    with `X-Klaxond-Reauth: required`; call `/auth/sudo` or complete passkey
+    reauthentication before retrying.
+servers:
+  - url: /
+tags:
+  - name: Public
+    description: Health, metrics, OpenAPI, UI and public informational pages.
+  - name: Ingest
+    description: Machine-to-machine webhook ingress.
+  - name: Auth
+    description: Login, local MFA, passkeys, sessions, API keys and PATs.
+  - name: Operations
+    description: Status, setup, logs, audit and channel diagnostics.
+  - name: Config
+    description: Configuration read/write, import, export and restore endpoints.
+  - name: Routing
+    description: Delivery, cascade, ntfy topics and ingest authentication.
+  - name: Policy
+    description: Inhibitions, schedules, acknowledgements, dedup and simulations.
+  - name: Render
+    description: Notification rendering configuration and previews.
+
+paths:
+  /openapi.yaml:
+    get:
+      tags: [Public]
+      operationId: getOpenApiYaml
+      summary: Download the OpenAPI document.
+      security: []
+      responses:
+        "200":
+          description: YAML OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /api/openapi.yaml:
+    get:
+      tags: [Public]
+      operationId: getOpenApiYamlAlias
+      summary: Download the OpenAPI document from the API namespace.
+      security: []
+      responses:
+        "200":
+          description: YAML OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /healthz:
+    get:
+      tags: [Public]
+      operationId: healthz
+      summary: Health check used by container probes and load balancers.
+      security: []
+      responses:
+        "200":
+          description: The process is alive.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: OK
+  /metrics:
+    get:
+      tags: [Public]
+      operationId: prometheusMetrics
+      summary: Prometheus metrics scrape endpoint.
+      security: []
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+  /webhook/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestGrafanaAlertmanager
+      summary: Receive a Grafana Alertmanager webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /beszel/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestBeszel
+      summary: Receive a Beszel webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /healthchecks/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestHealthchecks
+      summary: Receive a Healthchecks webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /wud/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestWud
+      summary: Receive a WUD HTTP trigger.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /authentik/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestAuthentik
+      summary: Receive an Authentik event webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /shelfmark/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestShelfmark
+      summary: Receive a Shelfmark event webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /prowlarr/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestProwlarr
+      summary: Receive a Prowlarr event webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /decypharr/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestDecypharr
+      summary: Receive a Decypharr event webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /pve/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestPve
+      summary: Receive a Proxmox VE event webhook.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /auth/login:
+    get:
+      tags: [Auth]
+      operationId: loginPage
+      summary: Render the public login page or redirect an existing session.
+      security: []
+      parameters:
+        - name: return_to
+          in: query
+          schema:
+            type: string
+            default: /ui/status
+        - name: start
+          in: query
+          schema:
+            type: integer
+            enum: [0, 1]
+          description: Starts the OIDC redirect when OIDC mode is active.
+      responses:
+        "200":
+          description: Login HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+        "302":
+          description: Redirect to OIDC or an already authenticated return URL.
+    post:
+      tags: [Auth]
+      operationId: localLogin
+      summary: Create a local username/password session.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: JSON login response for fetch requests.
+          headers:
+            Set-Cookie:
+              description: Signed `klaxond_session` cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "302":
+          description: HTML form login redirects to the sanitized return URL.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /auth/callback:
+    get:
+      tags: [Auth]
+      operationId: oidcCallback
+      summary: Complete the OIDC authorization-code callback.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Session established and redirected to the original return URL.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          description: OIDC discovery or token exchange failed.
+  /auth/logout:
+    get:
+      tags: [Auth]
+      operationId: logout
+      summary: Clear session cookies and redirect to the login screen.
+      security: []
+      responses:
+        "302":
+          description: Redirects to `/auth/login?logged_out=1`.
+  /auth/me:
+    get:
+      tags: [Auth]
+      operationId: currentUser
+      summary: Return the current user, auth mode, scopes and browser CSRF token.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current authenticated user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/sudo:
+    post:
+      tags: [Auth]
+      operationId: sudoReauth
+      summary: Refresh the short reauthentication window for local sessions.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SudoRequest"
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/SudoRequest"
+      responses:
+        "200":
+          description: Reauthentication accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SudoResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /auth/passkey:
+    get:
+      tags: [Auth]
+      operationId: passkeyLoginPage
+      summary: Render the public passkey login page.
+      security: []
+      responses:
+        "200":
+          description: Passkey login HTML.
+  /auth/passkey/start:
+    post:
+      tags: [Auth]
+      operationId: passkeyLoginStart
+      summary: Start passkey authentication.
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                return_to:
+                  type: string
+      responses:
+        "200":
+          description: WebAuthn authentication challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+  /auth/passkey/finish:
+    post:
+      tags: [Auth]
+      operationId: passkeyLoginFinish
+      summary: Complete passkey authentication and issue a session cookie.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Passkey session established.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+  /api/status:
+    get:
+      tags: [Operations]
+      operationId: getStatus
+      summary: Return runtime status, channel health and recent activity.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Status payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusPayload"
+  /api/setup-status:
+    get:
+      tags: [Operations]
+      operationId: getSetupStatus
+      summary: Return readiness/setup checks used by the UI.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Setup checks grouped by area.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+  /api/channel-test-matrix:
+    get:
+      tags: [Operations]
+      operationId: getChannelTestMatrix
+      summary: Dry-run channel connectivity matrix; sends no notification.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Channel matrix.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/logs:
+    get:
+      tags: [Operations]
+      operationId: searchLogs
+      summary: Search backend/frontend log entries.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/Level"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Paginated log entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedLogs"
+  /api/audit:
+    get:
+      tags: [Operations]
+      operationId: searchAudit
+      summary: Search security and configuration audit entries.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/SearchQuery"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          description: Paginated audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedAudit"
+  /api/client-log:
+    post:
+      tags: [Operations]
+      operationId: recordClientLog
+      summary: Record a bounded frontend log entry in the backend log buffer.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                level:
+                  type: string
+                  enum: [info, warn, warning, error]
+                key:
+                  type: string
+                message:
+                  type: string
+                path:
+                  type: string
+                stack:
+                  type: string
+                userAgent:
+                  type: string
+      responses:
+        "204":
+          description: Log entry accepted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "413":
+          description: Payload is larger than the accepted frontend log limit.
+  /api/deliveries:
+    get:
+      tags: [Operations]
+      operationId: listDeliveries
+      summary: Return the recent delivery ring buffer.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Recent deliveries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Delivery"
+  /api/auth-config:
+    get:
+      tags: [Auth]
+      operationId: getAuthConfig
+      summary: Return redacted auth settings and available auth modes/scopes.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Redacted auth settings.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Auth]
+      operationId: updateAuthConfig
+      summary: Replace auth settings after validation.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuthConfigUpdate"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/tokens:
+    get:
+      tags: [Auth]
+      operationId: listTokens
+      summary: List API keys and PATs without token secrets.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Token metadata and available scopes.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Auth]
+      operationId: createToken
+      summary: Create a scoped API key or PAT.
+      description: The raw token is returned once; store the prefix for later identification.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTokenRequest"
+      responses:
+        "200":
+          description: Created token and one-time secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateTokenResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/tokens/revoke:
+    post:
+      tags: [Auth]
+      operationId: revokeToken
+      summary: Revoke an API key or PAT.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/totp/start:
+    post:
+      tags: [Auth]
+      operationId: startTotp
+      summary: Generate a local TOTP setup secret and otpauth URI.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        "200":
+          description: TOTP setup payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TotpSetup"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/totp/enable:
+    post:
+      tags: [Auth]
+      operationId: enableTotp
+      summary: Enable local TOTP after validating the current code.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TotpEnableRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/totp/disable:
+    post:
+      tags: [Auth]
+      operationId: disableTotp
+      summary: Disable local TOTP.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/passkeys:
+    get:
+      tags: [Auth]
+      operationId: listPasskeys
+      summary: List registered passkeys and public WebAuthn settings.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Passkey metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/auth/passkeys/register/start:
+    post:
+      tags: [Auth]
+      operationId: passkeyRegisterStart
+      summary: Start passkey registration for the current local user.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        "200":
+          description: WebAuthn registration challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/passkeys/register/finish:
+    post:
+      tags: [Auth]
+      operationId: passkeyRegisterFinish
+      summary: Complete passkey registration.
+      security:
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/auth/passkeys/delete:
+    post:
+      tags: [Auth]
+      operationId: deletePasskey
+      summary: Delete a registered passkey.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/config/backup:
+    get:
+      tags: [Config]
+      operationId: downloadConfigBackup
+      summary: Download the current TOML configuration.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: "`klaxond.toml` attachment."
+          content:
+            application/toml:
+              schema:
+                type: string
+  /api/config/export:
+    get:
+      tags: [Config]
+      operationId: exportConfigBundle
+      summary: Export a complete settings bundle.
+      description: Admin-only export containing TOML, sidecar JSON files, auth sidecars and runtime-derived secret placeholders.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Full settings bundle JSON attachment.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigBundle"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/config/backups:
+    get:
+      tags: [Config]
+      operationId: listConfigBackups
+      summary: List automatic config backups created before restore.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Backup metadata.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/config/import-preview:
+    post:
+      tags: [Config]
+      operationId: previewConfigImport
+      summary: Validate and diff a TOML or full settings bundle before restore.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigBundle"
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          description: Import validation and diff result.
+          content:
+            application/json:
+              schema:
+                type: object
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/config/restore:
+    post:
+      tags: [Config]
+      operationId: restoreConfig
+      summary: Restore a TOML or full settings bundle after an automatic backup.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigBundle"
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/channel-config:
+    get:
+      tags: [Routing]
+      operationId: getChannelConfig
+      summary: Return non-secret channel configuration and secret presence flags.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Channel configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Routing]
+      operationId: updateChannelConfig
+      summary: Update non-secret channel fields.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/ntfy-topics:
+    get:
+      tags: [Routing]
+      operationId: getNtfyTopics
+      summary: Return ntfy topics, known severities and token presence flags.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: ntfy topic configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Routing]
+      operationId: updateNtfyTopics
+      summary: Replace ntfy topic sidecar configuration.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/ingest-auth:
+    get:
+      tags: [Routing]
+      operationId: getIngestAuth
+      summary: Return webhook ingest authentication settings.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Ingest auth settings.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Routing]
+      operationId: updateIngestAuth
+      summary: Update webhook ingest authentication settings.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/delivery-config:
+    get:
+      tags: [Routing]
+      operationId: getDeliveryConfig
+      summary: Return delivery policies and rules.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Delivery configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Routing]
+      operationId: updateDeliveryConfig
+      summary: Replace delivery policies and rules.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/cascade-config:
+    get:
+      tags: [Routing]
+      operationId: getCascadeConfig
+      summary: Return cascade tier list and runtime/default flags.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Cascade configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Routing]
+      operationId: updateCascadeConfig
+      summary: Update cascade tiers and defaults.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/cascade/toggle:
+    post:
+      tags: [Routing]
+      operationId: toggleCascade
+      summary: Toggle or explicitly set the runtime cascade flag.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/dedup-config:
+    get:
+      tags: [Policy]
+      operationId: getDedupConfig
+      summary: Return dedup settings and pending queue counts.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Dedup configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Policy]
+      operationId: updateDedupConfig
+      summary: Replace dedup settings.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /inhibitions:
+    get:
+      tags: [Policy]
+      operationId: listInhibitionsLegacyAlias
+      summary: Legacy alias for `/api/inhibitions`.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Active inhibitions.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/inhibitions:
+    get:
+      tags: [Policy]
+      operationId: listInhibitions
+      summary: Return active in-memory suppressions with TTL.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Active inhibitions.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/inhibition-rules:
+    get:
+      tags: [Policy]
+      operationId: listInhibitionRules
+      summary: Return configured inhibition rules.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Inhibition rule configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Policy]
+      operationId: updateInhibitionRules
+      summary: Replace inhibition rules.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/inhibition-rules/test:
+    post:
+      tags: [Policy]
+      operationId: testInhibitionRules
+      summary: Test candidate inhibition rules without saving them.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Rule test result.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/inhibitions/clear:
+    post:
+      tags: [Policy]
+      operationId: clearInhibitions
+      summary: Clear active runtime inhibitions.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/schedules:
+    get:
+      tags: [Policy]
+      operationId: listSchedules
+      summary: Return scheduler state.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Scheduler status.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Policy]
+      operationId: updateSchedules
+      summary: Replace schedule configuration.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/acks:
+    get:
+      tags: [Policy]
+      operationId: listAcks
+      summary: Return runtime acknowledgement/snooze state.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Acknowledgement state snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/acks/clear:
+    post:
+      tags: [Policy]
+      operationId: clearAcks
+      summary: Clear runtime acknowledgements.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/ack/{token}:
+    get:
+      tags: [Policy]
+      operationId: acknowledgeFromNotification
+      summary: Public one-click acknowledgement link embedded in notification actions.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: HTML confirmation that the snooze was armed.
+          content:
+            text/html:
+              schema:
+                type: string
+        "400":
+          description: Token rejected or expired.
+          content:
+            text/html:
+              schema:
+                type: string
+  /api/policy-simulate:
+    post:
+      tags: [Policy]
+      operationId: simulatePolicy
+      summary: Dry-run inhibition, delivery policy and dedup decisions.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Simulation result.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/render-config:
+    get:
+      tags: [Render]
+      operationId: getRenderConfig
+      summary: Return component dashboard mappings and Grafana base URL.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Render configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+    post:
+      tags: [Render]
+      operationId: updateRenderConfig
+      summary: Replace component dashboard mappings and Grafana base URL.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/OkJson"
+        "428":
+          $ref: "#/components/responses/ReauthRequired"
+  /api/render-preview:
+    post:
+      tags: [Render]
+      operationId: renderPreview
+      summary: Preview rendered ntfy headers/body without sending a notification.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                severity:
+                  $ref: "#/components/schemas/Severity"
+                payload:
+                  $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          description: Rendered notification preview.
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/test/{severity}:
+    post:
+      tags: [Operations]
+      operationId: sendSyntheticAlert
+      summary: Send a synthetic alert through the cascade.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Test delivery result.
+          content:
+            application/json:
+              schema:
+                type: object
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: klaxond scoped token
+      description: API keys and PATs created from `/api/auth/tokens`.
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: klaxond_session
+      description: Signed browser session cookie.
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-Klaxond-CSRF
+      description: Required on browser-originated mutations when using a session cookie.
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Local username/password auth for non-browser clients in basic mode.
+  parameters:
+    Severity:
+      name: severity
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Severity"
+    DryRun:
+      name: dry_run
+      in: query
+      required: false
+      schema:
+        type: integer
+        enum: [0, 1]
+      description: When set to `1`, parses and renders without sending downstream notifications.
+    SearchQuery:
+      name: q
+      in: query
+      schema:
+        type: string
+      description: Case-insensitive keyword filter.
+    Level:
+      name: level
+      in: query
+      schema:
+        type: string
+        enum: [TRACE, DEBUG, INFO, WARN, ERROR]
+      description: Minimum or exact log level depending on the UI filter.
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    OkJson:
+      description: Standard success envelope.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok]
+            properties:
+              ok:
+                type: boolean
+                example: true
+    IngestAccepted:
+      description: Webhook accepted, suppressed or dry-run rendered.
+      content:
+        application/json:
+          schema:
+            type: object
+        text/plain:
+          schema:
+            type: string
+    BadRequest:
+      description: Invalid request body, unsupported severity or validation failure.
+      content:
+        text/plain:
+          schema:
+            type: string
+    Unauthorized:
+      description: Missing or invalid credentials.
+      headers:
+        X-Klaxond-Login:
+          description: Login URL returned to browser fetch clients.
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string
+    Forbidden:
+      description: Authenticated principal lacks the required scope.
+      content:
+        text/plain:
+          schema:
+            type: string
+    ReauthRequired:
+      description: Sensitive browser mutation requires a fresh local reauthentication window.
+      headers:
+        X-Klaxond-Reauth:
+          schema:
+            type: string
+            const: required
+    TooManyRequests:
+      description: Authentication rate limit exceeded.
+      content:
+        text/plain:
+          schema:
+            type: string
+  schemas:
+    Severity:
+      type: string
+      enum: [info, warning, critical]
+    AlertPayload:
+      type: object
+      additionalProperties: true
+      description: Upstream alert payload. klaxond accepts source-specific JSON shapes and normalizes them internally.
+      examples:
+        - status: firing
+          commonLabels:
+            alertname: HostDown
+            severity: critical
+            host: server-01
+    User:
+      type: object
+      required: [sub, mode]
+      properties:
+        sub:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        groups:
+          type: array
+          items:
+            type: string
+        mode:
+          type: string
+          enum: [none, basic, oidc, trusted-proxy, api_key, pat, passkey]
+        exp:
+          type: integer
+          format: int64
+        csrf:
+          type: string
+          description: Browser CSRF token. Empty for Bearer-token clients.
+        sudo_until:
+          type: integer
+          format: int64
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+          format: password
+        totp:
+          type: string
+          description: Six-digit code when local TOTP is enabled.
+        return_to:
+          type: string
+          default: /ui/status
+        fetch:
+          type: string
+          enum: ["0", "1"]
+    LoginResponse:
+      type: object
+      required: [ok, return_to, csrf]
+      properties:
+        ok:
+          type: boolean
+        return_to:
+          type: string
+        csrf:
+          type: string
+    SudoRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+          format: password
+        totp:
+          type: string
+    SudoResponse:
+      type: object
+      required: [ok, sudo_until, csrf]
+      properties:
+        ok:
+          type: boolean
+        sudo_until:
+          type: integer
+          format: int64
+        csrf:
+          type: string
+    TotpSetup:
+      type: object
+      required: [ok, secret, otpauth_uri]
+      properties:
+        ok:
+          type: boolean
+        secret:
+          type: string
+        otpauth_uri:
+          type: string
+          format: uri
+    TotpEnableRequest:
+      type: object
+      required: [secret, code]
+      properties:
+        secret:
+          type: string
+        code:
+          type: string
+    AuthConfigUpdate:
+      type: object
+      additionalProperties: true
+      description: Auth settings payload. Secret fields are accepted but redacted from read responses.
+    CreateTokenRequest:
+      type: object
+      required: [name, kind, scopes]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [api_key, pat]
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type:
+            - integer
+            - "null"
+          format: int64
+    Token:
+      type: object
+      required: [id, name, kind, prefix, scopes, enabled]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [api_key, pat]
+        prefix:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: integer
+          format: int64
+        expires_at:
+          type:
+            - integer
+            - "null"
+          format: int64
+        last_used_at:
+          type:
+            - integer
+            - "null"
+          format: int64
+        enabled:
+          type: boolean
+    CreateTokenResponse:
+      type: object
+      required: [ok, token, record]
+      properties:
+        ok:
+          type: boolean
+        token:
+          type: string
+          description: Raw token returned once.
+        record:
+          $ref: "#/components/schemas/Token"
+    StatusPayload:
+      type: object
+      additionalProperties: true
+      properties:
+        version:
+          type: string
+        cascade_enabled:
+          type: boolean
+        channels:
+          type: object
+        recent_deliveries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
+    Delivery:
+      type: object
+      additionalProperties: true
+      properties:
+        ts:
+          type: string
+        source:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        channel:
+          type: string
+        ok:
+          type: boolean
+    LogEntry:
+      type: object
+      additionalProperties: true
+      properties:
+        ts:
+          type: string
+        level:
+          type: string
+        target:
+          type: string
+        message:
+          type: string
+    AuditEntry:
+      type: object
+      additionalProperties: true
+      properties:
+        ts:
+          type: string
+        actor:
+          type: string
+        action:
+          type: string
+        status:
+          type: string
+        detail:
+          type: string
+    PaginatedLogs:
+      type: object
+      required: [entries, total, limit, offset]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogEntry"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    PaginatedAudit:
+      type: object
+      required: [entries, total, limit, offset]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    SetupStatus:
+      type: object
+      additionalProperties: true
+      properties:
+        checks:
+          type: array
+          items:
+            type: object
+    ConfigBundle:
+      type: object
+      additionalProperties: true
+      properties:
+        format_version:
+          type: integer
+          example: 1
+        exported_at:
+          type: string
+          format: date-time
+        files:
+          type: object
+          additionalProperties:
+            type: string
+
+security:
+  - bearerAuth: []
+  - sessionCookie: []

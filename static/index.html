@@ -698,12 +698,12 @@ host=it1-prd-dev-01</textarea>
     <label><input type="radio" name="auth-mode" value="basic">
       <span data-i18n-html="auth.mode_basic"><b>Basic</b> — single user with bcrypt password (browser native)</span>
     </label>
-    <small id="auth-bcrypt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em" data-i18n="auth.bcrypt_warn">⚠ bcrypt not installed in image — basic auth will fail</small>
+    <small id="auth-bcrypt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em" data-i18n="auth.bcrypt_warn">bcrypt support is unavailable — local basic auth will fail</small>
     <br/>
     <label><input type="radio" name="auth-mode" value="oidc">
       <span data-i18n-html="auth.mode_oidc"><b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)</span>
     </label>
-    <small id="auth-jwt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em" data-i18n="auth.jwt_warn">⚠ PyJWT not installed in image — OIDC will fail</small>
+    <small id="auth-jwt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em" data-i18n="auth.jwt_warn">JWT verification is unavailable — OIDC will fail</small>
     <br/>
     <label><input type="radio" name="auth-mode" value="trusted-proxy">
       <span data-i18n-html="auth.mode_trusted_proxy"><b>Trusted proxy</b> — read <code>X-Forwarded-User</code> from upstream proxy (Traefik+Authentik forwardAuth, oauth2-proxy, ecc.) — CIDR-gated for safety</span>

@@ -1,8 +1,8 @@
 use crate::config::{AuthConfig, AuthToken, save_auth};
 use crate::state::{AppState, lock_mutex};
+use crate::totp;
 use crate::util::{
-    b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch, now_epoch_i64, random_bytes,
-    token_urlsafe,
+    b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch, now_epoch_i64, token_urlsafe,
 };
 use axum::body::{Body, Bytes};
 use axum::http::header::{
@@ -12,12 +12,10 @@ use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use axum::response::IntoResponse;
 use bcrypt::verify;
 use constant_time_eq::constant_time_eq;
-use hmac::{Hmac, Mac};
 use ipnet::IpNet;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -51,11 +49,12 @@ const PUBLIC_PATHS: &[&str] = &[
     "/ui/terms",
     "/ui/cookies",
     "/ui/legal",
+    "/openapi.yaml",
+    "/api/openapi.yaml",
 ];
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
 const SUDO_WINDOW_SECS: i64 = 10 * 60;
-const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const AUTH_FAILURE_WINDOW_SECS: f64 = 300.0;
 const AUTH_FAILURE_MAX: usize = 10;
 
@@ -516,7 +515,7 @@ fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -
                 .get("X-Klaxond-TOTP")
                 .and_then(|v| v.to_str().ok())
                 .is_some_and(|code| {
-                    verify_totp_code(&cfg.basic.totp_secret, code, now_epoch_i64())
+                    totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64())
                 }))
     {
         let mut u = User {
@@ -653,7 +652,7 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
         );
         return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
     }
-    if cfg.basic.totp_enabled && !verify_totp_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
+    if cfg.basic.totp_enabled && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
         record_auth_failure(state, &rate_key, "auth.login", "invalid TOTP code");
         return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
     }
@@ -714,7 +713,7 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
         record_auth_failure(state, &rate_key, "auth.sudo", "invalid password");
         return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
     }
-    if cfg.basic.totp_enabled && !verify_totp_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
+    if cfg.basic.totp_enabled && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
         record_auth_failure(state, &rate_key, "auth.sudo", "invalid TOTP code");
         return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
     }
@@ -732,19 +731,13 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
 
 pub fn totp_start(state: &AppState) -> Response<Body> {
     let cfg = state.cfg().auth;
-    let secret = base32_encode(&random_bytes::<20>());
+    let secret = totp::generate_secret();
     let label = if cfg.basic.username.trim().is_empty() {
         "klaxond".to_string()
     } else {
         format!("klaxond:{}", cfg.basic.username)
     };
-    let issuer = "klaxond";
-    let otpauth_uri = format!(
-        "otpauth://totp/{}?secret={}&issuer={}&algorithm=SHA1&digits=6&period=30",
-        urlencoding::encode(&label),
-        secret,
-        urlencoding::encode(issuer)
-    );
+    let otpauth_uri = totp::otpauth_uri(&label, "klaxond", &secret);
     json_response(json!({"ok": true, "secret": secret, "otpauth_uri": otpauth_uri}))
 }
 
@@ -757,10 +750,10 @@ pub fn totp_enable(state: &AppState, body: Bytes) -> Response<Body> {
         .trim()
         .to_ascii_uppercase();
     let code = payload.get("code").map(String::as_str).unwrap_or("").trim();
-    if base32_decode(&secret).is_none() {
+    if !totp::is_valid_secret(&secret) {
         return (StatusCode::BAD_REQUEST, "invalid TOTP secret").into_response();
     }
-    if !verify_totp_code(&secret, code, now_epoch_i64()) {
+    if !totp::verify_code(&secret, code, now_epoch_i64()) {
         return (StatusCode::BAD_REQUEST, "invalid TOTP code").into_response();
     }
     state
@@ -1021,81 +1014,6 @@ fn clear_auth_failures(state: &AppState, key: &str) {
 
 fn sudo_window_seconds() -> i64 {
     SUDO_WINDOW_SECS
-}
-
-fn base32_encode(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity((bytes.len() * 8).div_ceil(5));
-    let mut buffer = 0u16;
-    let mut bits = 0u8;
-    for byte in bytes {
-        buffer = (buffer << 8) | u16::from(*byte);
-        bits += 8;
-        while bits >= 5 {
-            let idx = ((buffer >> (bits - 5)) & 0x1f) as usize;
-            output.push(BASE32_ALPHABET[idx] as char);
-            bits -= 5;
-        }
-    }
-    if bits > 0 {
-        let idx = ((buffer << (5 - bits)) & 0x1f) as usize;
-        output.push(BASE32_ALPHABET[idx] as char);
-    }
-    output
-}
-
-fn base32_decode(value: &str) -> Option<Vec<u8>> {
-    let mut output = Vec::with_capacity(value.len() * 5 / 8);
-    let mut buffer = 0u32;
-    let mut bits = 0u8;
-    for ch in value.chars().filter(|ch| !ch.is_whitespace()) {
-        if ch == '=' {
-            break;
-        }
-        let ch = ch.to_ascii_uppercase();
-        let val = match ch {
-            'A'..='Z' => ch as u8 - b'A',
-            '2'..='7' => ch as u8 - b'2' + 26,
-            _ => return None,
-        };
-        buffer = (buffer << 5) | u32::from(val);
-        bits += 5;
-        while bits >= 8 {
-            output.push(((buffer >> (bits - 8)) & 0xff) as u8);
-            bits -= 8;
-        }
-    }
-    (!output.is_empty()).then_some(output)
-}
-
-fn verify_totp_code(secret: &str, code: &str, now: i64) -> bool {
-    let code = code.trim();
-    if code.len() != 6 || !code.as_bytes().iter().all(u8::is_ascii_digit) {
-        return false;
-    }
-    let Ok(expected) = code.parse::<u32>() else {
-        return false;
-    };
-    let Some(secret) = base32_decode(secret) else {
-        return false;
-    };
-    let counter = now.max(0) / 30;
-    (-1..=1).any(|skew| {
-        let step = counter + skew;
-        step >= 0 && hotp(&secret, step as u64).is_some_and(|value| value == expected)
-    })
-}
-
-fn hotp(secret: &[u8], counter: u64) -> Option<u32> {
-    type HmacSha1 = Hmac<Sha1>;
-    let mut mac = HmacSha1::new_from_slice(secret).ok()?;
-    mac.update(&counter.to_be_bytes());
-    let out = mac.finalize().into_bytes();
-    let offset = usize::from(out[19] & 0x0f);
-    let binary = (u32::from(out[offset] & 0x7f) << 24)
-        | (u32::from(out[offset + 1]) << 16)
-        | (u32::from(out[offset + 2]) << 8)
-        | u32::from(out[offset + 3]);
-    Some(binary % 1_000_000)
 }
 
 pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {

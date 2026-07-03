@@ -179,6 +179,16 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(health).toBeOK();
   expect(await health.text()).toBe("OK");
 
+  for (const path of ["/openapi.yaml", "/api/openapi.yaml"]) {
+    const spec = await request.get(path);
+    await expect(spec).toBeOK();
+    expect(spec.headers()["content-type"]).toContain("application/yaml");
+    const body = await spec.text();
+    expect(body).toContain("openapi: 3.1.0");
+    expect(body).toContain("title: klaxond API");
+    expect(body).toContain("/api/auth/totp/start:");
+  }
+
   await page.goto("/ui/");
   await expect(page).toHaveURL(/\/ui\/status$/);
   await expect(page.locator("h1")).toContainText("klaxond");

@@ -2556,8 +2556,7 @@ $("#btn-cas-save").addEventListener("click", async () => {
 
 // ---- Delivery (policies + rules) ----
 // The synthetic policy built from the global [cascade] block is exposed by
-// the backend with name="cascade" (see _legacy_cascade_policy in app.py —
-// the Python function name is historical, the returned dict says "cascade").
+// the backend with name="cascade" (see delivery::legacy_cascade_policy).
 // The UI matches that for consistency: no "legacy-cascade" string anywhere.
 let delivData = { default_policy: "cascade", policies: [], rules: [], available_tiers: [], legacy_cascade_tiers: [] };
 

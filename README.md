@@ -30,6 +30,7 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 - **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
 - **Admin UI** (vanilla HTML+JS, zero build) at `/ui/`: channel health, active inhibitions, recent deliveries, logs, audit, import/export, render config CRUD, visual ntfy push preview, cascade tier editor, channel routing config and auth management.
 - **Prometheus/Grafana ready**: `/metrics` exposes runtime counters/gauges and `docs/grafana-dashboard.json` is importable in Grafana.
+- **Documented API contract**: `docs/openapi.yaml` is bundled and served at `/openapi.yaml` and `/api/openapi.yaml`.
 - **Rust backend** — single `klaxond` binary built with Cargo, served from a small Alpine runtime image.
 
 ## Quick start
@@ -69,7 +70,17 @@ when using local username/password login. Machine clients should use scoped
 Bearer tokens or explicit Basic auth headers; those paths are not gated by
 browser CSRF/sudo prompts.
 
+### API contract
+
+The canonical API contract is [`docs/openapi.yaml`](docs/openapi.yaml). The
+running backend serves the same document publicly at `/openapi.yaml` and
+`/api/openapi.yaml`, including auth schemes, CSRF/reauth behavior, paginated
+logs/audit parameters, config import/export, passkeys, TOTP and token scopes.
+
 ## Endpoints
+
+This section is an operator summary. Use the OpenAPI document above for the
+complete route list, schemas, auth requirements and response contracts.
 
 ### Webhook ingress (machine-to-machine)
 
@@ -86,9 +97,10 @@ browser CSRF/sudo prompts.
 |---|---|---|
 | `GET` | `/healthz` | Plain `OK`, for Docker `HEALTHCHECK` |
 | `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/openapi.yaml` / `/api/openapi.yaml` | Canonical OpenAPI contract |
 | `GET` | `/` / `/ui/` | Static admin UI |
 
-### Admin API (consumed by UI)
+### Admin API summary (consumed by UI)
 
 | Method | Path | Returns / Effect |
 |---|---|---|
@@ -354,6 +366,9 @@ klaxond/
 ├── tests/
 │   ├── parity.rs           parser/inhibition parity tests
 │   └── e2e/                Playwright smoke tests
+├── docs/
+│   ├── openapi.yaml        canonical API contract, also served by the binary
+│   └── grafana-dashboard.json
 ├── klaxond.default.toml     bundled defaults, copied to /data on first run
 ├── Dockerfile              multi-stage Rust build
 ├── docker-compose.yml      reference standalone deploy
@@ -389,9 +404,7 @@ docker build -t klaxond:local .
 Apache-2.0 — see [LICENSE](./LICENSE).
 
 ---
-> **Questo repo È la source of truth di klaxond** (progetto personale,
-> 2026-06-10: invertito il modello — prima il sorgente viveva in
-> infra-ansible/files/klaxond). Il deploy (`infra-ansible/playbooks/deploy-klaxond.yml`)
-> clona QUESTO repo al tag pinnato e builda/deploya l'immagine pubblicata dal
-> registry Gitea. Flusso release: commit qui → tag vX.Y.Z → CI build/push →
-> deploy automatico via Semaphore con `klaxond_image_tag`.
+> **This repository is the source of truth for klaxond**. Since 2026-06-10,
+> deploys clone this repo at the pinned tag and build/deploy the image published
+> by the Gitea registry. Release flow: commit here → tag `vX.Y.Z` → CI
+> build/push → automatic Semaphore deploy with `klaxond_image_tag`.
