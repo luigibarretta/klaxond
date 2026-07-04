@@ -1,5 +1,12 @@
 # Klaxond — CHANGELOG
 
+## 0.14.16 — 2026-07-04
+
+- Allineata la Swagger UI alla convenzione degli altri progetti: route pubbliche
+  `/api/docs`, `/api/swagger` e `/api/swagger-ui`.
+- Mantenuto `/swagger` come alias legacy deprecato per evitare rotture sui link
+  già distribuiti.
+
 ## 0.14.15 — 2026-07-04
 
 - Aggiunta Swagger UI self-hosted a `/swagger` e `/api/docs`, servita con asset

@@ -30,7 +30,7 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 - **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
 - **Admin UI** (vanilla HTML+JS, zero build) at `/ui/`: channel health, active inhibitions, recent deliveries, logs, audit, import/export, render config CRUD, visual ntfy push preview, cascade tier editor, channel routing config and auth management.
 - **Prometheus/Grafana ready**: `/metrics` exposes runtime counters/gauges and `docs/grafana-dashboard.json` is importable in Grafana.
-- **Documented API contract**: `docs/openapi.yaml` is bundled and served at `/openapi.yaml` and `/api/openapi.yaml`; Swagger UI is available at `/swagger` and `/api/docs`.
+- **Documented API contract**: `docs/openapi.yaml` is bundled and served at `/openapi.yaml` and `/api/openapi.yaml`; Swagger UI is available at `/api/docs`, `/api/swagger` and `/api/swagger-ui`.
 - **Rust backend** — single `klaxond` binary built with Cargo, served from a small Alpine runtime image.
 
 ## Quick start
@@ -76,7 +76,9 @@ The canonical API contract is [`docs/openapi.yaml`](docs/openapi.yaml). The
 running backend serves the same document publicly at `/openapi.yaml` and
 `/api/openapi.yaml`, including auth schemes, CSRF/reauth behavior, paginated
 logs/audit parameters, config import/export, passkeys, TOTP and token scopes.
-The self-hosted Swagger UI is available at `/swagger` and `/api/docs`.
+The self-hosted Swagger UI follows the project convention and is available at
+`/api/docs`, `/api/swagger` and `/api/swagger-ui`. The legacy `/swagger` alias
+is still served for backwards compatibility.
 
 ## Endpoints
 
@@ -99,7 +101,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/healthz` | Plain `OK`, for Docker `HEALTHCHECK` |
 | `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/openapi.yaml` / `/api/openapi.yaml` | Canonical OpenAPI contract |
-| `GET` | `/swagger` / `/api/docs` | Swagger UI for the OpenAPI contract |
+| `GET` | `/api/docs` / `/api/swagger` / `/api/swagger-ui` | Swagger UI for the OpenAPI contract |
 | `GET` | `/` / `/ui/` | Static admin UI |
 
 ### Admin API summary (consumed by UI)

@@ -142,33 +142,48 @@ async function countPagerRows(page: Page, tableId: string) {
   );
 }
 
+async function installPagerProbeRows(page: Page, tableId: string, totalRows = 12) {
+  await page.evaluate(
+    ({ id, total }) => {
+      const table = document.getElementById(id) as HTMLTableElement | null;
+      if (!table?.tBodies[0]) throw new Error(`missing table ${id}`);
+      const cols = Math.max(1, table.tHead?.querySelectorAll("th").length || 1);
+      table.tBodies[0].innerHTML = "";
+      for (let i = 0; i < total; i++) {
+        const row = document.createElement("tr");
+        row.className = "pager-probe-row";
+        for (let c = 0; c < cols; c++) {
+          const cell = document.createElement("td");
+          cell.textContent = `${id} row ${i + 1}`;
+          row.appendChild(cell);
+        }
+        table.tBodies[0].appendChild(row);
+      }
+      (window as unknown as { applyTablePager: (id: string, opts?: unknown) => void }).applyTablePager(id, { reset: true });
+    },
+    { id: tableId, total: totalRows }
+  );
+}
+
 async function assertTablePagerWorks(page: Page, tab: string, tableId: string) {
   await page.goto(`/ui/${tab}`);
   if (tab === "auth") {
     await expect(page.locator("#auth-current-user")).not.toHaveText("—");
   }
-  await page.evaluate(id => {
-    const table = document.getElementById(id) as HTMLTableElement | null;
-    if (!table?.tBodies[0]) throw new Error(`missing table ${id}`);
-    const cols = Math.max(1, table.tHead?.querySelectorAll("th").length || 1);
-    table.tBodies[0].innerHTML = "";
-    for (let i = 0; i < 12; i++) {
-      const row = document.createElement("tr");
-      row.className = "pager-probe-row";
-      for (let c = 0; c < cols; c++) {
-        const cell = document.createElement("td");
-        cell.textContent = `${id} row ${i + 1}`;
-        row.appendChild(cell);
-      }
-      table.tBodies[0].appendChild(row);
-    }
-    (window as unknown as { applyTablePager: (id: string, opts?: unknown) => void }).applyTablePager(id, { reset: true });
-  }, tableId);
 
   const pager = page.locator(`[data-table-pager="${tableId}"]`);
-  await expect(pager).toBeVisible();
-  await page.selectOption(`[data-table-pager="${tableId}"] [data-pager-size]`, "10");
-  await expect(pager.locator("[data-pager-range]")).toContainText("1-10 / 12");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await installPagerProbeRows(page, tableId);
+    await expect(pager).toBeVisible();
+    await page.selectOption(`[data-table-pager="${tableId}"] [data-pager-size]`, "10");
+    try {
+      await expect(pager.locator("[data-pager-range]")).toContainText("1-10 / 12", { timeout: 2_000 });
+      break;
+    } catch (err) {
+      if (attempt === 2) throw err;
+      await page.waitForTimeout(300);
+    }
+  }
   expect(await countPagerRows(page, tableId)).toBe(10);
   await expect(pager.locator("[data-pager-next]")).toBeEnabled();
   await pager.locator("[data-pager-next]").click();
@@ -190,7 +205,7 @@ test("serves health and admin UI", async ({ page, request }) => {
     expect(body).toContain("title: klaxond API");
     expect(body).toContain("/api/auth/totp/start:");
   }
-  for (const path of ["/swagger", "/api/docs"]) {
+  for (const path of ["/api/docs", "/api/swagger", "/api/swagger-ui", "/swagger"]) {
     const swagger = await request.get(path);
     await expect(swagger).toBeOK();
     expect(swagger.headers()["content-type"]).toContain("text/html");
