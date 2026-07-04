@@ -190,6 +190,22 @@ test("serves health and admin UI", async ({ page, request }) => {
     expect(body).toContain("title: klaxond API");
     expect(body).toContain("/api/auth/totp/start:");
   }
+  for (const path of ["/swagger", "/api/docs"]) {
+    const swagger = await request.get(path);
+    await expect(swagger).toBeOK();
+    expect(swagger.headers()["content-type"]).toContain("text/html");
+    const body = await swagger.text();
+    expect(body).toContain("SwaggerUIBundle");
+    expect(body).toContain('url: "/openapi.yaml"');
+  }
+  for (const path of [
+    "/ui/vendor/swagger-ui/swagger-ui.css",
+    "/ui/vendor/swagger-ui/swagger-ui-bundle.js",
+    "/ui/vendor/swagger-ui/swagger-ui-standalone-preset.js"
+  ]) {
+    const asset = await request.get(path);
+    await expect(asset).toBeOK();
+  }
 
   await page.goto("/ui/");
   await expect(page).toHaveURL(/\/ui\/status$/);

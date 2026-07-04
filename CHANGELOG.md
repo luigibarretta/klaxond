@@ -1,5 +1,11 @@
 # Klaxond — CHANGELOG
 
+## 0.14.15 — 2026-07-04
+
+- Aggiunta Swagger UI self-hosted a `/swagger` e `/api/docs`, servita con asset
+  locali `swagger-ui-dist` senza dipendere da CDN esterni.
+- Documentate le route Swagger nel contratto OpenAPI e nel README.
+
 ## 0.14.14 — 2026-07-03
 
 - Allineata la versione `info.version` dell'OpenAPI alla versione applicativa.

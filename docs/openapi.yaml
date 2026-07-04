@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.14.14
+  version: 0.14.15
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -57,6 +57,32 @@ paths:
           description: YAML OpenAPI document.
           content:
             application/yaml:
+              schema:
+                type: string
+  /swagger:
+    get:
+      tags: [Public]
+      operationId: swaggerUi
+      summary: Render the self-hosted Swagger UI for the OpenAPI contract.
+      security: []
+      responses:
+        "200":
+          description: Swagger UI HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+  /api/docs:
+    get:
+      tags: [Public]
+      operationId: swaggerUiAlias
+      summary: Render the self-hosted Swagger UI from the API namespace.
+      security: []
+      responses:
+        "200":
+          description: Swagger UI HTML.
+          content:
+            text/html:
               schema:
                 type: string
   /healthz:

@@ -116,6 +116,9 @@ async fn handle_get(
         "/healthz" => text(StatusCode::OK, "OK"),
         "/metrics" => metrics_response(state),
         "/openapi.yaml" | "/api/openapi.yaml" => openapi::response(),
+        "/swagger" | "/swagger/" | "/api/docs" | "/api/docs/" => {
+            static_files::ui_response(state, "swagger.html")
+        }
         "/" | "/ui" | "/ui/" => redirect("/ui/status"),
         "/inhibitions" | "/api/inhibitions" => json_response(inhibition::inhibition_status(state)),
         "/api/status" => json_response(status_payload(state).await),

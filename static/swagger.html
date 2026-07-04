@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>klaxond API reference</title>
+<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
+<link rel="stylesheet" href="/ui/vendor/swagger-ui/swagger-ui.css">
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg: #101418;
+    --panel: #161c22;
+    --text: #e9eef5;
+    --muted: #9aa7b4;
+    --line: #2a343f;
+    --accent: #7fc7ff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f9fb;
+      --panel: #ffffff;
+      --text: #17212b;
+      --muted: #5c6875;
+      --line: #d7dee6;
+      --accent: #0d6efd;
+    }
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .api-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 56px;
+    padding: 10px 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+  }
+  .api-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .api-brand img {
+    width: 28px;
+    height: 28px;
+  }
+  .api-brand strong {
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  .api-brand span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .api-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .api-links a {
+    color: var(--accent);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 10px;
+    text-decoration: none;
+    font-size: 13px;
+    background: color-mix(in srgb, var(--panel) 88%, var(--accent));
+  }
+  #swagger-ui {
+    background: #fff;
+    min-height: calc(100vh - 77px);
+  }
+  .swagger-ui .topbar {
+    display: none;
+  }
+</style>
+</head>
+<body>
+<header class="api-topbar">
+  <div class="api-brand">
+    <img src="/ui/favicon.svg" alt="" aria-hidden="true">
+    <div>
+      <strong>klaxond API</strong>
+      <span>Swagger UI backed by /openapi.yaml</span>
+    </div>
+  </div>
+  <nav class="api-links" aria-label="API links">
+    <a href="/openapi.yaml">OpenAPI YAML</a>
+    <a href="/api/openapi.yaml">API alias</a>
+    <a href="/ui/">Admin UI</a>
+  </nav>
+</header>
+<main id="swagger-ui"></main>
+<script src="/ui/vendor/swagger-ui/swagger-ui-bundle.js"></script>
+<script src="/ui/vendor/swagger-ui/swagger-ui-standalone-preset.js"></script>
+<script>
+  window.addEventListener("load", () => {
+    window.ui = SwaggerUIBundle({
+      url: "/openapi.yaml",
+      dom_id: "#swagger-ui",
+      deepLinking: true,
+      displayOperationId: true,
+      filter: true,
+      persistAuthorization: true,
+      tryItOutEnabled: true,
+      presets: [
+        SwaggerUIBundle.presets.apis,
+        SwaggerUIStandalonePreset
+      ],
+      layout: "StandaloneLayout"
+    });
+  });
+</script>
+</body>
+</html>

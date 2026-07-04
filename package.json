@@ -6,6 +6,7 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "1.57.0"
+    "@playwright/test": "1.57.0",
+    "swagger-ui-dist": "5.30.3"
   }
 }
