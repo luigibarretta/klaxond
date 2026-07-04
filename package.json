@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "openapi:lint": "redocly lint",
     "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "1.57.0",
+    "@redocly/cli": "1.25.15",
     "swagger-ui-dist": "5.30.3"
   }
 }

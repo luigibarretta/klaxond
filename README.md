@@ -374,6 +374,7 @@ klaxond/
 ├── docs/
 │   ├── openapi.yaml        canonical API contract, also served by the binary
 │   └── grafana-dashboard.json
+├── .redocly.yaml           Redocly CLI rules for OpenAPI linting
 ├── klaxond.default.toml     bundled defaults, copied to /data on first run
 ├── Dockerfile              multi-stage Rust build
 ├── docker-compose.yml      reference standalone deploy
@@ -399,10 +400,22 @@ curl -s -X POST 'http://127.0.0.1:8181/webhook/info?dry_run=1' \
 Verification:
 
 ```bash
+npm run openapi:lint
 cargo test
 npm run test:e2e
 docker build -t klaxond:local .
 ```
+
+`npm run openapi:lint` runs the pinned Redocly CLI from `package-lock.json`
+against [`docs/openapi.yaml`](docs/openapi.yaml) using `.redocly.yaml`.
+Redocly checks the quality and consistency of the OpenAPI document; it does not
+replace backend tests, contract behavior tests, or the custom route/spec coverage
+checks in the Rust test suite.
+
+The Redocly config keeps license metadata and 2xx/4xx response completeness as
+explicit warnings: they stay visible locally and in CI without blocking changes
+that only improve the contract incrementally. Redocly errors still fail the
+pipeline.
 
 ## License
 

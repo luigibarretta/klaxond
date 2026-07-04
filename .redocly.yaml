@@ -1,0 +1,15 @@
+extends:
+  - recommended
+
+apis:
+  main:
+    root: docs/openapi.yaml
+
+rules:
+  operation-operationId: error
+  operation-summary: warn
+  no-unused-components: warn
+  security-defined: warn
+  info-license: warn
+  operation-2xx-response: warn
+  operation-4xx-response: warn
