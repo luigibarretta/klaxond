@@ -166,7 +166,8 @@ async function installPagerProbeRows(page: Page, tableId: string, totalRows = 12
 }
 
 async function assertTablePagerWorks(page: Page, tab: string, tableId: string) {
-  await page.goto(`/ui/${tab}`);
+  const route = tab === "auth" ? "authentication" : tab;
+  await page.goto(`/${route}`);
   if (tab === "auth") {
     await expect(page.locator("#auth-current-user")).not.toHaveText("—");
   }
@@ -222,8 +223,8 @@ test("serves health and admin UI", async ({ page, request }) => {
     await expect(asset).toBeOK();
   }
 
-  await page.goto("/ui/");
-  await expect(page).toHaveURL(/\/ui\/status$/);
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/status$/);
   await expect(page.locator("h1")).toContainText("klaxond");
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
   await expect(page.locator('[data-tab="logs"]')).toBeVisible();
@@ -259,17 +260,25 @@ test("serves health and admin UI", async ({ page, request }) => {
   await page.click("#sidebar-toggle");
   await expect(page.locator("body")).not.toHaveClass(/sidebar-collapsed/);
   await page.click('[data-tab="deliveries"]');
-  await expect(page).toHaveURL(/\/ui\/deliveries$/);
+  await expect(page).toHaveURL(/\/deliveries$/);
   await expect(page.locator("#tab-deliveries")).toHaveClass(/active/);
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
   await expect(page.locator("#stat-log-retained")).toContainText(/\/500/);
   await expect(page.locator("#stat-log-severity")).toContainText(/WARN \d+ \/ ERROR \d+/);
 });
 
-test("legacy hash UI URLs migrate to path routes", async ({ page, request }) => {
-  const tabRoute = await request.get("/ui/deliveries");
-  await expect(tabRoute).toBeOK();
-  expect(await tabRoute.text()).toContain("klaxond");
+test("legacy UI URLs and hash URLs migrate to path routes", async ({ page, request }) => {
+  const tabRoute = await request.get("/ui/deliveries", { maxRedirects: 0 });
+  expect(tabRoute.status()).toBe(302);
+  expect(tabRoute.headers().location).toBe("/deliveries");
+
+  const indexRoute = await request.get("/ui/index.html", { maxRedirects: 0 });
+  expect(indexRoute.status()).toBe(302);
+  expect(indexRoute.headers().location).toBe("/status");
+
+  const rootRoute = await request.get("/deliveries", { headers: { Accept: "text/html" } });
+  await expect(rootRoute).toBeOK();
+  expect(await rootRoute.text()).toContain("klaxond");
 
   const asset = await request.get("/ui/style.css");
   await expect(asset).toBeOK();
@@ -277,18 +286,18 @@ test("legacy hash UI URLs migrate to path routes", async ({ page, request }) => 
   const missing = await request.get("/ui/not-a-tab");
   expect(missing.status()).toBe(404);
 
-  await page.goto("/ui/index.html#logs");
-  await expect(page).toHaveURL(/\/ui\/logs$/);
+  await page.goto("/status#logs");
+  await expect(page).toHaveURL(/\/logs$/);
   await expect(page.locator("#tab-logs")).toHaveClass(/active/);
 
-  await page.goto("/ui/status#deliveries");
-  await expect(page).toHaveURL(/\/ui\/deliveries$/);
+  await page.goto("/status#deliveries");
+  await expect(page).toHaveURL(/\/deliveries$/);
   await expect(page.locator("#tab-deliveries")).toHaveClass(/active/);
 });
 
 test("direct flow refresh initializes without frontend TDZ errors", async ({ page, request }) => {
-  await page.goto("/ui/flow");
-  await expect(page).toHaveURL(/\/ui\/flow$/);
+  await page.goto("/flow");
+  await expect(page).toHaveURL(/\/flow$/);
   await expect(page.locator("#tab-flow")).toHaveClass(/active/);
   await expect(page.locator(".toast-error")).toHaveCount(0);
 
@@ -302,42 +311,61 @@ test("direct flow refresh initializes without frontend TDZ errors", async ({ pag
 });
 
 test("footer legal pages are routeable, localized and bottom-aligned", async ({ page, request }) => {
-  for (const route of ["privacy", "accessibility", "terms", "cookies", "legal"]) {
-    const res = await request.get(`/ui/${route}`);
+  const legalRoutes = [
+    ["privacy", "privacy"],
+    ["accessibility", "accessibility"],
+    ["terms", "terms"],
+    ["cookies", "cookies"],
+    ["notice", "legal"]
+  ] as const;
+  for (const [route, tab] of legalRoutes) {
+    const res = await request.get(`/legal/${route}`);
     await expect(res).toBeOK();
     const html = await res.text();
-    expect(html).toContain(`id="tab-${route}"`);
+    expect(html).toContain(`id="tab-${tab}"`);
     expect(html).not.toContain("klaxond.luigibarretta.com");
   }
+  for (const [legacy, canonical] of [
+    ["privacy", "/legal/privacy"],
+    ["accessibility", "/legal/accessibility"],
+    ["terms", "/legal/terms"],
+    ["cookies", "/legal/cookies"],
+    ["legal", "/legal/notice"]
+  ] as const) {
+    const res = await request.get(`/ui/${legacy}`, { maxRedirects: 0 });
+    expect(res.status()).toBe(302);
+    expect(res.headers().location).toBe(canonical);
+  }
 
-  await page.goto("/ui/privacy");
-  await expect(page).toHaveURL(/\/ui\/privacy$/);
+  await page.goto("/legal/privacy");
+  await expect(page).toHaveURL(/\/legal\/privacy$/);
   await expect(page.locator("body")).toHaveClass(/public-info-route/);
   await expect(page.locator("#public-legal-bar")).toBeVisible();
   await expect(page.locator(".sidebar")).toBeHidden();
   await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
-  await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/auth/login?start=1&return_to=%2Fui%2Fstatus");
+  await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/auth/login?start=1&return_to=%2Fstatus");
   await page.click(".public-login-link");
-  await expect(page).toHaveURL(/\/ui\/status$/);
+  await expect(page).toHaveURL(/\/status$/);
 
-  await page.goto("/ui/privacy");
+  await page.goto("/legal/privacy");
   await expect(page.locator(".app-footer")).toContainText("klaxond");
   await expect(page.locator(".app-footer")).toContainText(`by ${AUTHOR_NAME}`);
   await expect(page.locator(".footer-meta a", { hasText: AUTHOR_NAME })).toHaveAttribute("href", AUTHOR_URL);
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
-  await expect(page.locator('.footer-links a[href="/ui/accessibility"]')).toHaveText("Accessibility");
+  await expect(page.locator('.footer-links a[href="/legal/accessibility"]')).toHaveText("Accessibility");
+  await expect(page.locator('.footer-links a[href^="/ui/"]')).toHaveCount(0);
 
-  await page.click('.footer-links a[href="/ui/accessibility"]');
-  await expect(page).toHaveURL(/\/ui\/accessibility$/);
+  await page.click('.footer-links a[href="/legal/accessibility"]');
+  await expect(page).toHaveURL(/\/legal\/accessibility$/);
   await expect(page.locator("#tab-accessibility")).toHaveClass(/active/);
 
   await page.click('#public-legal-bar [data-public-language-option="it"]');
   await expect(page.locator("#tab-accessibility h2")).toHaveText("Dichiarazione di accessibilita'");
-  await expect(page.locator('.footer-links a[href="/ui/legal"]')).toHaveText("Note legali");
+  await expect(page.locator('.footer-links a[href="/legal/notice"]')).toHaveText("Note legali");
   await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toHaveAttribute("aria-pressed", "true");
 
-  await page.click('.footer-links a[href="/ui/legal"]');
-  await expect(page).toHaveURL(/\/ui\/legal$/);
+  await page.click('.footer-links a[href="/legal/notice"]');
+  await expect(page).toHaveURL(/\/legal\/notice$/);
   await expect(page.locator("#tab-legal a", { hasText: AUTHOR_NAME })).toHaveAttribute("href", AUTHOR_URL);
   await expect(page.locator("#tab-legal")).not.toContainText("klaxond.luigibarretta.com");
   const footerBottomGap = await page.locator(".app-footer").evaluate(el =>
@@ -346,7 +374,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   expect(Math.abs(footerBottomGap)).toBeLessThanOrEqual(2);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui/legal");
+  await page.goto("/legal/notice");
   await expect(page.locator("body")).toHaveClass(/public-info-route/);
   await expect(page.locator("#public-legal-bar")).toBeVisible();
   const mobileFooterBottomGap = await page.locator(".app-footer").evaluate(el =>
@@ -358,8 +386,8 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   const cleanupBearer = await createAdminBearer(request, "e2e-legal-cleanup");
   try {
     await enableBasicAuth(request);
-    for (const route of ["privacy", "accessibility", "terms", "cookies", "legal"]) {
-      const publicLegal = await request.get(`/ui/${route}`, { maxRedirects: 0 });
+    for (const [route] of legalRoutes) {
+      const publicLegal = await request.get(`/legal/${route}`, { maxRedirects: 0 });
       await expect(publicLegal).toBeOK();
     }
 
@@ -372,12 +400,14 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(metaJs).toContain(`version:"${APP_VERSION}"`);
     expect(metaJs).toContain(AUTHOR_URL);
 
-    const loginPage = await request.get("/auth/login?return_to=%2Fui%2Fstatus", { maxRedirects: 0 });
+    const loginPage = await request.get("/auth/login?return_to=%2Fstatus", { maxRedirects: 0 });
     await expect(loginPage).toBeOK();
     const loginHtml = await loginPage.text();
-    expect(loginHtml).toContain('href="/ui/privacy"');
-    expect(loginHtml).toContain('href="/ui/accessibility"');
-    expect(loginHtml).toContain('href="/ui/legal"');
+    expect(loginHtml).toContain('href="/legal/privacy"');
+    expect(loginHtml).toContain('href="/legal/accessibility"');
+    expect(loginHtml).toContain('href="/legal/notice"');
+    expect(loginHtml).not.toContain('href="/ui/privacy"');
+    expect(loginHtml).not.toContain('href="/ui/legal"');
     expect(loginHtml).toContain('class="login-logo" src="/ui/favicon.svg"');
     expect(loginHtml).toContain(`class="login-version">v${APP_VERSION}</span>`);
     expect(loginHtml).toContain(AUTHOR_URL);
@@ -387,11 +417,11 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(logout.status()).toBe(302);
     expect(logout.headers().location).toBe("/auth/login?logged_out=1");
 
-    const protectedAdmin = await request.get("/ui/status", { maxRedirects: 0 });
+    const protectedAdmin = await request.get("/status", { maxRedirects: 0 });
     expect(protectedAdmin.status()).toBe(401);
 
-    await page.goto("/ui/privacy");
-    await expect(page).toHaveURL(/\/ui\/privacy$/);
+    await page.goto("/legal/privacy");
+    await expect(page).toHaveURL(/\/legal\/privacy$/);
     await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
     await expect(page.locator("#tab-privacy h2")).toContainText(/Privacy notice|Informativa privacy/);
   } finally {
@@ -413,7 +443,7 @@ test("footer version reveals a major-version easter egg", async ({ page, request
     });
   });
 
-  await page.goto("/ui/status");
+  await page.goto("/status");
   await expect(page.locator("#footer-version")).toHaveText("v0.14.6");
   for (let i = 0; i < 6; i++) {
     await page.click("#footer-version");
@@ -458,7 +488,7 @@ test("backend logs page searches captured errors", async ({ page, request }) => 
   expect(payload.entries.length).toBeGreaterThan(0);
   expect(payload.entries[0].message).toContain("webhook auth rejected");
 
-  await page.goto("/ui/logs");
+  await page.goto("/logs");
   await page.fill("#logs-filter", "auth rejected");
   await page.selectOption("#logs-level", "WARN");
   await expect(page.locator("#t-logs tbody tr").first()).toContainText("webhook auth rejected");
@@ -484,7 +514,7 @@ test("backend logs are paginated in the UI and API", async ({ page, request }) =
   expect(payload.entries.length).toBe(5);
   expect(payload.total).toBeGreaterThanOrEqual(32);
 
-  await page.goto("/ui/logs");
+  await page.goto("/logs");
   await page.fill("#logs-filter", "auth rejected");
   await page.selectOption("#logs-level", "WARN");
   await page.selectOption("#logs-limit", "25");
@@ -517,7 +547,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
     await expect(res).toBeOK();
   }
 
-  await page.goto("/ui/deliveries");
+  await page.goto("/deliveries");
   const pager = page.locator('[data-table-pager="t-deliv"]');
   await expect(pager).toBeVisible();
   await page.selectOption('[data-table-pager="t-deliv"] [data-pager-size]', "10");
@@ -552,7 +582,7 @@ test("all configured finite admin tables use the shared pager", async ({ page })
 });
 
 test("backend logs fetch failure clears stale count", async ({ page }) => {
-  await page.goto("/ui/logs");
+  await page.goto("/logs");
   await expect(page.locator("#logs-count")).toContainText(/log line/);
 
   await page.route(/\/api\/logs\?/, async route => {
@@ -576,8 +606,8 @@ test("expired UI session redirects to login without toast storm", async ({ page 
     });
   });
 
-  await page.goto("/ui/status");
-  await expect(page).toHaveURL(/\/auth\/login\?return_to=%2Fui%2Fstatus/);
+  await page.goto("/status");
+  await expect(page).toHaveURL(/\/auth\/login\?return_to=%2Fstatus/);
   await expect(page.locator(".toast-error")).toHaveCount(0);
 });
 
@@ -590,14 +620,14 @@ test("save errors show both inline status and toast", async ({ page }) => {
     await route.continue();
   });
 
-  await page.goto("/ui/render");
+  await page.goto("/render");
   await page.click("#btn-rc-save");
   await expect(page.locator("#rc-status")).toContainText("500");
   await expect(page.locator(".toast-error")).toContainText("render-config-save");
 });
 
 test("save successes show both inline status and toast", async ({ page }) => {
-  await page.goto("/ui/render");
+  await page.goto("/render");
   await page.click("#btn-rc-save");
   await expect(page.locator("#rc-status")).toContainText("Saved");
   await expect(page.locator(".toast-success").last()).toContainText("Saved");
@@ -627,7 +657,7 @@ test("reload-backed editor saves keep inline success visible", async ({ page }) 
     await route.continue();
   });
 
-  await page.goto("/ui/inhibitions");
+  await page.goto("/inhibitions");
   await page.click("#sched-save");
   await expect(page.locator("#sched-save-status")).toContainText("Saved");
   await expect(page.locator(".toast-success").last()).toContainText("Saved");
@@ -638,7 +668,7 @@ test("reload-backed editor saves keep inline success visible", async ({ page }) 
 });
 
 test("inhibition applies-to checkboxes stay compact and aligned", async ({ page }) => {
-  await page.goto("/ui/inhibitions");
+  await page.goto("/inhibitions");
   const firstCheckbox = page.locator('#t-inhib-rules [data-k="applies_to"] input[type="checkbox"]').first();
   await expect(firstCheckbox).toBeVisible();
 
@@ -648,7 +678,7 @@ test("inhibition applies-to checkboxes stay compact and aligned", async ({ page 
 });
 
 test("authentication separates API keys and PATs", async ({ page }) => {
-  await page.goto("/ui/auth");
+  await page.goto("/authentication");
   await expect(page.locator('[data-token-kind-option="api-key"]')).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#token-kind")).toHaveValue("api-key");
   await expect(page.locator("#token-create")).toHaveText("Create API key");
@@ -760,7 +790,7 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     await page.setExtraHTTPHeaders({ Authorization: BASIC_AUTH });
     cleanupAuthenticator = await addVirtualAuthenticator(page);
 
-    await page.goto(`${LOCAL_ORIGIN}/ui/auth`);
+    await page.goto(`${LOCAL_ORIGIN}/authentication`);
     await expect(page.locator("#auth-current-user")).toContainText("admin (mode=basic)");
     await page.fill("#passkey-name", "e2e virtual key");
     await page.click("#passkey-register");
@@ -771,11 +801,11 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     await page.goto(`${LOCAL_ORIGIN}/auth/passkey`);
     await page.fill("#user", BASIC_USER);
     await page.click("#login");
-    await expect(page).toHaveURL(/\/ui\/status$/);
+    await expect(page).toHaveURL(/\/status$/);
     const passkeyUser = await page.evaluate(() => fetch("/auth/me").then(r => r.json()));
     expect(passkeyUser).toMatchObject({ sub: BASIC_USER, mode: "passkey" });
 
-    await page.goto(`${LOCAL_ORIGIN}/ui/auth`);
+    await page.goto(`${LOCAL_ORIGIN}/authentication`);
     await expect(page.locator("#auth-current-user")).toContainText("admin (mode=passkey)");
     await page.once("dialog", dialog => dialog.accept());
     await page.locator("#t-passkeys tbody tr", { hasText: "e2e virtual key" }).locator("[data-passkey-del]").click();
@@ -794,7 +824,7 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
     localStorage.removeItem("klaxond.themeMode");
   });
 
-  await page.goto("/ui/");
+  await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "light");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
@@ -906,7 +936,7 @@ test("inhibition rule simulator reports source and suppression matches", async (
 });
 
 test("full config export includes TOML sidecars and runtime settings", async ({ page, request }) => {
-  await page.goto("/ui/status");
+  await page.goto("/status");
   await expect(page.locator("#cfg-backup-download")).toHaveAttribute("href", "/api/config/backup");
   await expect(page.locator("#cfg-full-export-download")).toHaveAttribute("href", "/api/config/export");
 
@@ -1027,16 +1057,16 @@ test("operational readiness endpoints cover import preview, audit, setup, channe
 test("operational readiness tabs render diagnostics, simulator and audit views", async ({ page, request }) => {
   await request.get("/api/setup-status");
 
-  await page.goto("/ui/setup");
+  await page.goto("/setup");
   await expect(page.locator("#tab-setup")).toHaveClass(/active/);
   await expect(page.locator('[data-tab="setup"]')).toBeVisible();
   await expect(page.locator("#setup-checklist")).toBeVisible();
 
-  await page.goto("/ui/simulator");
+  await page.goto("/simulator");
   await expect(page.locator("#tab-simulator")).toHaveClass(/active/);
   await expect(page.locator("#policy-sim-run")).toBeVisible();
 
-  await page.goto("/ui/audit");
+  await page.goto("/audit");
   await expect(page.locator("#tab-audit")).toHaveClass(/active/);
   await expect(page.locator("#audit-filter")).toBeVisible();
 });
@@ -1407,7 +1437,7 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
 
     const noTotp = await request.post("/auth/login", {
       headers: { "X-Klaxond-Request": "fetch" },
-      data: { username: BASIC_USER, password: BASIC_PASSWORD, return_to: "/ui/status" }
+      data: { username: BASIC_USER, password: BASIC_PASSWORD, return_to: "/status" }
     });
     expect(noTotp.status()).toBe(401);
     expect(await noTotp.text()).toContain("TOTP");
@@ -1418,7 +1448,7 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
         username: BASIC_USER,
         password: BASIC_PASSWORD,
         totp: totp(setupBody.secret),
-        return_to: "/ui/status"
+        return_to: "/status"
       }
     });
     await expect(login).toBeOK();

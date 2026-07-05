@@ -518,7 +518,7 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
         payload
             .get("return_to")
             .map(String::as_str)
-            .unwrap_or("/ui/status"),
+            .unwrap_or("/status"),
     );
     if username != cfg.basic.username
         || cfg.basic.password_hash.is_empty()
@@ -732,7 +732,7 @@ fn login_return_to(uri: &str) -> String {
                 .find(|(k, _)| k == "return_to")
                 .map(|(_, v)| v.to_string())
         })
-        .unwrap_or_else(|| "/ui/status".into());
+        .unwrap_or_else(|| "/status".into());
     sanitize_return_to(&return_to)
 }
 
@@ -781,11 +781,11 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
 <p class="login-note">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
 <div class="login-actions">{primary}{passkey}</div>
 <nav class="login-legal" aria-label="Legal links">
-<a href="/ui/privacy">Privacy</a>
-<a href="/ui/accessibility">Accessibility</a>
-<a href="/ui/terms">Terms</a>
-<a href="/ui/cookies">Cookies</a>
-<a href="/ui/legal">Legal notice</a>
+<a href="/legal/privacy">Privacy</a>
+<a href="/legal/accessibility">Accessibility</a>
+<a href="/legal/terms">Terms</a>
+<a href="/legal/cookies">Cookies</a>
+<a href="/legal/notice">Legal notice</a>
 </nav>
 <p class="muted login-byline">by {author_link}</p>
 </section></main></body></html>"#,
@@ -1314,7 +1314,8 @@ mod tests {
 
     #[test]
     fn sanitize_return_to_allows_only_local_non_auth_paths() {
-        assert_eq!(sanitize_return_to("/ui/inhibitions"), "/ui/inhibitions");
+        assert_eq!(sanitize_return_to("/inhibitions"), "/inhibitions");
+        assert_eq!(sanitize_return_to("/authentication"), "/authentication");
         assert_eq!(sanitize_return_to("https://example.test/"), "/");
         assert_eq!(sanitize_return_to("//example.test/"), "/");
         assert_eq!(sanitize_return_to("/ui\r\nLocation: //example.test"), "/");
@@ -1325,11 +1326,18 @@ mod tests {
 
     #[test]
     fn legal_ui_pages_and_assets_are_public_but_admin_routes_are_not() {
+        assert!(is_public("/legal/privacy"));
+        assert!(is_public("/legal/accessibility"));
+        assert!(is_public("/legal/terms"));
+        assert!(is_public("/legal/cookies"));
+        assert!(is_public("/legal/notice"));
         assert!(is_public("/ui/privacy"));
         assert!(is_public("/ui/accessibility"));
         assert!(is_public("/ui/style.css"));
         assert!(is_public("/ui/meta.js"));
         assert!(is_public("/ui/app.js"));
+        assert!(!is_public("/status"));
+        assert!(!is_public("/authentication"));
         assert!(!is_public("/ui/status"));
         assert!(!is_public("/ui/auth"));
     }
@@ -1352,13 +1360,13 @@ mod tests {
         headers.insert("X-Klaxond-Request", HeaderValue::from_static("fetch"));
         assert!(is_ui_fetch(&headers));
 
-        let resp = auth_required("/auth/login?return_to=%2Fui%2Fstatus");
+        let resp = auth_required("/auth/login?return_to=%2Fstatus");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             resp.headers()
                 .get("X-Klaxond-Login")
                 .and_then(|v| v.to_str().ok()),
-            Some("/auth/login?return_to=%2Fui%2Fstatus")
+            Some("/auth/login?return_to=%2Fstatus")
         );
         assert_eq!(
             resp.headers()

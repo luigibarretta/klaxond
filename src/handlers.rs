@@ -24,7 +24,7 @@ use crate::util::{atomic_write, env_string, random_hex, token_urlsafe, toml_tabl
 use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::header::{
-    CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, SET_COOKIE,
+    ACCEPT, CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE, SET_COOKIE,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
@@ -92,7 +92,7 @@ pub async fn dispatch(
     }
 
     let mut resp = match method {
-        Method::GET => handle_get(&state, &path, &full_path, authed_user).await,
+        Method::GET => handle_get(&state, &path, &full_path, &headers, authed_user).await,
         Method::POST => {
             handle_post(&state, &path, &full_path, &headers, body, peer, authed_user).await
         }
@@ -110,6 +110,7 @@ async fn handle_get(
     state: &AppState,
     path: &str,
     full_path: &str,
+    headers: &HeaderMap,
     authed_user: Option<User>,
 ) -> Response<Body> {
     match path {
@@ -120,7 +121,16 @@ async fn handle_get(
         | "/api/swagger/" | "/api/swagger-ui" | "/api/swagger-ui/" => {
             static_files::ui_response(state, "swagger.html")
         }
-        "/" | "/ui" | "/ui/" => redirect("/ui/status"),
+        "/legal" | "/legal/" => redirect("/legal/privacy"),
+        _ if legal_tab_from_path(path).is_some() => static_files::index_response(state),
+        _ if legacy_legal_redirect(path).is_some() => {
+            redirect(legacy_legal_redirect(path).unwrap_or("/legal/privacy"))
+        }
+        "/" | "/ui" | "/ui/" => redirect("/status"),
+        _ if root_ui_tab_from_path(path, headers).is_some() => static_files::index_response(state),
+        _ if legacy_ui_redirect(path).is_some() => {
+            redirect(legacy_ui_redirect(path).unwrap_or("/status"))
+        }
         "/inhibitions" | "/api/inhibitions" => json_response(inhibition::inhibition_status(state)),
         "/api/status" => json_response(status_payload(state).await),
         "/api/deliveries" => json_response(state.recent_deliveries()),
@@ -230,6 +240,69 @@ async fn handle_get(
         _ if path.starts_with("/api/ack/") => ack_response(state, path),
         _ => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+fn legal_tab_from_path(path: &str) -> Option<&'static str> {
+    match path.trim_end_matches('/') {
+        "/legal/privacy" => Some("privacy"),
+        "/legal/accessibility" => Some("accessibility"),
+        "/legal/terms" => Some("terms"),
+        "/legal/cookies" => Some("cookies"),
+        "/legal/notice" => Some("legal"),
+        _ => None,
+    }
+}
+
+fn legacy_legal_redirect(path: &str) -> Option<&'static str> {
+    match path.trim_end_matches('/') {
+        "/ui/privacy" => Some("/legal/privacy"),
+        "/ui/accessibility" => Some("/legal/accessibility"),
+        "/ui/terms" => Some("/legal/terms"),
+        "/ui/cookies" => Some("/legal/cookies"),
+        "/ui/legal" => Some("/legal/notice"),
+        _ => None,
+    }
+}
+
+fn root_ui_tab_from_path(path: &str, headers: &HeaderMap) -> Option<&'static str> {
+    let route = path.trim_matches('/');
+    if route == "inhibitions" && !prefers_html(headers) {
+        return None;
+    }
+    static_files::tab_for_root_route(route)
+}
+
+fn legacy_ui_redirect(path: &str) -> Option<&'static str> {
+    let route = path.strip_prefix("/ui/")?.trim_matches('/');
+    if route.is_empty() || route == "index.html" {
+        return Some("/status");
+    }
+    static_files::root_route_for_tab(route).map(|root| match root {
+        "authentication" => "/authentication",
+        "status" => "/status",
+        "flow" => "/flow",
+        "inhibitions" => "/inhibitions",
+        "deliveries" => "/deliveries",
+        "logs" => "/logs",
+        "audit" => "/audit",
+        "setup" => "/setup",
+        "render" => "/render",
+        "routing" => "/routing",
+        "cascade" => "/cascade",
+        "delivery" => "/delivery",
+        "grouping" => "/grouping",
+        "preview" => "/preview",
+        "simulator" => "/simulator",
+        "test" => "/test",
+        _ => "/status",
+    })
+}
+
+fn prefers_html(headers: &HeaderMap) -> bool {
+    headers
+        .get(ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|accept| accept.contains("text/html"))
 }
 
 fn anonymous_user() -> User {
@@ -1574,13 +1647,13 @@ fn passkey_login_page() -> Response<Body> {
 <body><main class="passkey-login"><section class="card"><h1>klaxond</h1><h2>Passkey login</h2>
 <label>User, email or subject <input id="user" autocomplete="username webauthn"></label>
 <button id="login" class="primary">Use passkey</button><p id="status" class="muted"></p>
-<p><a href="/ui/status">Back to UI</a></p></section></main>
+<p><a href="/status">Back to UI</a></p></section></main>
 <script>
 const b64uToBuf=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');s+='==='.slice((s.length+3)%4);const b=atob(s);const a=new Uint8Array(b.length);for(let i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a.buffer};
 const bufToB64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 function publicKeyGetOptions(pk){pk.challenge=b64uToBuf(pk.challenge);(pk.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));return pk}
 function credentialGetPayload(c){return {id:c.id,rawId:bufToB64u(c.rawId),type:c.type,response:{authenticatorData:bufToB64u(c.response.authenticatorData),clientDataJSON:bufToB64u(c.response.clientDataJSON),signature:bufToB64u(c.response.signature),userHandle:c.response.userHandle?bufToB64u(c.response.userHandle):null},extensions:c.getClientExtensionResults?c.getClientExtensionResults():{}}}
-document.getElementById('login').onclick=async()=>{const s=document.getElementById('status');try{const user=document.getElementById('user').value.trim();const a=await fetch('/auth/passkey/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});if(!a.ok)throw new Error(await a.text());const ch=await a.json();const cred=await navigator.credentials.get({publicKey:publicKeyGetOptions(ch.publicKey)});const f=await fetch('/auth/passkey/finish',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request_id:ch.request_id,credential:credentialGetPayload(cred)})});if(!f.ok)throw new Error(await f.text());location.href='/ui/status'}catch(e){s.textContent=e.message||String(e);s.style.color='var(--red)'}};
+document.getElementById('login').onclick=async()=>{const s=document.getElementById('status');try{const user=document.getElementById('user').value.trim();const a=await fetch('/auth/passkey/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});if(!a.ok)throw new Error(await a.text());const ch=await a.json();const cred=await navigator.credentials.get({publicKey:publicKeyGetOptions(ch.publicKey)});const f=await fetch('/auth/passkey/finish',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request_id:ch.request_id,credential:credentialGetPayload(cred)})});if(!f.ok)throw new Error(await f.text());location.href='/status'}catch(e){s.textContent=e.message||String(e);s.style.color='var(--red)'}};
 </script></body></html>"#;
     Response::builder()
         .status(StatusCode::OK)

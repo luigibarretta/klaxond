@@ -1,5 +1,16 @@
 # Klaxond — CHANGELOG
 
+## 0.14.17 — 2026-07-05
+
+- Spostate le pagine pubbliche Privacy, Accessibility, Terms, Cookies e Legal
+  notice sotto `/legal/*`, eliminando l'uso user-facing di `/ui/*` per le
+  pagine legali.
+- Spostate le pagine admin dalla namespace `/ui/*` a route root-level come
+  `/status`, `/deliveries`, `/logs` e `/authentication`; `/ui/*` resta solo
+  come compatibilita' legacy per bookmark esistenti e asset statici.
+- Mantenuti i vecchi path `/ui/privacy`, `/ui/accessibility`, `/ui/terms`,
+  `/ui/cookies` e `/ui/legal` solo come redirect legacy verso i nuovi URL.
+
 ## 0.14.16 — 2026-07-04
 
 - Allineata la Swagger UI alla convenzione degli altri progetti: route pubbliche

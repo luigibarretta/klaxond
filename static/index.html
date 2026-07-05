@@ -102,7 +102,7 @@
   <div class="app-main">
 <main>
 <div class="public-legal-bar" id="public-legal-bar" hidden>
-  <a class="public-legal-brand" href="/ui/privacy" aria-label="klaxond">
+  <a class="public-legal-brand" href="/legal/privacy" aria-label="klaxond">
     <img class="public-legal-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
     <span>klaxond</span>
   </a>
@@ -112,7 +112,7 @@
       <button type="button" class="seg-btn" data-public-language-option="it" aria-pressed="false">IT</button>
       <button type="button" class="seg-btn" data-public-language-option="en" aria-pressed="true">EN</button>
     </div>
-    <a class="btn public-login-link" href="/auth/login?start=1&return_to=%2Fui%2Fstatus" data-i18n="auth.sign_in">Sign in</a>
+    <a class="btn public-login-link" href="/auth/login?start=1&return_to=%2Fstatus" data-i18n="auth.sign_in">Sign in</a>
   </div>
 </div>
 
@@ -134,18 +134,18 @@
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.active_suppressions">Active suppressions</div>
       <div class="stat-value" id="stat-suppr-count">—</div>
-      <div class="stat-sub muted"><a href="/ui/inhibitions" id="stat-suppr-link" data-i18n="status.view_inhibitions">View inhibitions →</a></div>
+      <div class="stat-sub muted"><a href="/inhibitions" id="stat-suppr-link" data-i18n="status.view_inhibitions">View inhibitions →</a></div>
     </div>
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.dedup_pending">Dedup pending</div>
       <div class="stat-value" id="stat-dedup-count">—</div>
-      <div class="stat-sub muted"><a href="/ui/grouping" id="stat-dedup-link" data-i18n="status.view_grouping">View grouping →</a></div>
+      <div class="stat-sub muted"><a href="/grouping" id="stat-dedup-link" data-i18n="status.view_grouping">View grouping →</a></div>
     </div>
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.log_buffer">Log buffer</div>
       <div class="stat-value" id="stat-log-retained">—</div>
       <div class="stat-sub muted" id="stat-log-severity">WARN/ERROR: —</div>
-      <div class="stat-sub muted"><a href="/ui/logs" id="stat-log-link" data-i18n="status.view_logs">View logs →</a></div>
+      <div class="stat-sub muted"><a href="/logs" id="stat-log-link" data-i18n="status.view_logs">View logs →</a></div>
     </div>
   </div>
 
@@ -979,11 +979,11 @@ host=it1-prd-dev-01</textarea>
         <span data-i18n-html="footer.byline">by</span>
       </div>
       <nav class="footer-links" data-i18n-aria-label="footer.legal_links" aria-label="Legal links">
-        <a href="/ui/privacy" data-i18n="footer.privacy">Privacy</a>
-        <a href="/ui/accessibility" data-i18n="footer.accessibility">Accessibility</a>
-        <a href="/ui/terms" data-i18n="footer.terms">Terms</a>
-        <a href="/ui/cookies" data-i18n="footer.cookies">Cookies</a>
-        <a href="/ui/legal" data-i18n="footer.legal">Legal notice</a>
+        <a href="/legal/privacy" data-i18n="footer.privacy">Privacy</a>
+        <a href="/legal/accessibility" data-i18n="footer.accessibility">Accessibility</a>
+        <a href="/legal/terms" data-i18n="footer.terms">Terms</a>
+        <a href="/legal/cookies" data-i18n="footer.cookies">Cookies</a>
+        <a href="/legal/notice" data-i18n="footer.legal">Legal notice</a>
       </nav>
     </footer>
     <div id="version-easter-egg" class="version-easter-egg hidden" role="dialog" aria-modal="false" aria-live="polite" aria-labelledby="version-egg-title">

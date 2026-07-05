@@ -7,7 +7,7 @@ use axum::http::{Response, StatusCode};
 use axum::response::IntoResponse;
 use std::fs;
 
-const UI_ROUTES: &[&str] = &[
+const UI_TABS: &[&str] = &[
     "status",
     "flow",
     "inhibitions",
@@ -24,11 +24,6 @@ const UI_ROUTES: &[&str] = &[
     "preview",
     "simulator",
     "test",
-    "privacy",
-    "accessibility",
-    "terms",
-    "cookies",
-    "legal",
 ];
 
 pub fn image_response(state: &AppState, path: &str) -> Response<Body> {
@@ -65,10 +60,33 @@ pub fn ui_response(state: &AppState, rel: &str) -> Response<Body> {
     if route == "meta.js" {
         return ui_meta_response();
     }
-    if route.is_empty() || route == "index.html" || UI_ROUTES.contains(&route) {
-        return static_response(state, "index.html");
+    if route.is_empty() || route == "index.html" || root_route_for_tab(route).is_some() {
+        return index_response(state);
     }
     static_response(state, &safe)
+}
+
+pub fn index_response(state: &AppState) -> Response<Body> {
+    static_response(state, "index.html")
+}
+
+pub fn tab_for_root_route(route: &str) -> Option<&'static str> {
+    let route = route.trim_matches('/');
+    match route {
+        "authentication" => Some("auth"),
+        _ => UI_TABS
+            .iter()
+            .copied()
+            .find(|tab| *tab != "auth" && *tab == route),
+    }
+}
+
+pub fn root_route_for_tab(tab: &str) -> Option<&'static str> {
+    let tab = tab.trim_matches('/');
+    match tab {
+        "auth" => Some("authentication"),
+        _ => UI_TABS.iter().copied().find(|candidate| *candidate == tab),
+    }
 }
 
 fn sanitize_static_rel(rel: &str) -> String {

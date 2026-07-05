@@ -23,11 +23,11 @@ function isAuthRedirectError(e) {
 
 function currentReturnToPath() {
   const path = `${location.pathname || "/"}${location.search || ""}`;
-  if (!path || path === "/" || path.startsWith("/auth/")) return "/ui/status";
+  if (!path || path === "/" || path === "/auth" || path.startsWith("/auth/")) return "/status";
   return path;
 }
 
-function loginStartUrl(returnTo = "/ui/status") {
+function loginStartUrl(returnTo = "/status") {
   const url = new URL("/auth/login", location.origin);
   url.searchParams.set("start", "1");
   url.searchParams.set("return_to", returnTo);
@@ -35,7 +35,7 @@ function loginStartUrl(returnTo = "/ui/status") {
 }
 
 function setupPublicLoginLinks() {
-  const target = "/ui/status";
+  const target = "/status";
   const fallback = loginStartUrl(target);
   document.querySelectorAll(".public-login-link").forEach(link => {
     link.setAttribute("href", fallback);
@@ -188,6 +188,33 @@ const APP_META = window.KLAXOND_META || {};
 const UI_TABS = new Set(Array.from(document.querySelectorAll(".tab[data-tab]"), t => t.dataset.tab));
 const UI_PAGES = new Set(Array.from(document.querySelectorAll(".tabpane[id^='tab-']"), p => p.id.replace(/^tab-/, "")));
 const PUBLIC_INFO_PAGES = new Set(["privacy", "accessibility", "terms", "cookies", "legal"]);
+const LEGAL_ROUTE_TO_TAB = new Map([
+  ["privacy", "privacy"],
+  ["accessibility", "accessibility"],
+  ["terms", "terms"],
+  ["cookies", "cookies"],
+  ["notice", "legal"],
+]);
+const LEGAL_TAB_TO_ROUTE = new Map(Array.from(LEGAL_ROUTE_TO_TAB, ([route, tab]) => [tab, route]));
+const UI_ROUTE_TO_TAB = new Map([
+  ["status", "status"],
+  ["flow", "flow"],
+  ["inhibitions", "inhibitions"],
+  ["deliveries", "deliveries"],
+  ["logs", "logs"],
+  ["audit", "audit"],
+  ["setup", "setup"],
+  ["render", "render"],
+  ["routing", "routing"],
+  ["cascade", "cascade"],
+  ["delivery", "delivery"],
+  ["grouping", "grouping"],
+  ["authentication", "auth"],
+  ["preview", "preview"],
+  ["simulator", "simulator"],
+  ["test", "test"],
+]);
+const UI_TAB_TO_ROUTE = new Map(Array.from(UI_ROUTE_TO_TAB, ([route, tab]) => [tab, route]));
 const DEFAULT_TAB = "status";
 
 function isKnownTab(tabId) {
@@ -205,8 +232,10 @@ function updatePublicChrome(tabId) {
   if (publicBar) publicBar.hidden = !isPublic;
 }
 
-function canonicalUiPath(tabId) {
-  return `/ui/${isKnownTab(tabId) ? tabId : DEFAULT_TAB}`;
+function canonicalPath(tabId) {
+  const safeTab = isKnownTab(tabId) ? tabId : DEFAULT_TAB;
+  if (PUBLIC_INFO_PAGES.has(safeTab)) return `/legal/${LEGAL_TAB_TO_ROUTE.get(safeTab) || safeTab}`;
+  return `/${UI_TAB_TO_ROUTE.get(safeTab) || safeTab}`;
 }
 
 function activateTab(tabId) {
@@ -276,10 +305,25 @@ function tabFromLocation() {
   if (pathname === "/" || pathname === "/ui" || pathname === "/ui/index.html") {
     return { tabId: DEFAULT_TAB, canonicalize: true };
   }
+  if (pathname === "/legal") {
+    return { tabId: "privacy", canonicalize: true };
+  }
+
+  const legalMatch = pathname.match(/^\/legal\/([^/]+)$/);
+  if (legalMatch) {
+    const tabId = LEGAL_ROUTE_TO_TAB.get(legalMatch[1]);
+    if (tabId) return { tabId, canonicalize: pathname !== canonicalPath(tabId) || !!location.hash };
+  }
 
   const match = pathname.match(/^\/ui\/([^/]+)$/);
   if (match && isKnownTab(match[1])) {
-    return { tabId: match[1], canonicalize: pathname !== canonicalUiPath(match[1]) || !!location.hash };
+    return { tabId: match[1], canonicalize: pathname !== canonicalPath(match[1]) || !!location.hash };
+  }
+
+  const rootMatch = pathname.match(/^\/([^/]+)$/);
+  if (rootMatch) {
+    const tabId = UI_ROUTE_TO_TAB.get(rootMatch[1]);
+    if (tabId) return { tabId, canonicalize: pathname !== canonicalPath(tabId) || !!location.hash };
   }
 
   return { tabId: DEFAULT_TAB, canonicalize: true };
@@ -291,11 +335,11 @@ function syncTabFromPath({ replace = false } = {}) {
   if (!ok) {
     const active = document.querySelector(".tabpane.active");
     const activeId = active ? active.id.replace(/^tab-/, "") : DEFAULT_TAB;
-    history.replaceState({ tabId: activeId }, "", canonicalUiPath(activeId));
+    history.replaceState({ tabId: activeId }, "", canonicalPath(activeId));
     return false;
   }
   if (ok && (replace || canonicalize)) {
-    history.replaceState({ tabId }, "", canonicalUiPath(tabId));
+    history.replaceState({ tabId }, "", canonicalPath(tabId));
   }
   return ok;
 }
@@ -303,7 +347,7 @@ function syncTabFromPath({ replace = false } = {}) {
 function navigateToTab(tabId, { replace = false } = {}) {
   if (!isKnownTab(tabId)) return false;
   if (!(window.activateTab || activateTab)(tabId)) return false;
-  const url = canonicalUiPath(tabId);
+  const url = canonicalPath(tabId);
   if (location.pathname !== url || location.hash) {
     history[replace ? "replaceState" : "pushState"]({ tabId }, "", url);
   }
@@ -318,11 +362,20 @@ $$(".tab").forEach(t => {
 });
 
 document.addEventListener("click", e => {
-  const link = e.target.closest?.('a[href^="/ui/"]');
+  const link = e.target.closest?.('a[href^="/"]');
   if (!link || link.target || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
   const url = new URL(link.href);
   if (url.origin !== location.origin) return;
-  const tabId = url.pathname.replace(/^\/ui\//, "").replace(/\/+$/, "");
+  const legalMatch = url.pathname.match(/^\/legal\/([^/]+)\/?$/);
+  const legacyMatch = url.pathname.match(/^\/ui\/([^/]+)\/?$/);
+  const rootMatch = url.pathname.match(/^\/([^/]+)\/?$/);
+  const tabId = legalMatch
+    ? LEGAL_ROUTE_TO_TAB.get(legalMatch[1])
+    : legacyMatch
+      ? legacyMatch[1]
+      : rootMatch
+        ? UI_ROUTE_TO_TAB.get(rootMatch[1])
+        : "";
   if (!isKnownTab(tabId)) return;
   e.preventDefault();
   navigateToTab(tabId);

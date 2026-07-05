@@ -28,7 +28,7 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 - **Authentication**: local username/password login, optional TOTP/MFA, OIDC, trusted proxy, passkeys, API keys and PATs with granular scopes plus read-only viewer support.
 - **Operational diagnostics**: audit log, backend/frontend log search, setup checklist, notification test matrix and policy simulator.
 - **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
-- **Admin UI** (vanilla HTML+JS, zero build) at `/ui/`: channel health, active inhibitions, recent deliveries, logs, audit, import/export, render config CRUD, visual ntfy push preview, cascade tier editor, channel routing config and auth management.
+- **Admin UI** (vanilla HTML+JS, zero build) at `/`: channel health, active inhibitions, recent deliveries, logs, audit, import/export, render config CRUD, visual ntfy push preview, cascade tier editor, channel routing config and auth management.
 - **Prometheus/Grafana ready**: `/metrics` exposes runtime counters/gauges and `docs/grafana-dashboard.json` is importable in Grafana.
 - **Documented API contract**: `docs/openapi.yaml` is bundled and served at `/openapi.yaml` and `/api/openapi.yaml`; Swagger UI is available at `/api/docs`, `/api/swagger` and `/api/swagger-ui`.
 - **Rust backend** — single `klaxond` binary built with Cargo, served from a small Alpine runtime image.
@@ -43,7 +43,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Open `http://localhost:8181/ui/` to access the admin UI. Edit channel URLs/topics from the Routing tab; secrets stay in your `.env`.
+Open `http://localhost:8181/` to access the admin UI. Edit channel URLs/topics from the Routing tab; secrets stay in your `.env`.
 
 ### Public legal and accessibility pages
 
@@ -51,11 +51,11 @@ klaxond ships public informational pages that remain reachable even when the
 admin UI is protected by SSO, Basic auth, trusted proxy auth, passkeys, API keys
 or PATs. Replace `localhost:8181` with your own self-hosted origin:
 
-- [Privacy notice](http://localhost:8181/ui/privacy)
-- [Accessibility statement](http://localhost:8181/ui/accessibility)
-- [Terms of use](http://localhost:8181/ui/terms)
-- [Cookie notice](http://localhost:8181/ui/cookies)
-- [Legal notice and contacts](http://localhost:8181/ui/legal)
+- [Privacy notice](http://localhost:8181/legal/privacy)
+- [Accessibility statement](http://localhost:8181/legal/accessibility)
+- [Terms of use](http://localhost:8181/legal/terms)
+- [Cookie notice](http://localhost:8181/legal/cookies)
+- [Legal notice and contacts](http://localhost:8181/legal/notice)
 
 The same links are shown in the app footer and on the local login/signed-out
 screen.
@@ -102,7 +102,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/openapi.yaml` / `/api/openapi.yaml` | Canonical OpenAPI contract |
 | `GET` | `/api/docs` / `/api/swagger` / `/api/swagger-ui` | Swagger UI for the OpenAPI contract |
-| `GET` | `/` / `/ui/` | Static admin UI |
+| `GET` | `/` / `/status` / other root-level page routes | Static admin UI |
 
 ### Admin API summary (consumed by UI)
 
