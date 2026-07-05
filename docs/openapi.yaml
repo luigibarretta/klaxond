@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.14.22
+  version: 0.14.23
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages

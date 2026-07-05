@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.22";
+pub const VERSION: &str = "0.14.23";
 pub const AUTHOR_NAME: &str = "Luigi Barretta";
 pub const AUTHOR_URL: &str = "https://github.com/luigibarretta";
 pub const DEDUP_SOURCES: &[&str] = &[
@@ -1609,6 +1609,20 @@ mod tests {
         ("BESZEL_DB_PATH", "TOML [paths].beszel_db"),
     ];
 
+    const SPLIT_COMPOSE_ENV_KEYS: &[&str] = &[
+        "KLAXOND_BACKEND_IMAGE",
+        "KLAXOND_BACKEND_CONTAINER",
+        "KLAXOND_BACKEND_BIND",
+        "KLAXOND_FRONTEND_IMAGE",
+        "KLAXOND_FRONTEND_CONTAINER",
+        "KLAXOND_FRONTEND_BIND",
+        "KLAXOND_FRONTEND_MAX_BODY_SIZE",
+        "KLAXOND_BACKEND_URL",
+        "KLAXOND_STATE_IMAGE",
+        "KLAXOND_STATE_CONTAINER",
+        "KLAXOND_DATA_VOLUME",
+    ];
+
     fn temp_paths(tmp: &TempDir) -> Paths {
         let data = tmp.path();
         Paths {
@@ -1978,11 +1992,17 @@ default_ttl_seconds = 1234
     fn reference_compose_and_env_example_cover_runtime_env_vars() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let compose = fs::read_to_string(root.join("docker-compose.yml")).unwrap();
+        let split_compose = fs::read_to_string(root.join("docker-compose.split.yml")).unwrap();
         let env_example = fs::read_to_string(root.join(".env.example")).unwrap();
         let compose_keys = compose_env_keys(&compose);
+        let split_compose_keys = compose_env_keys(&split_compose);
         assert!(
             !compose_keys.is_empty(),
             "docker-compose.yml has no env keys"
+        );
+        assert!(
+            !split_compose_keys.is_empty(),
+            "docker-compose.split.yml has no env keys"
         );
         for key in &compose_keys {
             assert!(
@@ -2001,6 +2021,66 @@ default_ttl_seconds = 1234
                     .any(|line| line.starts_with(&format!("{key}="))
                         || line.starts_with(&format!("# {key}="))),
                 ".env.example missing {key}"
+            );
+        }
+        for key in RUNTIME_COMPOSE_ENV_KEYS {
+            assert!(
+                split_compose.contains(&format!("{key}: ${{{key}")),
+                "docker-compose.split.yml missing backend runtime env {key}"
+            );
+        }
+        for key in SPLIT_COMPOSE_ENV_KEYS {
+            assert!(
+                split_compose.contains(&format!("${{{key}")),
+                "docker-compose.split.yml missing split env {key}"
+            );
+            assert!(
+                env_example
+                    .lines()
+                    .any(|line| line.starts_with(&format!("{key}="))
+                        || line.starts_with(&format!("# {key}="))),
+                ".env.example missing split env {key}"
+            );
+        }
+        assert!(
+            split_compose.contains(r#"profiles: ["backend", "all"]"#),
+            "split compose must allow backend-only startup"
+        );
+        assert!(
+            split_compose.contains(r#"profiles: ["frontend", "all"]"#),
+            "split compose must allow frontend-only startup"
+        );
+        assert!(
+            split_compose.contains(r#"profiles: ["db", "state", "all"]"#),
+            "split compose must allow db/state-only startup"
+        );
+    }
+
+    #[test]
+    fn split_frontend_proxy_template_covers_backend_routes() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let nginx = fs::read_to_string(root.join("deploy/frontend/nginx.conf.template")).unwrap();
+
+        for expected in [
+            "KLAXOND_BACKEND_URL",
+            "map $http_x_forwarded_proto $klaxond_forwarded_proto",
+            "map $http_host $klaxond_forwarded_host",
+            "proxy_set_header Host $klaxond_forwarded_host",
+            "proxy_set_header X-Forwarded-Proto $klaxond_forwarded_proto",
+            "proxy_set_header X-Forwarded-Host $klaxond_forwarded_host",
+            "absolute_redirect off",
+            "location ~ ^/(api|auth)(/|$)",
+            "location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve)(/|$)",
+            "location ~ ^/img/",
+            "location ~ ^/(swagger|api/docs|api/swagger|api/swagger-ui)(/|$)",
+            "location = /ui/meta.js",
+            "location = /ui/auth",
+            "return 302 /authentication",
+            "try_files $uri /index.html",
+        ] {
+            assert!(
+                nginx.contains(expected),
+                "frontend nginx template missing {expected}"
             );
         }
     }

@@ -1,0 +1,100 @@
+# Split deployment example.
+#
+# Run one or more profiles depending on the host:
+#   Backend host : docker compose -f docker-compose.split.yml --profile backend up -d
+#   Frontend host: docker compose -f docker-compose.split.yml --profile frontend up -d
+#   DB/state host: docker compose -f docker-compose.split.yml --profile db up -d
+#
+# Klaxond has no SQL database server. Its "db" tier is the file-backed state
+# bundle under /data: klaxond.toml, render-config.json, ntfy-topics.json,
+# dedup-config.json, auth-config.json, backups, and dedup pending files.
+# For multi-host deploys, KLAXOND_DATA_VOLUME must be backed by shared storage
+# that the backend host can mount too (for example NFS, Ceph, or a volume driver).
+
+services:
+  klaxond-backend:
+    image: ${KLAXOND_BACKEND_IMAGE:-git.luigibarretta.com/luigibarretta/klaxond:0.14}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${KLAXOND_BACKEND_CONTAINER:-klaxond-backend}
+    restart: unless-stopped
+    profiles: ["backend", "all"]
+    ports:
+      - "${KLAXOND_BACKEND_BIND:-8181}:8181"
+    environment:
+      NTFY_URL: ${NTFY_URL:-}
+      NTFY_TOKEN_INFO: ${NTFY_TOKEN_INFO:-}
+      NTFY_TOKEN_WARN: ${NTFY_TOKEN_WARN:-}
+      NTFY_TOKEN_CRIT: ${NTFY_TOKEN_CRIT:-}
+      TOPIC_INFO: ${TOPIC_INFO:-}
+      TOPIC_WARN: ${TOPIC_WARN:-}
+      TOPIC_CRIT: ${TOPIC_CRIT:-}
+      CASCADE_ENABLED: ${CASCADE_ENABLED:-false}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TELEGRAM_API_BASE: ${TELEGRAM_API_BASE:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TO: ${SMTP_TO:-}
+      GRAFANA_BASE: ${GRAFANA_BASE:-}
+      GRAFANA_RENDER_BASE: ${GRAFANA_RENDER_BASE:-}
+      GRAFANA_RENDER_TOKEN: ${GRAFANA_RENDER_TOKEN:-}
+      RENDER_IMAGE_TTL: ${RENDER_IMAGE_TTL:-900}
+      KLAXOND_PUBLIC_URL: ${KLAXOND_PUBLIC_URL:-}
+      ACK_DEFAULT_TTL_SECONDS: ${ACK_DEFAULT_TTL_SECONDS:-3600}
+      AUTH_SESSION_SECRET: ${AUTH_SESSION_SECRET:-}
+      AUTH_OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET:-}
+      AUTH_BASIC_PASSWORD_HASH: ${AUTH_BASIC_PASSWORD_HASH:-}
+      KLAXOND_INGEST_SECRET_GRAFANA: ${KLAXOND_INGEST_SECRET_GRAFANA:-}
+      KLAXOND_INGEST_SECRET_BESZEL: ${KLAXOND_INGEST_SECRET_BESZEL:-}
+      KLAXOND_INGEST_SECRET_HEALTHCHECKS: ${KLAXOND_INGEST_SECRET_HEALTHCHECKS:-}
+      KLAXOND_INGEST_SECRET_WUD: ${KLAXOND_INGEST_SECRET_WUD:-}
+      KLAXOND_INGEST_SECRET_AUTHENTIK: ${KLAXOND_INGEST_SECRET_AUTHENTIK:-}
+      KLAXOND_INGEST_SECRET_SHELFMARK: ${KLAXOND_INGEST_SECRET_SHELFMARK:-}
+      KLAXOND_INGEST_SECRET_PROWLARR: ${KLAXOND_INGEST_SECRET_PROWLARR:-}
+      KLAXOND_INGEST_SECRET_DECYPHARR: ${KLAXOND_INGEST_SECRET_DECYPHARR:-}
+      PORT: ${PORT:-8181}
+      KLAXOND_CONFIG: ${KLAXOND_CONFIG:-/data/klaxond.toml}
+      RENDER_CONFIG_PATH: ${RENDER_CONFIG_PATH:-/data/render-config.json}
+      NTFY_TOPICS_PATH: ${NTFY_TOPICS_PATH:-/data/ntfy-topics.json}
+      DEDUP_CONFIG_PATH: ${DEDUP_CONFIG_PATH:-/data/dedup-config.json}
+      AUTH_CONFIG_PATH: ${AUTH_CONFIG_PATH:-/data/auth-config.json}
+      AUTH_SESSION_KEY_PATH: ${AUTH_SESSION_KEY_PATH:-/data/auth-session.key}
+      KLAXOND_BACKUP_DIR: ${KLAXOND_BACKUP_DIR:-/data/backups}
+      DEDUP_PENDING_DIR: ${DEDUP_PENDING_DIR:-/data/dedup_pending}
+      BESZEL_DB_PATH: ${BESZEL_DB_PATH:-/beszel_data/data.db}
+    volumes:
+      - klaxond-data:/data
+
+  klaxond-frontend:
+    image: ${KLAXOND_FRONTEND_IMAGE:-git.luigibarretta.com/luigibarretta/klaxond-frontend:0.14}
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: ${KLAXOND_FRONTEND_CONTAINER:-klaxond-frontend}
+    restart: unless-stopped
+    profiles: ["frontend", "all"]
+    ports:
+      - "${KLAXOND_FRONTEND_BIND:-8080}:8080"
+    environment:
+      KLAXOND_BACKEND_URL: ${KLAXOND_BACKEND_URL:-http://klaxond-backend:8181}
+      KLAXOND_FRONTEND_MAX_BODY_SIZE: ${KLAXOND_FRONTEND_MAX_BODY_SIZE:-25m}
+
+  klaxond-state:
+    image: ${KLAXOND_STATE_IMAGE:-alpine:3.23}
+    container_name: ${KLAXOND_STATE_CONTAINER:-klaxond-state}
+    command: ["sh", "-c", "mkdir -p /data && tail -f /dev/null"]
+    restart: unless-stopped
+    profiles: ["db", "state", "all"]
+    volumes:
+      - klaxond-data:/data
+
+volumes:
+  klaxond-data:
+    external: true
+    name: ${KLAXOND_DATA_VOLUME:-klaxond-data}

@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1.7
+FROM nginx:1.29-alpine
+
+LABEL org.opencontainers.image.title="klaxond-frontend"
+LABEL org.opencontainers.image.description="Static klaxond admin UI with reverse proxy hooks for a remote backend"
+LABEL org.opencontainers.image.source="https://git.luigibarretta.com/luigibarretta/klaxond"
+LABEL org.opencontainers.image.licenses="MIT"
+
+ENV KLAXOND_BACKEND_URL=http://klaxond-backend:8181 \
+    KLAXOND_FRONTEND_MAX_BODY_SIZE=25m
+
+COPY static/ /usr/share/nginx/html/
+COPY deploy/frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+
+RUN find /usr/share/nginx/html -type d -exec chmod 755 {} + \
+    && find /usr/share/nginx/html -type f -exec chmod 644 {} +
+
+EXPOSE 8080

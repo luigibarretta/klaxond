@@ -1,5 +1,18 @@
 # Klaxond — CHANGELOG
 
+## 0.14.23 — 2026-07-05
+
+- Aggiunto `docker-compose.split.yml` con profili separati per backend,
+  frontend e db/state, pensato per deploy multi-host.
+- Aggiunta l'immagine `klaxond-frontend` basata su nginx, con proxy verso il
+  backend per API, auth, webhook inclusi PVE, immagini renderizzate, metriche,
+  OpenAPI e Swagger mantenendo auth e CSRF same-origin.
+- Il frontend split preserva host/porta/protocollo inoltrati dai reverse proxy
+  e mantiene relativi i redirect legacy `/ui/*`.
+- Documentato che Klaxond non usa un DB SQL: il tier db/state e' il bundle
+  file-backed sotto `/data`, montabile come volume esterno condiviso.
+- Aggiunti test di regressione per copertura env compose split e template nginx.
+
 ## 0.14.22 — 2026-07-05
 
 - Aggiunta una matrice testata che garantisce che ogni env applicativa esposta

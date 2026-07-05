@@ -297,6 +297,46 @@ UI-saved values at runtime.
 | `AUTH_SESSION_KEY_PATH` / `KLAXOND_BACKUP_DIR` / `DEDUP_PENDING_DIR` / `BESZEL_DB_PATH` | `[paths].auth_session_key`, `[paths].backup_dir`, `[paths].dedup_pending_dir`, `[paths].beszel_db` |
 | `KLAXOND_CONFIG` | bootstrap-only path to `klaxond.toml` (default `/data/klaxond.toml`) |
 
+### Split frontend / backend / state
+
+The default image is monolithic: the Rust backend also serves the static admin
+UI. For multi-host deployments, use `docker-compose.split.yml` instead:
+
+```bash
+# first register the external state volume on every backend host.
+# For a single-host demo this can be a local volume; for multi-host use a
+# volume driver or bind mount backed by shared storage.
+docker volume create klaxond-data
+
+# backend host
+docker compose -f docker-compose.split.yml --profile backend up -d
+
+# frontend host
+KLAXOND_BACKEND_URL=http://backend-host:8181 \
+docker compose -f docker-compose.split.yml --profile frontend up -d
+
+# db/state host, optional keeper for an external/shared volume
+docker compose -f docker-compose.split.yml --profile db up -d
+```
+
+The split frontend image is nginx plus the files in `static/`. It serves the UI
+and reverse-proxies `/api/*`, `/auth/*`, webhook endpoints, `/img/*`,
+`/healthz`, `/metrics`, OpenAPI, and Swagger routes to `KLAXOND_BACKEND_URL`.
+This keeps browser auth and CSRF same-origin even when the frontend and backend
+containers run on different machines. When the frontend sits behind a TLS
+terminator, forwarded protocol/port headers are preserved for OIDC callback
+generation. The frontend container always listens on internal port `8080`; use
+`KLAXOND_FRONTEND_BIND` to choose the host-side published address/port.
+
+Klaxond does not have a SQL database service. Its state tier is the `/data`
+file bundle: `klaxond.toml`, `render-config.json`, `ntfy-topics.json`,
+`dedup-config.json`, `auth-config.json`, backups, and pending dedup files. To
+place that tier on another host, expose it as an external Docker volume backed
+by NFS/Ceph/etc. and set `KLAXOND_DATA_VOLUME` in `docker-compose.split.yml`.
+The backend host must mount the same external volume; the `db` profile exists
+for operators who want to provision or keep that state tier separately, not as a
+TCP database server replacement.
+
 ## Inhibition
 
 `klaxond.toml` defines inhibition rules — when a "source" alert is firing, derivative alerts are silently dropped until the source resolves or the TTL expires.
@@ -320,7 +360,9 @@ Klaxond's inhibition is a safety net for direct posts. If you're using Alertmana
 
 ## High availability (optional)
 
-Klaxond is single-process and stateless-ish — most data lives in two files under `/data`. That means HA is a deploy-time decision, not a code change.
+Klaxond is single-process and stateless-ish — persistent config/state lives in
+the `/data` file bundle. That means HA is a deploy-time decision, not a code
+change.
 
 **TL;DR**: mount `/data` from shared storage (NFS, Ceph, etc.) and run two containers behind any TCP/HTTP load balancer with a `/healthz` health check.
 
@@ -342,15 +384,18 @@ Klaxond is single-process and stateless-ish — most data lives in two files und
                                 ▼
                   ┌──────────────────────────┐
                   │ shared /data (NFS/etc.)  │
-                  │  ├ klaxond.toml           │
-                  │  └ render-config.json    │
+                  │  ├ klaxond.toml          │
+                  │  ├ render-config.json    │
+                  │  ├ ntfy-topics.json      │
+                  │  ├ dedup-config.json     │
+                  │  └ auth-config.json      │
                   └──────────────────────────┘
 ```
 
 ### What's safe to share between instances
 
 - **`/data/klaxond.toml`** — TOML config (channels, tiers, render rules, inhibitions). Read on startup + on POST `/api/*-config`. File-locked writes on save.
-- **`/data/render-config.json`** — render overrides edited via UI. Same pattern.
+- **`/data/render-config.json`, `ntfy-topics.json`, `dedup-config.json`, `auth-config.json`** — UI-managed sidecars. Same pattern.
 
 Both files are written atomically (write-temp-then-rename). With NFS v4 sync mode the cross-instance read-after-write is consistent. Don't use SMB — locking semantics are too loose.
 
@@ -429,7 +474,10 @@ klaxond/
 ├── .redocly.yaml           Redocly CLI rules for OpenAPI linting
 ├── klaxond.default.toml     bundled defaults, copied to /data on first run
 ├── Dockerfile              multi-stage Rust build
+├── Dockerfile.frontend     nginx-only split frontend image
 ├── docker-compose.yml      reference standalone deploy
+├── docker-compose.split.yml reference multi-host FE/BE/state deploy
+├── deploy/frontend/        nginx template for the split frontend
 ├── .env.example            secrets/site-specific env vars
 ├── playwright.config.ts
 ├── README.md
