@@ -1,0 +1,21 @@
+# Prometheus scrape example for klaxond.
+#
+# If Prometheus runs in the same Compose network as klaxond, keep target
+# "klaxond:8181". If Prometheus scrapes through a reverse proxy, replace
+# scheme/targets with that proxy endpoint.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: klaxond
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - klaxond:8181
+        labels:
+          app: klaxond
+          service: klaxond
+          environment: homelab

@@ -3,13 +3,16 @@
 # Run one or more profiles depending on the host:
 #   Backend host : docker compose -f docker-compose.split.yml --profile backend up -d
 #   Frontend host: docker compose -f docker-compose.split.yml --profile frontend up -d
-#   DB/state host: docker compose -f docker-compose.split.yml --profile db up -d
+#   State host  : docker compose -f docker-compose.split.yml --profile db up -d
+#   History DB  : docker compose -f docker-compose.split.yml --profile postgres up -d
 #
-# Klaxond has no SQL database server. Its "db" tier is the file-backed state
+# Klaxond does not require a SQL server. Its "db" tier is the file-backed state
 # bundle under /data: klaxond.toml, render-config.json, ntfy-topics.json,
-# dedup-config.json, auth-config.json, backups, and dedup pending files.
+# dedup-config.json, auth-config.json, backups, dedup pending files, and the
+# default SQLite history DB.
 # For multi-host deploys, KLAXOND_DATA_VOLUME must be backed by shared storage
 # that the backend host can mount too (for example NFS, Ceph, or a volume driver).
+# PostgreSQL is optional for shared active/active delivery history.
 
 services:
   klaxond-backend:
@@ -68,6 +71,11 @@ services:
       KLAXOND_BACKUP_DIR: ${KLAXOND_BACKUP_DIR:-/data/backups}
       DEDUP_PENDING_DIR: ${DEDUP_PENDING_DIR:-/data/dedup_pending}
       BESZEL_DB_PATH: ${BESZEL_DB_PATH:-/beszel_data/data.db}
+      KLAXOND_SQLITE_PATH: ${KLAXOND_SQLITE_PATH:-/data/klaxond.db}
+      KLAXOND_HISTORY_BACKEND: ${KLAXOND_HISTORY_BACKEND:-sqlite}
+      KLAXOND_POSTGRES_URL: ${KLAXOND_POSTGRES_URL:-}
+      KLAXOND_HISTORY_RETENTION: ${KLAXOND_HISTORY_RETENTION:-5000}
+      KLAXOND_HISTORY_DEFAULT_LIMIT: ${KLAXOND_HISTORY_DEFAULT_LIMIT:-500}
     volumes:
       - klaxond-data:/data
 
@@ -94,7 +102,24 @@ services:
     volumes:
       - klaxond-data:/data
 
+  klaxond-postgres:
+    image: ${KLAXOND_POSTGRES_IMAGE:-postgres:17-alpine}
+    container_name: ${KLAXOND_POSTGRES_CONTAINER:-klaxond-postgres}
+    restart: unless-stopped
+    profiles: ["postgres"]
+    ports:
+      - "${KLAXOND_POSTGRES_BIND:-127.0.0.1:55432}:5432"
+    environment:
+      POSTGRES_DB: ${KLAXOND_POSTGRES_DB:-klaxond}
+      POSTGRES_USER: ${KLAXOND_POSTGRES_USER:-klaxond}
+      POSTGRES_PASSWORD: ${KLAXOND_POSTGRES_PASSWORD:-}
+    volumes:
+      - klaxond-postgres-data:/var/lib/postgresql/data
+
 volumes:
   klaxond-data:
     external: true
     name: ${KLAXOND_DATA_VOLUME:-klaxond-data}
+  klaxond-postgres-data:
+    external: true
+    name: ${KLAXOND_POSTGRES_VOLUME:-klaxond-postgres-data}

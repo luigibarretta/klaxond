@@ -8,6 +8,14 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args
+        .first()
+        .is_some_and(|arg| arg == "history-migrate" || arg == "storage-migrate")
+    {
+        return klaxond::history::run_migrate_cli(&args[1..]);
+    }
+
     let log_buffer = klaxond::log_buffer::init_global(500);
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))

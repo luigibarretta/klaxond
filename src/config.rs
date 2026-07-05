@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.23";
+pub const VERSION: &str = "0.14.24";
 pub const AUTHOR_NAME: &str = "Luigi Barretta";
 pub const AUTHOR_URL: &str = "https://github.com/luigibarretta";
 pub const DEDUP_SOURCES: &[&str] = &[
@@ -35,6 +35,7 @@ pub struct Paths {
     pub backup_dir: PathBuf,
     pub static_dir: PathBuf,
     pub beszel_db: PathBuf,
+    pub history_db: PathBuf,
 }
 
 impl Paths {
@@ -83,6 +84,9 @@ impl Paths {
             static_dir,
             beszel_db: PathBuf::from(
                 std::env::var("BESZEL_DB_PATH").unwrap_or_else(|_| "/beszel_data/data.db".into()),
+            ),
+            history_db: PathBuf::from(
+                std::env::var("KLAXOND_SQLITE_PATH").unwrap_or_else(|_| "/data/klaxond.db".into()),
             ),
         }
     }
@@ -139,6 +143,12 @@ impl Paths {
             &mut self.beszel_db,
             "BESZEL_DB_PATH",
             toml_get(&toml, &["paths", "beszel_db"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.history_db,
+            "KLAXOND_SQLITE_PATH",
+            toml_get(&toml, &["paths", "history_db"]),
             config_dir,
         );
         Ok(self)
@@ -223,6 +233,15 @@ impl Default for DeliveryConfig {
             rules: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryConfig {
+    pub backend: String,
+    pub sqlite_path: PathBuf,
+    pub postgres_url: String,
+    pub retention: usize,
+    pub default_limit: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -423,6 +442,7 @@ pub struct RuntimeConfig {
     pub dedup: HashMap<String, DedupSetting>,
     pub auth: AuthConfig,
     pub schedules: Vec<Schedule>,
+    pub history: HistoryConfig,
     pub tg_chat: String,
     pub smtp_host: String,
     pub smtp_port: u16,
@@ -607,6 +627,7 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
     let dedup = load_dedup(paths, toml_get(&toml, &["dedup"]))?;
     let auth = load_auth(paths, toml_get(&toml, &["auth"]))?;
     let schedules = read_schedules(&toml);
+    let history = read_history(&toml, paths);
     let ntfy_url = env_string("NTFY_URL")
         .trim_end_matches('/')
         .to_string()
@@ -701,6 +722,7 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
         dedup,
         auth,
         schedules,
+        history,
         tg_chat: String::new(),
         smtp_host: String::new(),
         smtp_port,
@@ -970,6 +992,60 @@ fn read_delivery(toml: &toml::Value) -> DeliveryConfig {
         default_policy,
         policies,
         rules,
+    }
+}
+
+fn read_history(toml: &toml::Value, paths: &Paths) -> HistoryConfig {
+    let history = toml_get(toml, &["history"]);
+    let backend = std::env::var("KLAXOND_HISTORY_BACKEND")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            history
+                .and_then(|v| v.get("backend"))
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "sqlite".to_string())
+        .trim()
+        .to_ascii_lowercase();
+    let postgres_url = std::env::var("KLAXOND_POSTGRES_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            history
+                .and_then(|v| v.get("postgres_url"))
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_default();
+    let retention = std::env::var("KLAXOND_HISTORY_RETENTION")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .or_else(|| {
+            history
+                .and_then(|v| v.get("retention"))
+                .and_then(|v| v.as_integer())
+                .map(|v| v.max(0) as usize)
+        })
+        .unwrap_or(5000);
+    let default_limit = std::env::var("KLAXOND_HISTORY_DEFAULT_LIMIT")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .or_else(|| {
+            history
+                .and_then(|v| v.get("default_limit"))
+                .and_then(|v| v.as_integer())
+                .map(|v| v.max(1) as usize)
+        })
+        .unwrap_or(500)
+        .clamp(1, 10_000);
+    HistoryConfig {
+        backend,
+        sqlite_path: paths.history_db.clone(),
+        postgres_url,
+        retention,
+        default_limit,
     }
 }
 
@@ -1513,6 +1589,11 @@ mod tests {
         "KLAXOND_BACKUP_DIR",
         "DEDUP_PENDING_DIR",
         "BESZEL_DB_PATH",
+        "KLAXOND_SQLITE_PATH",
+        "KLAXOND_HISTORY_BACKEND",
+        "KLAXOND_POSTGRES_URL",
+        "KLAXOND_HISTORY_RETENTION",
+        "KLAXOND_HISTORY_DEFAULT_LIMIT",
     ];
 
     const BOOTSTRAP_ONLY_COMPOSE_ENV_KEYS: &[&str] = &["KLAXOND_CONFIG"];
@@ -1607,6 +1688,14 @@ mod tests {
         ("KLAXOND_BACKUP_DIR", "TOML [paths].backup_dir"),
         ("DEDUP_PENDING_DIR", "TOML [paths].dedup_pending_dir"),
         ("BESZEL_DB_PATH", "TOML [paths].beszel_db"),
+        ("KLAXOND_SQLITE_PATH", "TOML [paths].history_db"),
+        ("KLAXOND_HISTORY_BACKEND", "TOML [history].backend"),
+        ("KLAXOND_POSTGRES_URL", "TOML [history].postgres_url"),
+        ("KLAXOND_HISTORY_RETENTION", "TOML [history].retention"),
+        (
+            "KLAXOND_HISTORY_DEFAULT_LIMIT",
+            "TOML [history].default_limit",
+        ),
     ];
 
     const SPLIT_COMPOSE_ENV_KEYS: &[&str] = &[
@@ -1621,6 +1710,13 @@ mod tests {
         "KLAXOND_STATE_IMAGE",
         "KLAXOND_STATE_CONTAINER",
         "KLAXOND_DATA_VOLUME",
+        "KLAXOND_POSTGRES_IMAGE",
+        "KLAXOND_POSTGRES_CONTAINER",
+        "KLAXOND_POSTGRES_BIND",
+        "KLAXOND_POSTGRES_DB",
+        "KLAXOND_POSTGRES_USER",
+        "KLAXOND_POSTGRES_PASSWORD",
+        "KLAXOND_POSTGRES_VOLUME",
     ];
 
     fn temp_paths(tmp: &TempDir) -> Paths {
@@ -1637,6 +1733,7 @@ mod tests {
             backup_dir: data.join("backups"),
             static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
             beszel_db: data.join("missing-beszel.db"),
+            history_db: data.join("klaxond.db"),
         }
     }
 
@@ -1656,6 +1753,9 @@ mod tests {
                     return None;
                 }
                 let (key, _) = trimmed.split_once(':')?;
+                if key.starts_with("POSTGRES_") {
+                    return None;
+                }
                 if key
                     .chars()
                     .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
@@ -1831,6 +1931,11 @@ public_url = "https://klaxond.example.test/"
 [acks]
 default_ttl_seconds = 1234
 
+[history]
+backend = "sqlite"
+retention = 123
+default_limit = 45
+
 [auth]
 session_secret = "toml-session-secret"
 
@@ -1860,6 +1965,9 @@ grafana = "toml-grafana-secret"
         assert_eq!(cfg.port, 19090);
         assert_eq!(cfg.public_url, "https://klaxond.example.test");
         assert_eq!(cfg.ack_default_ttl, 1234);
+        assert_eq!(cfg.history.backend, "sqlite");
+        assert_eq!(cfg.history.retention, 123);
+        assert_eq!(cfg.history.default_limit, 45);
         assert_eq!(cfg.auth.session_secret, "toml-session-secret");
         assert_eq!(
             toml_get(&cfg.toml, &["ingest", "secrets", "grafana"]).and_then(|v| v.as_str()),
@@ -1885,6 +1993,7 @@ auth_session_key = "secrets/session.key"
 backup_dir = "backup"
 dedup_pending_dir = "pending"
 beszel_db = "/external/beszel.db"
+history_db = "history/klaxond.db"
 "#,
         )
         .unwrap();
@@ -1900,6 +2009,7 @@ beszel_db = "/external/beszel.db"
         assert_eq!(resolved.backup_dir, root.join("backup"));
         assert_eq!(resolved.dedup_pending_dir, root.join("pending"));
         assert_eq!(resolved.beszel_db, PathBuf::from("/external/beszel.db"));
+        assert_eq!(resolved.history_db, root.join("history/klaxond.db"));
     }
 
     #[test]
@@ -1918,6 +2028,10 @@ beszel_db = "/external/beszel.db"
             std::env::set_var("RENDER_IMAGE_TTL", "77");
             std::env::set_var("KLAXOND_PUBLIC_URL", "https://klaxond-env.example.test");
             std::env::set_var("ACK_DEFAULT_TTL_SECONDS", "2345");
+            std::env::set_var("KLAXOND_HISTORY_BACKEND", "postgres");
+            std::env::set_var("KLAXOND_POSTGRES_URL", "postgres://env.example/klaxond");
+            std::env::set_var("KLAXOND_HISTORY_RETENTION", "777");
+            std::env::set_var("KLAXOND_HISTORY_DEFAULT_LIMIT", "88");
         }
 
         let tmp = TempDir::new().unwrap();
@@ -1944,6 +2058,12 @@ public_url = "https://klaxond-toml.example.test"
 
 [acks]
 default_ttl_seconds = 1234
+
+[history]
+backend = "sqlite"
+postgres_url = "postgres://toml.example/klaxond"
+retention = 123
+default_limit = 45
 "#,
         )
         .unwrap();
@@ -1959,6 +2079,10 @@ default_ttl_seconds = 1234
         assert_eq!(cfg.render_image_ttl, 77);
         assert_eq!(cfg.public_url, "https://klaxond-env.example.test");
         assert_eq!(cfg.ack_default_ttl, 2345);
+        assert_eq!(cfg.history.backend, "postgres");
+        assert_eq!(cfg.history.postgres_url, "postgres://env.example/klaxond");
+        assert_eq!(cfg.history.retention, 777);
+        assert_eq!(cfg.history.default_limit, 88);
 
         clear_runtime_env();
     }

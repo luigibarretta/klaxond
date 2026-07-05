@@ -146,7 +146,7 @@
 
       "status.channels": "Channels",
       "status.activity": "Activity",
-      "status.activity_sub": "(last 24h, in-memory ring buffer)",
+      "status.activity_sub": "(last 24h, persisted history)",
       "status.deliveries_24h": "Deliveries 24h",
       "status.by_source_empty": "by source: —",
       "status.by_source": "by source:",
@@ -185,7 +185,7 @@
       "channel.not_configured": "(not configured)",
 
       "flow.title": "Flow — how klaxond routes inbound events",
-      "flow.desc": "Auto-generated from your current configuration. Click any node to jump to the relevant tab. Stats in parentheses are deliveries over the last 24h from <code>/api/deliveries</code> (klaxond's in-memory ring buffer; resets on restart).",
+      "flow.desc": "Auto-generated from your current configuration. Click any node to jump to the relevant tab. Stats in parentheses are deliveries over the last 24h from <code>/api/deliveries</code> (klaxond's persisted delivery history).",
       "flow.animate": "Animate",
       "flow.animate_title": "Animated dashes flowing along arrows + pulse on recently active nodes",
       "flow.autorefresh": "Auto-refresh stats",
@@ -265,7 +265,7 @@
       "sched.saved": "Saved {count} schedule(s).",
 
       "deliveries.title": "Recent deliveries",
-      "deliveries.sub": "(last 50, newest first)",
+      "deliveries.sub": "(persisted, newest first)",
       "deliveries.desc": "Includes both delivered and <span class=\"ch-suppressed\">suppressed</span> events. Suppressed rows show the rule that matched in the Channel column.",
       "deliveries.filter_placeholder": "Filter (title, source, severity, channel)…",
       "deliveries.show_suppressed": "Show suppressed",
@@ -700,7 +700,7 @@
 
       "status.channels": "Canali",
       "status.activity": "Attività",
-      "status.activity_sub": "(ultime 24h, buffer in memoria)",
+      "status.activity_sub": "(ultime 24h, storico persistente)",
       "status.deliveries_24h": "Consegne 24h",
       "status.by_source_empty": "per sorgente: —",
       "status.by_source": "per sorgente:",
@@ -739,7 +739,7 @@
       "channel.not_configured": "(non configurato)",
 
       "flow.title": "Flusso — come klaxond instrada gli eventi in ingresso",
-      "flow.desc": "Generato automaticamente dalla configurazione corrente. Clicca un nodo per aprire la scheda relativa. Le statistiche tra parentesi sono le consegne delle ultime 24h da <code>/api/deliveries</code> (buffer in memoria di klaxond; si azzera al riavvio).",
+      "flow.desc": "Generato automaticamente dalla configurazione corrente. Clicca un nodo per aprire la scheda relativa. Le statistiche tra parentesi sono le consegne delle ultime 24h da <code>/api/deliveries</code> (storico persistente delle consegne di klaxond).",
       "flow.animate": "Anima",
       "flow.animate_title": "Tratteggi animati sulle frecce e pulse sui nodi attivi di recente",
       "flow.autorefresh": "Auto-aggiorna statistiche",
@@ -819,7 +819,7 @@
       "sched.saved": "Salvate {count} schedulazioni.",
 
       "deliveries.title": "Consegne recenti",
-      "deliveries.sub": "(ultime 50, più recenti prima)",
+      "deliveries.sub": "(persistenti, più recenti prima)",
       "deliveries.desc": "Include sia eventi consegnati sia eventi <span class=\"ch-suppressed\">soppressi</span>. Le righe soppresse mostrano la regola che ha fatto match nella colonna Canale.",
       "deliveries.filter_placeholder": "Filtra (titolo, sorgente, severità, canale)…",
       "deliveries.show_suppressed": "Mostra soppressi",

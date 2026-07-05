@@ -61,6 +61,11 @@ services:
       KLAXOND_BACKUP_DIR: ${KLAXOND_BACKUP_DIR:-/data/backups}
       DEDUP_PENDING_DIR: ${DEDUP_PENDING_DIR:-/data/dedup_pending}
       BESZEL_DB_PATH: ${BESZEL_DB_PATH:-/beszel_data/data.db}
+      KLAXOND_SQLITE_PATH: ${KLAXOND_SQLITE_PATH:-/data/klaxond.db}
+      KLAXOND_HISTORY_BACKEND: ${KLAXOND_HISTORY_BACKEND:-sqlite}
+      KLAXOND_POSTGRES_URL: ${KLAXOND_POSTGRES_URL:-}
+      KLAXOND_HISTORY_RETENTION: ${KLAXOND_HISTORY_RETENTION:-5000}
+      KLAXOND_HISTORY_DEFAULT_LIMIT: ${KLAXOND_HISTORY_DEFAULT_LIMIT:-500}
     volumes:
       - klaxond-data:/data
       # Full UI/compose parity: instead of using the named volume above, you can
@@ -71,5 +76,25 @@ services:
       # - ./dedup-config.json:/data/dedup-config.json:rw
       # - ./auth-config.json:/data/auth-config.json:rw
 
+  # Optional PostgreSQL history DB. SQLite under /data is the default; enable
+  # this profile and set KLAXOND_HISTORY_BACKEND=postgres plus
+  # KLAXOND_POSTGRES_URL=postgres://klaxond:password@klaxond-postgres:5432/klaxond
+  # when you want a central DB shared by multiple backend instances.
+  klaxond-postgres:
+    image: ${KLAXOND_POSTGRES_IMAGE:-postgres:17-alpine}
+    container_name: ${KLAXOND_POSTGRES_CONTAINER:-klaxond-postgres}
+    restart: unless-stopped
+    profiles: ["postgres"]
+    ports:
+      - "${KLAXOND_POSTGRES_BIND:-127.0.0.1:55432}:5432"
+    environment:
+      POSTGRES_DB: ${KLAXOND_POSTGRES_DB:-klaxond}
+      POSTGRES_USER: ${KLAXOND_POSTGRES_USER:-klaxond}
+      POSTGRES_PASSWORD: ${KLAXOND_POSTGRES_PASSWORD:-}
+    volumes:
+      - klaxond-postgres-data:/var/lib/postgresql/data
+
 volumes:
   klaxond-data:
+  klaxond-postgres-data:
+    name: ${KLAXOND_POSTGRES_VOLUME:-klaxond-postgres-data}

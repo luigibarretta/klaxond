@@ -423,6 +423,7 @@ pub fn audit_log_delivery(
         "timestamp": (ended_at * 1000.0) as i64,
     });
     tracing::info!("AUDIT {}", record);
+    state.log_delivery(source, severity, &parts.title, channel, "");
     state.metric_inc(
         "klaxond_deliveries_total",
         &[
@@ -611,6 +612,7 @@ mod tests {
             backup_dir: data.join("backups"),
             static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
             beszel_db: data.join("missing-beszel.db"),
+            history_db: data.join("klaxond.db"),
         }
     }
 

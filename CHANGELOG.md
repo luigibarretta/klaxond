@@ -1,5 +1,15 @@
 # Klaxond — CHANGELOG
 
+## 0.14.24 — 2026-07-05
+
+- Aggiunto storico delivery persistente con SQLite di default sotto `/data` e
+  backend PostgreSQL opzionale per installazioni multi-backend.
+- Aggiunta migrazione CLI `klaxond history-migrate` tra SQLite e PostgreSQL.
+- Documentati storage history, variabili compose/TOML, OpenAPI paginata per
+  `/api/deliveries` e profilo compose PostgreSQL opzionale.
+- Aggiunti esempi repo-local per scrape Prometheus e VictoriaMetrics/vmagent,
+  accanto alla dashboard Grafana importabile.
+
 ## 0.14.23 — 2026-07-05
 
 - Aggiunto `docker-compose.split.yml` con profili separati per backend,

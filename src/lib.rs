@@ -5,6 +5,7 @@ pub mod dedup;
 pub mod delivery;
 pub mod endpoints;
 pub mod handlers;
+pub mod history;
 pub mod inhibition;
 pub mod log_buffer;
 pub mod openapi;

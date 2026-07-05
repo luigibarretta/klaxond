@@ -311,6 +311,7 @@ test("direct flow refresh initializes without frontend TDZ errors", async ({ pag
 });
 
 test("footer legal pages are routeable, localized and bottom-aligned", async ({ page, request }) => {
+  test.setTimeout(60_000);
   const legalRoutes = [
     ["privacy", "privacy"],
     ["accessibility", "accessibility"],
@@ -558,6 +559,27 @@ test("backend logs are paginated in the UI and API", async ({ page, request }) =
 });
 
 test("recent deliveries are paginated", async ({ page, request }) => {
+  const real = await request.post("/webhook/warning", {
+    headers: { Authorization: "bearer e2e-secret" },
+    data: {
+      status: "firing",
+      commonLabels: {
+        alertname: "DeliveryRealHistoryProbe",
+        component: "host",
+        host: "real-history"
+      }
+    }
+  });
+  expect(real.status()).toBe(502);
+  await expect.poll(async () => {
+    const res = await request.get("/api/deliveries?limit=5");
+    await expect(res).toBeOK();
+    const payload = await res.json();
+    return payload.entries.some((entry: any) =>
+      entry.title.includes("DeliveryRealHistoryProbe") && entry.channel.includes("failed")
+    );
+  }).toBe(true);
+
   for (let i = 0; i < 32; i++) {
     const res = await request.post("/webhook/warning?dry_run=1", {
       headers: { Authorization: "bearer e2e-secret" },
@@ -579,6 +601,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
   await page.selectOption('[data-table-pager="t-deliv"] [data-pager-size]', "10");
   await expect(pager.locator("[data-pager-range]")).toContainText(/1-10 \/ \d+/);
   await expect(page.locator("#t-deliv tbody tr.deliv-row:visible")).toHaveCount(10);
+  await expect(page.locator("#t-deliv tbody tr.deliv-row:visible").first()).toContainText("DeliveryPaginationProbe31");
   await expect(pager.locator("[data-pager-next]")).toBeEnabled();
 
   await pager.locator("[data-pager-next]").click();

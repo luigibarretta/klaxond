@@ -102,6 +102,16 @@ auth_session_key = "auth-session.key"
 backup_dir = "backups"
 dedup_pending_dir = "dedup_pending"
 beszel_db = "/beszel_data/data.db"
+history_db = "klaxond.db"
+
+[history]
+# sqlite is the default and stores persistent delivery history under /data.
+# Set backend="postgres" plus postgres_url for a central DB shared by multiple
+# backend instances.
+backend = "sqlite"
+postgres_url = ""
+retention = 5000
+default_limit = 500
 
 [ingest.secrets]
 grafana = ""

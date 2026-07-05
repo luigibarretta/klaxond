@@ -712,14 +712,30 @@ const applyTablePager = (...args) => window.KlaxondTablePager?.applyTablePager(.
 const refreshTablePagers = (...args) => window.KlaxondTablePager?.refreshTablePagers(...args);
 const showTableRowPage = (...args) => window.KlaxondTablePager?.showTableRowPage(...args);
 
-// Aggregate 24h activity from existing endpoints (no new backend needed).
+function normalizeDeliveries(payload) {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.entries)) return payload.entries;
+  return [];
+}
+
+async function fetchDeliveries(limit = 0) {
+  const suffix = limit ? `?limit=${encodeURIComponent(limit)}` : "";
+  return normalizeDeliveries(await J(`/api/deliveries${suffix}`));
+}
+
+function deliveryTsSeconds(item) {
+  const raw = Number(item?.ts ?? item?.timestamp ?? 0);
+  return raw > 1000000000000 ? raw / 1000 : raw;
+}
+
+// Aggregate 24h activity from persisted delivery history.
 // Also updates the tab badges (deliveries24h / suppressions / dedup-pending).
 async function loadStatusActivity() {
-  // Deliveries: fetch ring buffer + count last 24h
+  // Deliveries: fetch persisted history + count last 24h
   try {
-    const items = await J("/api/deliveries");
+    const items = await fetchDeliveries(10000);
     const cutoff = Date.now() / 1000 - 24 * 3600;
-    const recent = (items || []).filter(it => (it.ts || 0) >= cutoff);
+    const recent = (items || []).filter(it => deliveryTsSeconds(it) >= cutoff);
     const bySource = {};
     for (const it of recent) {
       const k = it.source || "?";
@@ -1508,7 +1524,7 @@ let _delivCache = [];  // most recent fetch — filter applies client-side witho
 
 async function loadDeliv() {
   try {
-    _delivCache = await J("/api/deliveries");
+    _delivCache = await fetchDeliveries(10000);
   } catch (e) {
     fetchError("deliveries", e);
     _delivCache = [];
@@ -1583,7 +1599,7 @@ document.addEventListener("DOMContentLoaded", () => {
 function _filteredDelivRows() {
   const filter = ($("#deliv-filter")?.value || "").trim().toLowerCase();
   const showSuppressed = $("#deliv-show-suppressed")?.checked !== false;
-  return (_delivCache || []).slice().reverse().filter(r => {
+  return (_delivCache || []).filter(r => {
     const isSupp = r.channel === "suppressed" || r.channel === "dry-run-suppressed";
     if (isSupp && !showSuppressed) return false;
     if (filter) {
@@ -3346,15 +3362,15 @@ function switchToTab(name) {
 window.flowGotoTab = switchToTab;  // expose to mermaid click callbacks
 
 function _aggregateDeliveries24h(items) {
-  // items from /api/deliveries: latest-first list of audit records
-  // Each: {source, severity, channel, ok, timestamp(ms)}
-  const cutoff = Date.now() - 24 * 3600 * 1000;
+  // Items from /api/deliveries can be legacy array rows or paginated entries.
+  // Each row uses ts(seconds); older browser-only helpers may use timestamp(ms).
+  const cutoff = Date.now() / 1000 - 24 * 3600;
   const bySource = {};       // source → count
   const bySeverity = {};     // severity → count
   const byChannel = {};      // channel → count
   const bySourceSeverity = {}; // "source|severity" → count
   for (const it of items || []) {
-    const ts = it.timestamp || 0;
+    const ts = deliveryTsSeconds(it);
     if (ts < cutoff) continue;
     if (it.source)   bySource[it.source]   = (bySource[it.source] || 0) + 1;
     if (it.severity) bySeverity[it.severity] = (bySeverity[it.severity] || 0) + 1;
@@ -3546,7 +3562,7 @@ async function loadFlow() {
       J("/api/ntfy-topics"),
       J("/api/dedup-config"),
       J("/api/auth-config"),
-      J("/api/deliveries"),
+      fetchDeliveries(10000),
     ]);
     cfgs = { channel, cascade, ntfy, dedup, auth };
     stats = _aggregateDeliveries24h(deliveries);
@@ -3600,7 +3616,7 @@ function _pulseRecentActivityNodes(stats) {
 async function refreshFlowStats() {
   if (!$("#flow-diagram")?.querySelector("svg")) return;  // no diagram yet
   try {
-    const deliveries = await J("/api/deliveries");
+    const deliveries = await fetchDeliveries(10000);
     const stats = _aggregateDeliveries24h(deliveries);
     _pulseRecentActivityNodes(stats);
     // Update status timestamp

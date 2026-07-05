@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.14.23
+  version: 0.14.24
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -707,19 +707,24 @@ paths:
     get:
       tags: [Operations]
       operationId: listDeliveries
-      summary: Return the recent delivery ring buffer.
+      summary: Return persisted delivery history.
       security:
         - bearerAuth: []
         - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/HistoryLimit"
+        - $ref: "#/components/parameters/Offset"
       responses:
         "200":
-          description: Recent deliveries.
+          description: Recent deliveries. Without pagination query parameters this endpoint returns the legacy array shape; with `limit` or `offset` it returns a paginated object.
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Delivery"
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/Delivery"
+                  - $ref: "#/components/schemas/PaginatedDeliveries"
   /api/auth-config:
     get:
       tags: [Auth]
@@ -1637,6 +1642,15 @@ components:
         minimum: 1
         maximum: 200
         default: 50
+    HistoryLimit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 10000
+        default: 500
+      description: Page size for delivery history. Supplying this parameter opts into the paginated response shape.
     Offset:
       name: offset
       in: query
@@ -1892,12 +1906,18 @@ components:
       additionalProperties: true
       properties:
         ts:
-          type: string
+          type: number
+          format: double
+          description: Unix timestamp in seconds.
         source:
           type: string
         severity:
           $ref: "#/components/schemas/Severity"
+        title:
+          type: string
         channel:
+          type: string
+        suppressed_by:
           type: string
         ok:
           type: boolean
@@ -1949,6 +1969,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AuditEntry"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    PaginatedDeliveries:
+      type: object
+      required: [entries, total, limit, offset]
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
         total:
           type: integer
         limit:

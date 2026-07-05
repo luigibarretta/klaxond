@@ -133,7 +133,7 @@ async fn handle_get(
         }
         "/inhibitions" | "/api/inhibitions" => json_response(inhibition::inhibition_status(state)),
         "/api/status" => json_response(status_payload(state).await),
-        "/api/deliveries" => json_response(state.recent_deliveries()),
+        "/api/deliveries" => deliveries_response(state, full_path),
         "/api/logs" => json_response(logs_payload(full_path)),
         "/api/audit" => json_response(audit_payload(full_path)),
         "/api/render-config" => {
@@ -714,13 +714,6 @@ async fn api_test(state: &AppState, path: &str, body: Bytes) -> Response<Body> {
         "api-test",
     )
     .await;
-    state.log_delivery(
-        "api-test",
-        &severity,
-        &parts.title,
-        if ok { &channel } else { "all-failed" },
-        "",
-    );
     json_response(json!({"ok": ok, "channel": channel, "title": parts.title}))
 }
 
@@ -966,7 +959,11 @@ fn update_ntfy_topics(state: &AppState, body: Bytes) -> Response<Body> {
             return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
         }
         match load_runtime_config(&state.paths) {
-            Ok(cfg) => state.replace_config(cfg),
+            Ok(cfg) => {
+                if let Err(err) = state.try_replace_config(cfg) {
+                    return text(StatusCode::INTERNAL_SERVER_ERROR, &err);
+                }
+            }
             Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()),
         }
         let cfg = state.cfg();
@@ -2232,7 +2229,11 @@ fn restore_config(state: &AppState, body: Bytes, _authed_user: Option<&User>) ->
             restored
         };
         match load_runtime_config(&state.paths) {
-            Ok(cfg) => state.replace_config(cfg),
+            Ok(cfg) => {
+                if let Err(err) = state.try_replace_config(cfg) {
+                    return Err(format!("reload failed: {err}"));
+                }
+            }
             Err(err) => return Err(format!("reload failed: {err}")),
         }
         Ok((backup, restored_sidecars))
@@ -3445,6 +3446,25 @@ fn audit_payload(full_path: &str) -> Value {
     audit::query(query, limit, offset)
 }
 
+fn deliveries_response(state: &AppState, full_path: &str) -> Response<Body> {
+    let qs = parse_query(full_path);
+    let paginated = qs.contains_key("limit") || qs.contains_key("offset");
+    if !paginated {
+        return json_response(state.recent_deliveries());
+    }
+    let default_limit = state.with_cfg(|cfg| cfg.history.default_limit);
+    let limit = qs
+        .get("limit")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(default_limit)
+        .clamp(1, 10_000);
+    let offset = qs
+        .get("offset")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(0);
+    json_response(state.deliveries_page(limit, offset))
+}
+
 fn config_auto_backup(state: &AppState) -> anyhow::Result<Option<String>> {
     if !state.paths.config.exists() {
         return Ok(None);
@@ -3471,7 +3491,7 @@ fn persist_reload(state: &AppState, toml_value: toml::Value) -> Result<(), Strin
     config_auto_backup(state).map_err(|e| e.to_string()).ok();
     save_toml(&state.paths, &toml_value).map_err(|e| e.to_string())?;
     let cfg = load_runtime_config(&state.paths).map_err(|e| e.to_string())?;
-    state.replace_config(cfg);
+    state.try_replace_config(cfg)?;
     Ok(())
 }
 

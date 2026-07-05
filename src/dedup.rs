@@ -448,6 +448,7 @@ mod tests {
             backup_dir: data.join("backups"),
             static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
             beszel_db: data.join("missing-beszel.db"),
+            history_db: data.join("klaxond.db"),
         }
     }
 

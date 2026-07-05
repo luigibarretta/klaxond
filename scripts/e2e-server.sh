@@ -27,6 +27,8 @@ DEDUP_PENDING_DIR="$DATA/dedup_pending" \
 AUTH_CONFIG_PATH="$DATA/auth-config.json" \
 AUTH_SESSION_KEY_PATH="$DATA/auth-session.key" \
 KLAXOND_BACKUP_DIR="$DATA/backups" \
+KLAXOND_SQLITE_PATH="$DATA/klaxond.db" \
+KLAXOND_HISTORY_BACKEND="sqlite" \
 KLAXOND_INGEST_SECRET_GRAFANA="e2e-secret" \
 NTFY_URL="http://127.0.0.1:9" \
 cargo run --quiet

@@ -1,4 +1,5 @@
 use crate::config::{Paths, RuntimeConfig, load_runtime_config};
+use crate::history::{DeliveryEntry, DeliveryPage, HistoryStore};
 use crate::util::{atomic_write, random_bytes, tmp_path};
 use anyhow::{Context, Result};
 use fs2::FileExt;
@@ -23,6 +24,7 @@ pub struct AppState {
     pub config_write_lock: Arc<Mutex<()>>,
     pub session_key: Arc<Vec<u8>>,
     pub cascade_runtime_enabled: Arc<AtomicBool>,
+    pub history: Arc<RwLock<Arc<HistoryStore>>>,
     pub delivery_log: Arc<Mutex<VecDeque<DeliveryEntry>>>,
     pub suppressions: Arc<Mutex<Vec<Suppression>>>,
     pub ack_suppressions: Arc<Mutex<HashMap<String, f64>>>,
@@ -40,16 +42,6 @@ pub struct AppState {
 pub struct RenderedImage {
     pub bytes: Vec<u8>,
     pub expires_at: f64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DeliveryEntry {
-    pub ts: f64,
-    pub source: String,
-    pub severity: String,
-    pub title: String,
-    pub channel: String,
-    pub suppressed_by: String,
 }
 
 #[derive(Clone, Debug)]
@@ -106,6 +98,7 @@ impl AppState {
         let cfg = load_runtime_config(&paths)?;
         let cascade_runtime_enabled = cfg.cascade_default;
         let session_key = load_or_create_session_key(&paths, &cfg)?;
+        let history = Arc::new(HistoryStore::open(&cfg.history)?);
         let mut queues = DedupQueues::default();
         for src in crate::config::DEDUP_SOURCES {
             queues.queues.insert((*src).to_string(), Vec::new());
@@ -122,6 +115,7 @@ impl AppState {
             config_write_lock: Arc::new(Mutex::new(())),
             session_key: Arc::new(session_key),
             cascade_runtime_enabled: Arc::new(AtomicBool::new(cascade_runtime_enabled)),
+            history: Arc::new(RwLock::new(history)),
             delivery_log: Arc::new(Mutex::new(VecDeque::with_capacity(50))),
             suppressions: Arc::new(Mutex::new(Vec::new())),
             ack_suppressions: Arc::new(Mutex::new(HashMap::new())),
@@ -145,14 +139,44 @@ impl AppState {
         f(&cfg)
     }
 
-    pub fn replace_config(&self, cfg: RuntimeConfig) {
+    pub fn try_replace_config(&self, cfg: RuntimeConfig) -> Result<(), String> {
+        self.replace_history_store_if_needed(&cfg)?;
         self.cascade_runtime_enabled
             .store(cfg.cascade_default, Ordering::Relaxed);
         *write_lock(&self.config, "config") = cfg;
+        Ok(())
+    }
+
+    pub fn replace_config(&self, cfg: RuntimeConfig) {
+        if let Err(err) = self.try_replace_config(cfg) {
+            tracing::error!("failed to replace runtime config: {err}");
+        }
+    }
+
+    pub fn try_replace_config_preserving_runtime(&self, cfg: RuntimeConfig) -> Result<(), String> {
+        self.replace_history_store_if_needed(&cfg)?;
+        *write_lock(&self.config, "config") = cfg;
+        Ok(())
     }
 
     pub fn replace_config_preserving_runtime(&self, cfg: RuntimeConfig) {
-        *write_lock(&self.config, "config") = cfg;
+        if let Err(err) = self.try_replace_config_preserving_runtime(cfg) {
+            tracing::error!("failed to replace runtime config: {err}");
+        }
+    }
+
+    fn replace_history_store_if_needed(&self, cfg: &RuntimeConfig) -> Result<(), String> {
+        let current = self.with_cfg(|current| current.history.clone());
+        if current == cfg.history {
+            return Ok(());
+        }
+        let store = HistoryStore::open(&cfg.history).map_err(|err| err.to_string())?;
+        *write_lock(&self.history, "history store") = Arc::new(store);
+        Ok(())
+    }
+
+    fn history_store(&self) -> Arc<HistoryStore> {
+        read_lock(&self.history, "history store").clone()
     }
 
     pub fn with_config_write_lock<R>(&self, f: impl FnOnce() -> R) -> Result<R, String> {
@@ -185,23 +209,60 @@ impl AppState {
         channel: &str,
         suppressed_by: &str,
     ) {
-        let mut log = lock_mutex(&self.delivery_log, "delivery log");
-        if log.len() == 50 {
-            log.pop_front();
-        }
-        log.push_back(DeliveryEntry {
+        let entry = DeliveryEntry {
             ts: crate::util::now_epoch(),
             source: source.to_string(),
             severity: severity.to_string(),
             title: title.to_string(),
             channel: channel.to_string(),
             suppressed_by: suppressed_by.to_string(),
-        });
+        };
+        if let Err(err) = self.history_store().record_delivery(&entry) {
+            tracing::error!("persist delivery history failed: {err}");
+        }
+        let mut log = lock_mutex(&self.delivery_log, "delivery log");
+        if log.len() == 50 {
+            log.pop_front();
+        }
+        log.push_back(entry);
     }
 
     pub fn recent_deliveries(&self) -> Vec<DeliveryEntry> {
+        let limit = self.with_cfg(|cfg| cfg.history.default_limit);
+        match self.history_store().deliveries_page(limit, 0) {
+            Ok(page) => page.entries,
+            Err(err) => {
+                tracing::error!("read delivery history failed: {err}");
+                self.recent_deliveries_from_memory()
+            }
+        }
+    }
+
+    pub fn deliveries_page(&self, limit: usize, offset: usize) -> DeliveryPage {
+        match self.history_store().deliveries_page(limit, offset) {
+            Ok(page) => page,
+            Err(err) => {
+                tracing::error!("read paginated delivery history failed: {err}");
+                let entries = self
+                    .recent_deliveries_from_memory()
+                    .into_iter()
+                    .skip(offset)
+                    .take(limit)
+                    .collect::<Vec<_>>();
+                DeliveryPage {
+                    total: lock_mutex(&self.delivery_log, "delivery log").len(),
+                    entries,
+                    limit,
+                    offset,
+                }
+            }
+        }
+    }
+
+    fn recent_deliveries_from_memory(&self) -> Vec<DeliveryEntry> {
         lock_mutex(&self.delivery_log, "delivery log")
             .iter()
+            .rev()
             .cloned()
             .collect()
     }
@@ -318,6 +379,7 @@ mod tests {
             backup_dir: data.join("backups"),
             static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
             beszel_db: data.join("missing-beszel.db"),
+            history_db: data.join("klaxond.db"),
         }
     }
 
@@ -341,5 +403,38 @@ session_secret = "toml-session-secret"
 
         assert_eq!(key, b"toml-session-secret");
         assert!(!paths.auth_session_key.exists());
+    }
+
+    #[test]
+    fn delivery_history_survives_state_recreation() {
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        let state = AppState::new(paths.clone()).unwrap();
+        state.log_delivery("grafana", "warning", "Persist me", "dry-run", "");
+        state.log_delivery("grafana", "warning", "Newest", "dry-run", "");
+        drop(state);
+
+        let reloaded = AppState::new(paths).unwrap();
+        let deliveries = reloaded.recent_deliveries();
+        assert_eq!(deliveries.len(), 2);
+        assert_eq!(deliveries[0].title, "Newest");
+        assert_eq!(deliveries[0].source, "grafana");
+    }
+
+    #[test]
+    fn history_store_reopens_when_runtime_config_changes() {
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        let state = AppState::new(paths).unwrap();
+        state.log_delivery("grafana", "warning", "Original DB", "dry-run", "");
+
+        let mut cfg = state.cfg();
+        cfg.history.sqlite_path = tmp.path().join("next.db");
+        state.try_replace_config(cfg).unwrap();
+        state.log_delivery("grafana", "warning", "Next DB", "dry-run", "");
+
+        let deliveries = state.recent_deliveries();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].title, "Next DB");
     }
 }

@@ -27,9 +27,10 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 - **Full settings export/import**: TOML plus sidecar JSON files, import preview, automatic pre-restore backup and validated restore.
 - **Authentication**: local username/password login, optional TOTP/MFA, OIDC, trusted proxy, passkeys, API keys and PATs with granular scopes plus read-only viewer support.
 - **Operational diagnostics**: audit log, backend/frontend log search, setup checklist, notification test matrix and policy simulator.
+- **Persistent delivery history**: SQLite by default under `/data`, with optional PostgreSQL for shared multi-backend history and a built-in migration command.
 - **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
 - **Admin UI** (vanilla HTML+JS, zero build) at `/`: channel health, active inhibitions, recent deliveries, logs, audit, import/export, render config CRUD, visual ntfy push preview, cascade tier editor, channel routing config and auth management.
-- **Prometheus/Grafana ready**: `/metrics` exposes runtime counters/gauges and `docs/grafana-dashboard.json` is importable in Grafana.
+- **Prometheus/Grafana ready**: `/metrics` exposes runtime counters/gauges, with importable Grafana dashboard and Prometheus/VictoriaMetrics scrape examples under `docs/`.
 - **Documented API contract**: `docs/openapi.yaml` is bundled and served at `/openapi.yaml` and `/api/openapi.yaml`; Swagger UI is available at `/api/docs`, `/api/swagger` and `/api/swagger-ui`.
 - **Rust backend** — single `klaxond` binary built with Cargo, served from a small Alpine runtime image.
 
@@ -112,7 +113,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/setup-status` | Setup/readiness checklist |
 | `GET` | `/api/channel-test-matrix` | Dry-run channel connectivity matrix; sends no notification |
 | `GET` | `/api/inhibitions` | Active in-memory suppressions with TTL |
-| `GET` | `/api/deliveries` | Rolling buffer of the last 50 deliveries |
+| `GET` | `/api/deliveries` | Persistent delivery history; add `limit`/`offset` for the paginated shape |
 | `GET` | `/api/logs` | Runtime/backend/frontend log buffer with keyword, level and pagination filters |
 | `GET` | `/api/audit` | Security/configuration audit ring buffer with keyword and pagination filters |
 | `GET` | `/auth/me` | Current authenticated user, auth mode, scopes and browser CSRF token |
@@ -139,7 +140,13 @@ complete route list, schemas, auth requirements and response contracts.
 
 ## Observability
 
-Scrape `GET /metrics` with Prometheus. The endpoint includes:
+Scrape `GET /metrics` with Prometheus-compatible collectors. Ready-to-copy
+examples are available for both Prometheus and VictoriaMetrics vmagent:
+
+- [`docs/prometheus-scrape.example.yml`](docs/prometheus-scrape.example.yml)
+- [`docs/victoriametrics-scrape.example.yml`](docs/victoriametrics-scrape.example.yml)
+
+The endpoint includes:
 
 - `klaxond_info{version=...}`
 - `klaxond_uptime_seconds`
@@ -167,6 +174,55 @@ keeps deploy-time secret managers authoritative.
 | `SMTP_USER`, `SMTP_PASSWORD` | SMTP tier |
 | `AUTH_SESSION_SECRET`, `AUTH_OIDC_CLIENT_SECRET`, `AUTH_BASIC_PASSWORD_HASH` | auth bootstrap/secrets |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | inbound webhook shared secrets |
+
+### Delivery history storage
+
+Klaxond stores delivery history persistently. SQLite is the default and writes
+to `/data/klaxond.db`, which keeps a normal single-container install simple. Use
+PostgreSQL when several backend instances must share one history database.
+
+```toml
+[paths]
+history_db = "klaxond.db"
+
+[history]
+backend = "sqlite" # sqlite or postgres
+postgres_url = ""
+retention = 5000
+default_limit = 500
+```
+
+Compose/env equivalents:
+
+| Env | TOML equivalent |
+|---|---|
+| `KLAXOND_SQLITE_PATH` | `[paths].history_db` |
+| `KLAXOND_HISTORY_BACKEND` | `[history].backend` |
+| `KLAXOND_POSTGRES_URL` | `[history].postgres_url` |
+| `KLAXOND_HISTORY_RETENTION` | `[history].retention` |
+| `KLAXOND_HISTORY_DEFAULT_LIMIT` | `[history].default_limit` |
+
+`docker-compose.yml` and `docker-compose.split.yml` include an optional
+`postgres` profile for operators who want a managed PostgreSQL sidecar. For an
+external database, set `KLAXOND_HISTORY_BACKEND=postgres` and
+`KLAXOND_POSTGRES_URL=postgres://user:password@host:5432/dbname`. The sidecar
+profile requires `KLAXOND_POSTGRES_PASSWORD`; its default published bind is
+local-only (`127.0.0.1:55432`) so it is not exposed on every host interface by
+accident.
+
+Migrate delivery history between backends with the bundled CLI:
+
+```bash
+# SQLite -> PostgreSQL
+klaxond history-migrate \
+  --from sqlite --from-url /data/klaxond.db \
+  --to postgres --to-url postgres://klaxond:password@postgres-host:5432/klaxond
+
+# PostgreSQL -> SQLite
+klaxond history-migrate \
+  --from postgres --from-url postgres://klaxond:password@postgres-host:5432/klaxond \
+  --to sqlite --to-url /data/klaxond.db
+```
 
 ### Routing + policy — `klaxond.toml`
 
@@ -262,6 +318,7 @@ Every UI-managed setting has a compose-managed path:
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
 | Dedup/grouping | `[dedup]` bootstrap or `/data/dedup-config.json` |
 | Auth, API keys/PATs, TOTP, passkeys | `[auth]` bootstrap or `/data/auth-config.json` |
+| Delivery history storage | `[history]`, `[paths].history_db`, or `KLAXOND_HISTORY_*` / `KLAXOND_POSTGRES_URL` |
 | Runtime paths exposed by compose | `[paths]` in `/data/klaxond.toml` |
 
 The reverse path is the UI **Full export** button. It exports
@@ -295,6 +352,7 @@ UI-saved values at runtime.
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | `[ingest.secrets].<source>` |
 | `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | `[paths].render_config`, `[paths].ntfy_topics`, `[paths].dedup_config`, `[paths].auth_config` |
 | `AUTH_SESSION_KEY_PATH` / `KLAXOND_BACKUP_DIR` / `DEDUP_PENDING_DIR` / `BESZEL_DB_PATH` | `[paths].auth_session_key`, `[paths].backup_dir`, `[paths].dedup_pending_dir`, `[paths].beszel_db` |
+| `KLAXOND_SQLITE_PATH` / `KLAXOND_HISTORY_BACKEND` / `KLAXOND_POSTGRES_URL` / `KLAXOND_HISTORY_RETENTION` / `KLAXOND_HISTORY_DEFAULT_LIMIT` | `[paths].history_db`, `[history].backend`, `[history].postgres_url`, `[history].retention`, `[history].default_limit` |
 | `KLAXOND_CONFIG` | bootstrap-only path to `klaxond.toml` (default `/data/klaxond.toml`) |
 
 ### Split frontend / backend / state
@@ -308,6 +366,10 @@ UI. For multi-host deployments, use `docker-compose.split.yml` instead:
 # volume driver or bind mount backed by shared storage.
 docker volume create klaxond-data
 
+# only needed when using the split PostgreSQL profile with the default
+# external volume name.
+docker volume create klaxond-postgres-data
+
 # backend host
 docker compose -f docker-compose.split.yml --profile backend up -d
 
@@ -315,8 +377,12 @@ docker compose -f docker-compose.split.yml --profile backend up -d
 KLAXOND_BACKEND_URL=http://backend-host:8181 \
 docker compose -f docker-compose.split.yml --profile frontend up -d
 
-# db/state host, optional keeper for an external/shared volume
+# state host, optional keeper for an external/shared volume
 docker compose -f docker-compose.split.yml --profile db up -d
+
+# optional PostgreSQL history host
+KLAXOND_POSTGRES_PASSWORD='<strong-random-password>' \
+docker compose -f docker-compose.split.yml --profile postgres up -d
 ```
 
 The split frontend image is nginx plus the files in `static/`. It serves the UI
@@ -328,14 +394,18 @@ terminator, forwarded protocol/port headers are preserved for OIDC callback
 generation. The frontend container always listens on internal port `8080`; use
 `KLAXOND_FRONTEND_BIND` to choose the host-side published address/port.
 
-Klaxond does not have a SQL database service. Its state tier is the `/data`
-file bundle: `klaxond.toml`, `render-config.json`, `ntfy-topics.json`,
-`dedup-config.json`, `auth-config.json`, backups, and pending dedup files. To
-place that tier on another host, expose it as an external Docker volume backed
-by NFS/Ceph/etc. and set `KLAXOND_DATA_VOLUME` in `docker-compose.split.yml`.
-The backend host must mount the same external volume; the `db` profile exists
-for operators who want to provision or keep that state tier separately, not as a
-TCP database server replacement.
+Klaxond does not require a SQL server: its core state tier is the `/data` file
+bundle: `klaxond.toml`, `render-config.json`, `ntfy-topics.json`,
+`dedup-config.json`, `auth-config.json`, backups, pending dedup files and the
+default SQLite history database. To place that file tier on another host,
+expose it as an external Docker volume backed by NFS/Ceph/etc. and set
+`KLAXOND_DATA_VOLUME` in `docker-compose.split.yml`. The backend host must mount
+the same external volume; the `db` profile exists for operators who want to
+provision or keep that state tier separately.
+
+For active/active multi-backend delivery history, prefer the optional
+PostgreSQL profile or an external PostgreSQL instance and point all backend
+containers at the same `KLAXOND_POSTGRES_URL`.
 
 ## Inhibition
 
@@ -360,11 +430,14 @@ Klaxond's inhibition is a safety net for direct posts. If you're using Alertmana
 
 ## High availability (optional)
 
-Klaxond is single-process and stateless-ish — persistent config/state lives in
-the `/data` file bundle. That means HA is a deploy-time decision, not a code
+Klaxond is single-process and mostly stateless: persistent config/state lives in
+the `/data` file bundle, and delivery history lives in SQLite by default or
+PostgreSQL when configured. That means HA is a deploy-time decision, not a code
 change.
 
-**TL;DR**: mount `/data` from shared storage (NFS, Ceph, etc.) and run two containers behind any TCP/HTTP load balancer with a `/healthz` health check.
+**TL;DR**: mount `/data` from shared storage (NFS, Ceph, etc.), use PostgreSQL
+for shared active/active delivery history, and run two containers behind any
+TCP/HTTP load balancer with a `/healthz` health check.
 
 ### Architecture
 
@@ -390,6 +463,12 @@ change.
                   │  ├ dedup-config.json     │
                   │  └ auth-config.json      │
                   └──────────────────────────┘
+                                │
+                                ▼
+                  ┌──────────────────────────┐
+                  │ optional PostgreSQL      │
+                  │ shared delivery history  │
+                  └──────────────────────────┘
 ```
 
 ### What's safe to share between instances
@@ -397,16 +476,17 @@ change.
 - **`/data/klaxond.toml`** — TOML config (channels, tiers, render rules, inhibitions). Read on startup + on POST `/api/*-config`. File-locked writes on save.
 - **`/data/render-config.json`, `ntfy-topics.json`, `dedup-config.json`, `auth-config.json`** — UI-managed sidecars. Same pattern.
 
-Both files are written atomically (write-temp-then-rename). With NFS v4 sync mode the cross-instance read-after-write is consistent. Don't use SMB — locking semantics are too loose.
+These files are written atomically (write-temp-then-rename). With NFS v4 sync mode the cross-instance read-after-write is consistent. Don't use SMB — locking semantics are too loose.
+
+SQLite delivery history is the default for single-backend installs and
+active/passive failover. For two or more simultaneously writing backend
+instances, configure PostgreSQL so history has one real multi-writer store.
 
 ### What's in-memory and NOT shared
 
 | State | Where | Impact of split between instances |
 |---|---|---|
 | Inhibition deque (recent alert hashes) | RAM, last ~256 entries per instance | Best-effort dedup. The canonical inhibition layer should be Alertmanager — this is a safety net for direct webhook posts. With 2 instances, occasional duplicate inhibition misses. |
-| Delivery history (UI "Recent deliveries") | RAM, last ~512 entries per instance | UI shows local history only. If you load-balance round-robin, each instance sees ~half the deliveries — neither has the full picture. Live in Loki/Prometheus for canonical history; klaxond's view is an immediate-debugging aid. |
-
-If you want global delivery history, scrape the klaxond logs into Loki (already free since both instances write to stdout) and query there.
 
 ### Load balancer config — Traefik example
 
@@ -469,8 +549,10 @@ klaxond/
 │   ├── parity.rs           parser/inhibition parity tests
 │   └── e2e/                Playwright smoke tests
 ├── docs/
-│   ├── openapi.yaml        canonical API contract, also served by the binary
-│   └── grafana-dashboard.json
+│   ├── openapi.yaml                  canonical API contract, also served by the binary
+│   ├── grafana-dashboard.json        importable Grafana dashboard example
+│   ├── prometheus-scrape.example.yml Prometheus scrape example
+│   └── victoriametrics-scrape.example.yml vmagent/VictoriaMetrics scrape example
 ├── .redocly.yaml           Redocly CLI rules for OpenAPI linting
 ├── klaxond.default.toml     bundled defaults, copied to /data on first run
 ├── Dockerfile              multi-stage Rust build

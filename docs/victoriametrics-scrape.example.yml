@@ -1,0 +1,25 @@
+# VictoriaMetrics vmagent scrape example for klaxond.
+#
+# vmagent accepts Prometheus-compatible scrape configs. Example flags:
+#   -promscrape.config=/etc/vmagent/klaxond-scrape.yml
+#   -remoteWrite.url=http://victoriametrics:8428/api/v1/write
+#
+# If vmagent runs in the same Compose network as klaxond, keep target
+# "klaxond:8181". If it scrapes through a reverse proxy, replace scheme/targets
+# with that proxy endpoint.
+
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: klaxond
+    metrics_path: /metrics
+    scheme: http
+    static_configs:
+      - targets:
+          - klaxond:8181
+        labels:
+          app: klaxond
+          service: klaxond
+          environment: homelab

@@ -124,7 +124,7 @@
     <div class="card" id="ch-smtp"><div class="ch-name">SMTP <span class="dot"></span></div><small class="ch-url"></small></div>
   </div>
 
-  <h2><span data-i18n="status.activity">Activity</span> <small class="muted" data-i18n="status.activity_sub">(last 24h, in-memory ring buffer)</small></h2>
+  <h2><span data-i18n="status.activity">Activity</span> <small class="muted" data-i18n="status.activity_sub">(last 24h, persisted history)</small></h2>
   <div class="grid4">
     <div class="card stat-card">
       <div class="stat-label" data-i18n="status.deliveries_24h">Deliveries 24h</div>
@@ -187,8 +187,7 @@
   <p class="muted" data-i18n-html="flow.desc">
     Auto-generated from your current configuration. Click any node to jump to
     the relevant tab. Stats in parentheses are deliveries over the last 24h
-    from <code>/api/deliveries</code> (klaxond's in-memory ring buffer; resets
-    on restart).
+    from <code>/api/deliveries</code> (klaxond's persisted delivery history).
   </p>
   <div class="card">
     <div class="row" style="gap:1em; flex-wrap:wrap; margin-bottom:0.5em">
@@ -322,7 +321,7 @@
 </section>
 
 <section id="tab-deliveries" class="tabpane">
-  <h2><span data-i18n="deliveries.title">Recent deliveries</span> <small class="muted" data-i18n="deliveries.sub">(last 50, newest first)</small></h2>
+  <h2><span data-i18n="deliveries.title">Recent deliveries</span> <small class="muted" data-i18n="deliveries.sub">(persisted, newest first)</small></h2>
   <p class="muted" data-i18n-html="deliveries.desc">
     Includes both delivered and <span class="ch-suppressed">suppressed</span> events.
     Suppressed rows show the rule that matched in the Channel column.
