@@ -8,6 +8,7 @@ let _currentUser = { sub: "anonymous", mode: "none", groups: [] };
 let _csrfToken = "";
 let _reauthInFlight = null;
 let _localTotpEnabled = null;
+let _publicLegalSessionValid = false;
 
 class AuthRedirectError extends Error {
   constructor() {
@@ -34,11 +35,33 @@ function loginStartUrl(returnTo = "/status") {
   return url.pathname + url.search;
 }
 
+function updatePublicLoginLinksText() {
+  const key = _publicLegalSessionValid ? "auth.back_to_app" : "auth.sign_in";
+  const href = _publicLegalSessionValid ? "/status" : loginStartUrl("/status");
+  document.querySelectorAll(".public-login-link").forEach(link => {
+    link.dataset.i18n = key;
+    link.textContent = tr(key);
+    link.setAttribute("href", href);
+  });
+}
+
 function setupPublicLoginLinks() {
   const target = "/status";
   const fallback = loginStartUrl(target);
-  document.querySelectorAll(".public-login-link").forEach(link => {
-    link.setAttribute("href", fallback);
+  const links = Array.from(document.querySelectorAll(".public-login-link"));
+  if (!links.length) return;
+  updatePublicLoginLinksText();
+  fetch("/auth/me", {
+    headers: { "X-Klaxond-Request": "fetch" },
+    redirect: "manual",
+  }).then(res => {
+    _publicLegalSessionValid = res.ok;
+    updatePublicLoginLinksText();
+  }).catch(() => {
+    _publicLegalSessionValid = false;
+    updatePublicLoginLinksText();
+  });
+  links.forEach(link => {
     link.addEventListener("click", async e => {
       e.preventDefault();
       try {
@@ -51,6 +74,8 @@ function setupPublicLoginLinks() {
           return;
         }
       } catch (err) {}
+      _publicLegalSessionValid = false;
+      updatePublicLoginLinksText();
       location.assign(fallback);
     });
   });
@@ -3556,6 +3581,7 @@ setInterval(() => {
 
 document.addEventListener("klaxond:languagechange", () => {
   updateAllTabAccessibleLabels();
+  updatePublicLoginLinksText();
   if (isPublicInfoPage()) return;
   loadStatus();
   loadConfigBackups();

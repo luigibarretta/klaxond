@@ -1,5 +1,11 @@
 # Klaxond — CHANGELOG
 
+## 0.14.19 — 2026-07-05
+
+- Sulle pagine pubbliche `/legal/*`, la CTA in alto mostra `Back to app` /
+  `Torna all'app` quando la sessione corrente e' gia' valida; resta `Sign in` /
+  `Accedi` solo quando serve autenticarsi.
+
 ## 0.14.18 — 2026-07-05
 
 - Resi pubblici solo i redirect legacy `/ui/<pagina>` e `/ui/index.html`, in
