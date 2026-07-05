@@ -154,15 +154,19 @@ Import [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) into Grafana
 
 ## Configuration
 
-### Secrets — env-only
+### Secrets and deploy-time overrides
 
-These are **never** written to the TOML file. Mount them via your secrets manager / `.env`:
+Secrets can be supplied from compose env vars or saved through the UI into the
+TOML/sidecar files. Env vars still win at runtime when both are present, which
+keeps deploy-time secret managers authoritative.
 
 | Var | Required for |
 |---|---|
 | `NTFY_TOKEN_INFO`, `NTFY_TOKEN_WARN`, `NTFY_TOKEN_CRIT` | ntfy tier delivery |
 | `TELEGRAM_BOT_TOKEN` | Telegram tier (also requires chat_id from TOML or env) |
 | `SMTP_USER`, `SMTP_PASSWORD` | SMTP tier |
+| `AUTH_SESSION_SECRET`, `AUTH_OIDC_CLIENT_SECRET`, `AUTH_BASIC_PASSWORD_HASH` | auth bootstrap/secrets |
+| `KLAXOND_INGEST_SECRET_<SOURCE>` | inbound webhook shared secrets |
 
 ### Routing + policy — `klaxond.toml`
 
@@ -178,13 +182,24 @@ warning  = "your-warning-topic-id"
 critical = "your-critical-topic-id"
 
 [telegram]
+api_base = "https://api.telegram.org"
+bot_token = ""
 chat_id = "your-chat-id"
 
 [smtp]
 host = "smtp.example.com"
 port = 587
+starttls = true
+user = "smtp-user"
+password = "smtp-password"
 from_addr = "klaxond@example.com"
 to_addr   = "oncall@example.com"
+
+[server]
+public_url = "https://klaxond.example.com"
+
+[acks]
+default_ttl_seconds = 3600
 
 [cascade]
 default_enabled_for_webhook = false   # /beszel/* always uses cascade
@@ -203,6 +218,9 @@ timeout_seconds = 10
 
 [render]
 grafana_base = "https://grafana.example.com"
+grafana_render_base = "https://grafana-renderer.example.com"
+grafana_render_token = ""
+render_image_ttl = 900
 
 [render.severity_emoji]
 info     = "ℹ️"
@@ -230,19 +248,45 @@ match_regex = "^blackbox-(https|http).*"
 ttl_seconds = 900
 ```
 
+### UI / compose parity
+
+Every UI-managed setting has a compose-managed path:
+
+| UI area | Compose-managed source |
+|---|---|
+| Routing: ntfy URL, Telegram, SMTP | env vars or `/data/klaxond.toml` |
+| Routing: ntfy topics and bearer tokens | env vars, `[ntfy.topics]`, or `/data/ntfy-topics.json` |
+| Routing: inbound webhook secrets | `KLAXOND_INGEST_SECRET_<SOURCE>` or `[ingest.secrets]` |
+| Cascade, delivery policies, inhibitions, schedules | `/data/klaxond.toml` |
+| Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
+| Dedup/grouping | `[dedup]` bootstrap or `/data/dedup-config.json` |
+| Auth, API keys/PATs, TOTP, passkeys | `[auth]` bootstrap or `/data/auth-config.json` |
+
+The reverse path is the UI **Full export** button. It exports
+`klaxond.toml`, `render-config.json`, `ntfy-topics.json`, `dedup-config.json`
+and `auth-config.json`; bind-mount those files in compose when you want the
+same settings managed declaratively.
+
 ### Optional env overrides
 
-Anything in TOML can be overridden by an env var. Use this only as a migration aid or when you really want to pin a value at deploy-time.
+Use env vars when you want compose/secrets-manager values to override TOML or
+UI-saved values at runtime.
 
 | Env | Overrides |
 |---|---|
 | `NTFY_URL` | `[ntfy].url` |
 | `TOPIC_INFO` / `TOPIC_WARN` / `TOPIC_CRIT` | `[ntfy.topics].*` |
-| `TELEGRAM_CHAT_ID` | `[telegram].chat_id` |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_FROM` / `SMTP_TO` | `[smtp].*` |
-| `GRAFANA_BASE` | `[render].grafana_base` |
+| `NTFY_TOKEN_INFO` / `NTFY_TOKEN_WARN` / `NTFY_TOKEN_CRIT` | matching single-severity ntfy topic tokens |
+| `TELEGRAM_CHAT_ID` / `TELEGRAM_BOT_TOKEN` / `TELEGRAM_API_BASE` | `[telegram].*` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_STARTTLS` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_TO` | `[smtp].*` |
+| `GRAFANA_BASE` / `GRAFANA_RENDER_BASE` / `GRAFANA_RENDER_TOKEN` / `RENDER_IMAGE_TTL` | `[render].*` |
+| `KLAXOND_PUBLIC_URL` | `[server].public_url` |
+| `ACK_DEFAULT_TTL_SECONDS` | `[acks].default_ttl_seconds` |
 | `CASCADE_ENABLED` | `[cascade].default_enabled_for_webhook` |
+| `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | initial `[auth]` bootstrap when `auth-config.json` does not exist |
+| `KLAXOND_INGEST_SECRET_<SOURCE>` | `[ingest.secrets].<source>` |
 | `KLAXOND_CONFIG` | path to klaxond.toml (default `/data/klaxond.toml`) |
+| `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | sidecar paths |
 | `PORT` | listen port (default `8181`) |
 
 ## Inhibition

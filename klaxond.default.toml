@@ -1,8 +1,8 @@
 # klaxond.toml — bootstrap config for Klaxond notification bridge.
 # Loaded at container start from /data/klaxond.toml (or KLAXOND_CONFIG path).
 # If the file is missing, the defaults below are written on first run.
-# Env vars (NTFY_TOKEN_*, TELEGRAM_BOT_TOKEN, SMTP_*) override the runtime
-# secrets — they are NOT stored in this file.
+# Env vars from compose or a secret manager override matching TOML/sidecar values
+# at runtime when set.
 
 # ============================================================================
 # Cascade — what fallback chain to use when ntfy fails
@@ -32,6 +32,9 @@ timeout_seconds = 10
 # ============================================================================
 [render]
 grafana_base = "https://grafana.luigibarretta.com"
+grafana_render_base = ""
+grafana_render_token = ""
+render_image_ttl = 900
 
 # Emoji used in the title per severity.
 [render.severity_emoji]
@@ -80,6 +83,12 @@ beszel     = ["Beszel UI",            "https://beszel.luigibarretta.com/"]
 # instead of the Loki logs panel its button points at.
 [render.component_image]
 host = "infra-cluster-overview:10"
+
+[server]
+public_url = "http://localhost:8181"
+
+[acks]
+default_ttl_seconds = 3600
 
 
 # ============================================================================
@@ -190,3 +199,17 @@ override_critical = false
 # name = "operator_pager"     handles = ["critical"]
 # [[ntfy.topics]]
 # name = "oncall_backup"      handles = ["critical"]
+
+[telegram]
+api_base = "https://api.telegram.org"
+bot_token = ""
+chat_id = ""
+
+[smtp]
+host = ""
+port = 587
+starttls = true
+user = ""
+password = ""
+from_addr = ""
+to_addr = ""

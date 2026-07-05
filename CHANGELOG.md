@@ -1,5 +1,13 @@
 # Klaxond — CHANGELOG
 
+## 0.14.21 — 2026-07-05
+
+- Allineata la parita' tra compose/TOML/sidecar e UI: i campi runtime
+  Telegram, SMTP, render Grafana, URL pubblico e TTL ack sono ora impostabili
+  sia da config deploy-time sia dalla UI, con precedenza alle env di compose.
+- Estesi `docker-compose.yml`, `.env.example`, README e test per coprire tutte
+  le env runtime e i file esportabili dalla UI.
+
 ## 0.14.20 — 2026-07-05
 
 - I link legal nella pagina di login ora passano `from=login`, cosi' le pagine

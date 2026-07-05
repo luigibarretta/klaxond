@@ -489,6 +489,23 @@ host=it1-prd-dev-01</textarea>
     <span data-i18n-html="render.desc_before_base">When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button "Open &lt;label&gt;" pointing to URL. URLs starting with <code>/</code> are appended to</span>
     <code id="gbase">https://grafana.example.com</code><span data-i18n="render.desc_after_base">.</span>
   </p>
+  <div class="card">
+    <h3 data-i18n="render.runtime_settings">Runtime settings</h3>
+    <div class="grid2">
+      <label><span data-i18n="render.grafana_base">Grafana base URL</span> <input type="text" id="rc-grafana-base"></label>
+      <label><span data-i18n="render.public_url">Public klaxond URL</span> <input type="text" id="rc-public-url"></label>
+    </div>
+    <div class="grid2">
+      <label><span data-i18n="render.grafana_render_base">Grafana render base URL</span> <input type="text" id="rc-grafana-render-base"></label>
+      <label><span data-i18n="render.grafana_render_token">Grafana render token</span> <input type="password" id="rc-grafana-render-token" autocomplete="off"></label>
+    </div>
+    <label><input type="checkbox" id="rc-grafana-render-token-clear"> <span data-i18n="render.clear_render_token">Clear Grafana render token</span></label>
+    <div class="grid2">
+      <label><span data-i18n="render.image_ttl">Image TTL seconds</span> <input type="number" id="rc-render-image-ttl" min="1" max="86400"></label>
+      <label><span data-i18n="render.ack_ttl">Ack default TTL seconds</span> <input type="number" id="rc-ack-default-ttl" min="60" max="86400"></label>
+    </div>
+    <div class="muted" id="rc-runtime-status"></div>
+  </div>
   <table id="t-rc">
     <thead><tr><th data-i18n="common.component">Component</th><th data-i18n="render.button_label">Button label</th><th>URL</th><th data-i18n="common.actions">Actions</th></tr></thead>
     <tbody></tbody>
@@ -540,7 +557,7 @@ host=it1-prd-dev-01</textarea>
 
 <section id="tab-routing" class="tabpane">
   <h2 data-i18n="routing.title">Channel routing</h2>
-  <p class="muted" data-i18n-html="routing.desc">Non-secret routing config (URLs, topic ids, host:port). Saved to <code>/data/klaxond.toml</code>. Secrets (Bearer tokens, bot tokens, SMTP password) stay in env vars from the Ansible vault and are NOT editable here.</p>
+  <p class="muted" data-i18n-html="routing.desc">Routing config is saved to <code>/data/klaxond.toml</code> or sidecars. Compose env vars still take precedence when set.</p>
 
   <h3 style="margin-top:18px">ntfy</h3>
   <div class="card">
@@ -571,7 +588,12 @@ host=it1-prd-dev-01</textarea>
 
   <h3>Telegram</h3>
   <div class="card">
-    <label><span data-i18n="routing.chat_id">Chat ID</span> <input type="text" id="r-tg-chat"></label>
+    <div class="grid2">
+      <label><span data-i18n="routing.chat_id">Chat ID</span> <input type="text" id="r-tg-chat"></label>
+      <label><span data-i18n="routing.api_base">API base URL</span> <input type="text" id="r-tg-api-base"></label>
+    </div>
+    <label><span data-i18n="routing.bot_token_label">Bot token</span> <input type="password" id="r-tg-token" autocomplete="off"></label>
+    <label><input type="checkbox" id="r-tg-token-clear"> <span data-i18n="routing.clear_bot_token">Clear bot token</span></label>
     <div class="muted" id="r-tg-status"></div>
   </div>
 
@@ -585,6 +607,12 @@ host=it1-prd-dev-01</textarea>
       <label><span data-i18n="routing.from_addr">From address</span> <input type="text" id="r-smtp-from"></label>
       <label><span data-i18n="routing.to_addr">To address</span> <input type="text" id="r-smtp-to"></label>
     </div>
+    <div class="grid2">
+      <label><span data-i18n="routing.user_label">Username</span> <input type="text" id="r-smtp-user" autocomplete="username"></label>
+      <label><span data-i18n="routing.password_label">Password</span> <input type="password" id="r-smtp-password" autocomplete="new-password"></label>
+    </div>
+    <label><input type="checkbox" id="r-smtp-starttls"> <span data-i18n="routing.starttls">Use STARTTLS</span></label>
+    <label><input type="checkbox" id="r-smtp-password-clear"> <span data-i18n="routing.clear_smtp_password">Clear SMTP password</span></label>
     <div class="muted" id="r-smtp-status"></div>
   </div>
 

@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.20";
+pub const VERSION: &str = "0.14.21";
 pub const AUTHOR_NAME: &str = "Luigi Barretta";
 pub const AUTHOR_URL: &str = "https://github.com/luigibarretta";
 pub const DEDUP_SOURCES: &[&str] = &[
@@ -496,10 +496,7 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
 
     let render_seed =
         read_component_dashboards(toml_get(&toml, &["render", "component_dashboards"]));
-    let mut component_dashboards = load_render_config(paths, &render_seed)?;
-    if !render_seed.is_empty() {
-        component_dashboards = render_seed;
-    }
+    let component_dashboards = load_render_config(paths, &render_seed)?;
 
     let component_image = read_component_image(toml_get(&toml, &["render", "component_image"]));
     let grafana_base = std::env::var("GRAFANA_BASE")
@@ -510,7 +507,9 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
                 .and_then(|v| v.as_str())
                 .map(ToOwned::to_owned)
         })
-        .unwrap_or_else(|| "https://grafana.example.com".to_string());
+        .unwrap_or_else(|| "https://grafana.example.com".to_string())
+        .trim_end_matches('/')
+        .to_string();
 
     let cascade_default_toml = toml_bool(
         toml_get(&toml, &["cascade", "default_enabled_for_webhook"]),
@@ -543,7 +542,54 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
                 .map(|v| v as u16)
         })
         .unwrap_or(587);
-    let smtp_user = env_string("SMTP_USER");
+    let smtp_starttls_toml = toml_bool(toml_get(&toml, &["smtp", "starttls"]), true);
+    let smtp_starttls = env_bool("SMTP_STARTTLS", smtp_starttls_toml);
+    let smtp_user =
+        env_string("SMTP_USER").if_empty_else(|| toml_string(toml_get(&toml, &["smtp", "user"])));
+    let smtp_pass = env_string("SMTP_PASSWORD")
+        .if_empty_else(|| toml_string(toml_get(&toml, &["smtp", "password"])));
+    let tg_token = env_string("TELEGRAM_BOT_TOKEN")
+        .if_empty_else(|| toml_string(toml_get(&toml, &["telegram", "bot_token"])));
+    let telegram_api_base = env_string("TELEGRAM_API_BASE")
+        .if_empty_else(|| toml_string(toml_get(&toml, &["telegram", "api_base"])))
+        .trim_end_matches('/')
+        .to_string()
+        .if_empty_else(|| "https://api.telegram.org".to_string());
+    let grafana_render_base = env_string("GRAFANA_RENDER_BASE")
+        .if_empty_else(|| toml_string(toml_get(&toml, &["render", "grafana_render_base"])))
+        .trim_end_matches('/')
+        .to_string();
+    let grafana_render_token = env_string("GRAFANA_RENDER_TOKEN")
+        .if_empty_else(|| toml_string(toml_get(&toml, &["render", "grafana_render_token"])));
+    let render_image_ttl = std::env::var("RENDER_IMAGE_TTL")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or_else(|| {
+            toml_get(&toml, &["render", "render_image_ttl"])
+                .and_then(|v| v.as_integer())
+                .map(|v| v.max(1) as u64)
+        })
+        .unwrap_or(900);
+    let public_url = std::env::var("KLAXOND_PUBLIC_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            toml_get(&toml, &["server", "public_url"])
+                .and_then(|v| v.as_str())
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "http://localhost:8181".to_string())
+        .trim_end_matches('/')
+        .to_string();
+    let ack_default_ttl = std::env::var("ACK_DEFAULT_TTL_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .or_else(|| {
+            toml_get(&toml, &["acks", "default_ttl_seconds"])
+                .and_then(|v| v.as_integer())
+                .map(|v| v.max(1) as u64)
+        })
+        .unwrap_or(3600);
     Ok(RuntimeConfig {
         toml,
         ntfy_url,
@@ -564,31 +610,19 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
         tg_chat: String::new(),
         smtp_host: String::new(),
         smtp_port,
-        smtp_starttls: true,
+        smtp_starttls,
         smtp_from: String::new(),
         smtp_to: String::new(),
-        tg_token: env_string("TELEGRAM_BOT_TOKEN"),
-        telegram_api_base: env_string("TELEGRAM_API_BASE")
-            .trim_end_matches('/')
-            .to_string()
-            .if_empty_else(|| "https://api.telegram.org".to_string()),
+        tg_token,
+        telegram_api_base,
         smtp_user,
-        smtp_pass: env_string("SMTP_PASSWORD"),
+        smtp_pass,
         grafana_base,
-        grafana_render_base: env_string("GRAFANA_RENDER_BASE")
-            .trim_end_matches('/')
-            .to_string(),
-        grafana_render_token: env_string("GRAFANA_RENDER_TOKEN"),
-        render_image_ttl: std::env::var("RENDER_IMAGE_TTL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(900),
-        public_url: std::env::var("KLAXOND_PUBLIC_URL")
-            .unwrap_or_else(|_| "http://localhost:8181".to_string()),
-        ack_default_ttl: std::env::var("ACK_DEFAULT_TTL_SECONDS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(3600),
+        grafana_render_base,
+        grafana_render_token,
+        render_image_ttl,
+        public_url,
+        ack_default_ttl,
         beszel_db: paths.beszel_db.clone(),
     }
     .with_channels())
@@ -1330,7 +1364,58 @@ pub fn save_toml(paths: &Paths, cfg: &toml::Value) -> Result<()> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    const RUNTIME_COMPOSE_ENV_KEYS: &[&str] = &[
+        "NTFY_URL",
+        "NTFY_TOKEN_INFO",
+        "NTFY_TOKEN_WARN",
+        "NTFY_TOKEN_CRIT",
+        "TOPIC_INFO",
+        "TOPIC_WARN",
+        "TOPIC_CRIT",
+        "CASCADE_ENABLED",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "TELEGRAM_API_BASE",
+        "SMTP_HOST",
+        "SMTP_PORT",
+        "SMTP_STARTTLS",
+        "SMTP_USER",
+        "SMTP_PASSWORD",
+        "SMTP_FROM",
+        "SMTP_TO",
+        "GRAFANA_BASE",
+        "GRAFANA_RENDER_BASE",
+        "GRAFANA_RENDER_TOKEN",
+        "RENDER_IMAGE_TTL",
+        "KLAXOND_PUBLIC_URL",
+        "ACK_DEFAULT_TTL_SECONDS",
+        "AUTH_SESSION_SECRET",
+        "AUTH_OIDC_CLIENT_SECRET",
+        "AUTH_BASIC_PASSWORD_HASH",
+        "KLAXOND_INGEST_SECRET_GRAFANA",
+        "KLAXOND_INGEST_SECRET_BESZEL",
+        "KLAXOND_INGEST_SECRET_HEALTHCHECKS",
+        "KLAXOND_INGEST_SECRET_WUD",
+        "KLAXOND_INGEST_SECRET_AUTHENTIK",
+        "KLAXOND_INGEST_SECRET_SHELFMARK",
+        "KLAXOND_INGEST_SECRET_PROWLARR",
+        "KLAXOND_INGEST_SECRET_DECYPHARR",
+        "PORT",
+        "KLAXOND_CONFIG",
+        "RENDER_CONFIG_PATH",
+        "NTFY_TOPICS_PATH",
+        "DEDUP_CONFIG_PATH",
+        "AUTH_CONFIG_PATH",
+        "AUTH_SESSION_KEY_PATH",
+        "KLAXOND_BACKUP_DIR",
+        "DEDUP_PENDING_DIR",
+        "BESZEL_DB_PATH",
+    ];
 
     fn temp_paths(tmp: &TempDir) -> Paths {
         let data = tmp.path();
@@ -1349,8 +1434,48 @@ mod tests {
         }
     }
 
+    fn clear_runtime_env() {
+        for key in RUNTIME_COMPOSE_ENV_KEYS {
+            // SAFETY: callers hold ENV_LOCK while mutating process-wide env state.
+            unsafe { std::env::remove_var(key) };
+        }
+    }
+
+    #[test]
+    fn render_sidecar_overrides_toml_seed_after_ui_save() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_runtime_env();
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        let toml_seed: toml::Value = toml::from_str(
+            r#"
+[render.component_dashboards]
+host = ["TOML dashboard", "/d/toml"]
+"#,
+        )
+        .unwrap();
+        save_toml(&paths, &toml_seed).unwrap();
+        save_render_config(
+            &paths,
+            &HashMap::from([(
+                "host".into(),
+                ["UI dashboard".to_string(), "/d/ui".to_string()],
+            )]),
+        )
+        .unwrap();
+
+        let cfg = load_runtime_config(&paths).unwrap();
+
+        assert_eq!(
+            cfg.component_dashboards.get("host").unwrap(),
+            &["UI dashboard".to_string(), "/d/ui".to_string()]
+        );
+    }
+
     #[test]
     fn restore_sidecars_from_toml_replaces_stale_sidecar_values() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_runtime_env();
         let tmp = TempDir::new().unwrap();
         let paths = temp_paths(&tmp);
         save_ntfy_topics(
@@ -1433,5 +1558,153 @@ override_critical = true
         assert_eq!(cfg.dedup["wud"].window_s, 42);
         assert_eq!(cfg.dedup["wud"].strategy, "time");
         assert!(cfg.dedup["wud"].override_critical);
+    }
+
+    #[test]
+    fn toml_can_drive_runtime_settings_that_ui_can_edit() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_runtime_env();
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        fs::write(
+            &paths.config,
+            r#"
+[ntfy]
+url = "https://push.example.test"
+
+[ntfy.topics]
+info = "info-topic"
+warning = "warn-topic"
+critical = "crit-topic"
+
+[telegram]
+api_base = "https://telegram.example.test/"
+bot_token = "toml-telegram-token"
+chat_id = "12345"
+
+[smtp]
+host = "smtp.example.test"
+port = 2525
+starttls = false
+user = "smtp-user"
+password = "smtp-pass"
+from_addr = "from@example.test"
+to_addr = "to@example.test"
+
+[render]
+grafana_base = "https://grafana.example.test/"
+grafana_render_base = "https://render.example.test/"
+grafana_render_token = "render-token"
+render_image_ttl = 42
+
+[server]
+public_url = "https://klaxond.example.test/"
+
+[acks]
+default_ttl_seconds = 1234
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_runtime_config(&paths).unwrap();
+
+        assert_eq!(cfg.ntfy_url, "https://push.example.test");
+        assert_eq!(cfg.telegram_api_base, "https://telegram.example.test");
+        assert_eq!(cfg.tg_token, "toml-telegram-token");
+        assert_eq!(cfg.tg_chat, "12345");
+        assert_eq!(cfg.smtp_host, "smtp.example.test");
+        assert_eq!(cfg.smtp_port, 2525);
+        assert!(!cfg.smtp_starttls);
+        assert_eq!(cfg.smtp_user, "smtp-user");
+        assert_eq!(cfg.smtp_pass, "smtp-pass");
+        assert_eq!(cfg.smtp_from, "from@example.test");
+        assert_eq!(cfg.smtp_to, "to@example.test");
+        assert_eq!(cfg.grafana_base, "https://grafana.example.test");
+        assert_eq!(cfg.grafana_render_base, "https://render.example.test");
+        assert_eq!(cfg.grafana_render_token, "render-token");
+        assert_eq!(cfg.render_image_ttl, 42);
+        assert_eq!(cfg.public_url, "https://klaxond.example.test");
+        assert_eq!(cfg.ack_default_ttl, 1234);
+    }
+
+    #[test]
+    fn env_overrides_toml_for_compose_runtime_settings() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_runtime_env();
+        // SAFETY: this test holds ENV_LOCK for the full mutation window.
+        unsafe {
+            std::env::set_var("TELEGRAM_BOT_TOKEN", "env-telegram-token");
+            std::env::set_var("TELEGRAM_API_BASE", "https://telegram-env.example.test/");
+            std::env::set_var("SMTP_USER", "env-smtp-user");
+            std::env::set_var("SMTP_PASSWORD", "env-smtp-pass");
+            std::env::set_var("SMTP_STARTTLS", "true");
+            std::env::set_var("GRAFANA_RENDER_BASE", "https://render-env.example.test/");
+            std::env::set_var("GRAFANA_RENDER_TOKEN", "env-render-token");
+            std::env::set_var("RENDER_IMAGE_TTL", "77");
+            std::env::set_var("KLAXOND_PUBLIC_URL", "https://klaxond-env.example.test");
+            std::env::set_var("ACK_DEFAULT_TTL_SECONDS", "2345");
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        fs::write(
+            &paths.config,
+            r#"
+[render]
+grafana_render_base = "https://render-toml.example.test"
+grafana_render_token = "toml-render-token"
+render_image_ttl = 42
+
+[telegram]
+api_base = "https://telegram-toml.example.test"
+bot_token = "toml-telegram-token"
+
+[smtp]
+starttls = false
+user = "toml-smtp-user"
+password = "toml-smtp-pass"
+
+[server]
+public_url = "https://klaxond-toml.example.test"
+
+[acks]
+default_ttl_seconds = 1234
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_runtime_config(&paths).unwrap();
+        assert_eq!(cfg.tg_token, "env-telegram-token");
+        assert_eq!(cfg.telegram_api_base, "https://telegram-env.example.test");
+        assert_eq!(cfg.smtp_user, "env-smtp-user");
+        assert_eq!(cfg.smtp_pass, "env-smtp-pass");
+        assert!(cfg.smtp_starttls);
+        assert_eq!(cfg.grafana_render_base, "https://render-env.example.test");
+        assert_eq!(cfg.grafana_render_token, "env-render-token");
+        assert_eq!(cfg.render_image_ttl, 77);
+        assert_eq!(cfg.public_url, "https://klaxond-env.example.test");
+        assert_eq!(cfg.ack_default_ttl, 2345);
+
+        clear_runtime_env();
+    }
+
+    #[test]
+    fn reference_compose_and_env_example_cover_runtime_env_vars() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let compose = fs::read_to_string(root.join("docker-compose.yml")).unwrap();
+        let env_example = fs::read_to_string(root.join(".env.example")).unwrap();
+        for key in RUNTIME_COMPOSE_ENV_KEYS {
+            assert!(
+                compose.contains(&format!("{key}: ${{{key}")),
+                "docker-compose.yml missing {key}"
+            );
+            assert!(
+                env_example
+                    .lines()
+                    .any(|line| line.starts_with(&format!("{key}="))
+                        || line.starts_with(&format!("# {key}="))),
+                ".env.example missing {key}"
+            );
+        }
     }
 }

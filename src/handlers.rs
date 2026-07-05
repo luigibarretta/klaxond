@@ -138,9 +138,26 @@ async fn handle_get(
         "/api/audit" => json_response(audit_payload(full_path)),
         "/api/render-config" => {
             let cfg = state.cfg();
-            json_response(
-                json!({"component_dashboards": cfg.component_dashboards, "grafana_base": cfg.grafana_base}),
-            )
+            json_response(json!({
+                "component_dashboards": cfg.component_dashboards,
+                "grafana_base": cfg.grafana_base,
+                "settings": {
+                    "grafana_base": cfg.grafana_base,
+                    "grafana_render_base": cfg.grafana_render_base,
+                    "grafana_render_token_configured": !cfg.grafana_render_token.is_empty(),
+                    "render_image_ttl": cfg.render_image_ttl,
+                    "public_url": cfg.public_url,
+                    "ack_default_ttl": cfg.ack_default_ttl,
+                    "from_env": {
+                        "grafana_base": !env_string("GRAFANA_BASE").is_empty(),
+                        "grafana_render_base": !env_string("GRAFANA_RENDER_BASE").is_empty(),
+                        "grafana_render_token": !env_string("GRAFANA_RENDER_TOKEN").is_empty(),
+                        "render_image_ttl": std::env::var("RENDER_IMAGE_TTL").is_ok(),
+                        "public_url": std::env::var("KLAXOND_PUBLIC_URL").is_ok(),
+                        "ack_default_ttl": std::env::var("ACK_DEFAULT_TTL_SECONDS").is_ok(),
+                    }
+                }
+            }))
         }
         "/api/cascade-config" => {
             let cfg = state.cfg();
@@ -767,6 +784,7 @@ fn update_render_config(state: &AppState, body: Bytes) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
+    let has_dashboards = payload.get("component_dashboards").is_some();
     let mut cleaned: HashMap<String, [String; 2]> = HashMap::new();
     if let Some(obj) = payload
         .get("component_dashboards")
@@ -792,15 +810,87 @@ fn update_render_config(state: &AppState, body: Bytes) -> Response<Body> {
     }
     state
         .with_config_write_lock(|| {
-            if let Err(err) = save_render_config(&state.paths, &cleaned) {
-                return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
-            }
             let mut cfg = state.cfg();
-            cfg.component_dashboards = cleaned.clone();
+            if has_dashboards {
+                if let Err(err) = save_render_config(&state.paths, &cleaned) {
+                    return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
+                }
+                cfg.component_dashboards = cleaned.clone();
+                toml_table_mut(&mut cfg.toml, &["render"])
+                    .insert("component_dashboards".into(), dashboards_to_toml(&cleaned));
+            }
+            if let Some(settings) = payload.get("settings").and_then(|v| v.as_object()) {
+                {
+                    let render = toml_table_mut(&mut cfg.toml, &["render"]);
+                    if let Some(v) = settings.get("grafana_base").and_then(|v| v.as_str()) {
+                        render.insert(
+                            "grafana_base".into(),
+                            toml::Value::String(v.trim_end_matches('/').into()),
+                        );
+                    }
+                    if let Some(v) = settings.get("grafana_render_base").and_then(|v| v.as_str()) {
+                        render.insert(
+                            "grafana_render_base".into(),
+                            toml::Value::String(v.trim_end_matches('/').into()),
+                        );
+                    }
+                    if let Some(v) = settings
+                        .get("grafana_render_token")
+                        .and_then(|v| v.as_str())
+                        .filter(|v| *v != "***SET***")
+                    {
+                        render.insert("grafana_render_token".into(), toml::Value::String(v.into()));
+                    }
+                    if let Some(v) = settings.get("render_image_ttl").and_then(|v| v.as_u64()) {
+                        render.insert(
+                            "render_image_ttl".into(),
+                            toml::Value::Integer(v.clamp(1, 86_400) as i64),
+                        );
+                    }
+                }
+                if let Some(v) = settings.get("public_url").and_then(|v| v.as_str()) {
+                    toml_table_mut(&mut cfg.toml, &["server"]).insert(
+                        "public_url".into(),
+                        toml::Value::String(v.trim_end_matches('/').into()),
+                    );
+                }
+                if let Some(v) = settings.get("ack_default_ttl").and_then(|v| v.as_u64()) {
+                    toml_table_mut(&mut cfg.toml, &["acks"]).insert(
+                        "default_ttl_seconds".into(),
+                        toml::Value::Integer(v.clamp(60, 86_400) as i64),
+                    );
+                }
+                return persist_reload(state, cfg.toml)
+                    .map(|_| json_response(json!({"ok": true, "count": cleaned.len()})))
+                    .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e));
+            }
+            if has_dashboards {
+                return persist_reload(state, cfg.toml)
+                    .map(|_| json_response(json!({"ok": true, "count": cleaned.len()})))
+                    .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e));
+            }
             state.replace_config(cfg);
             json_response(json!({"ok": true, "count": cleaned.len()}))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn dashboards_to_toml(dashboards: &HashMap<String, [String; 2]>) -> toml::Value {
+    let mut table = toml::map::Map::new();
+    let mut keys = dashboards.keys().collect::<Vec<_>>();
+    keys.sort();
+    for key in keys {
+        if let Some([label, url]) = dashboards.get(key) {
+            table.insert(
+                key.clone(),
+                toml::Value::Array(vec![
+                    toml::Value::String(label.clone()),
+                    toml::Value::String(url.clone()),
+                ]),
+            );
+        }
+    }
+    toml::Value::Table(table)
 }
 
 fn update_ntfy_topics(state: &AppState, body: Bytes) -> Response<Body> {
@@ -1736,6 +1826,19 @@ fn update_channel_config(state: &AppState, body: Bytes) -> Response<Body> {
                 if let Some(v) = t.get("chat_id").and_then(|v| v.as_str()) {
                     tg.insert("chat_id".into(), toml::Value::String(v.into()));
                 }
+                if let Some(v) = t.get("api_base").and_then(|v| v.as_str()) {
+                    tg.insert(
+                        "api_base".into(),
+                        toml::Value::String(v.trim_end_matches('/').into()),
+                    );
+                }
+                if let Some(v) = t
+                    .get("bot_token")
+                    .and_then(|v| v.as_str())
+                    .filter(|v| *v != "***SET***")
+                {
+                    tg.insert("bot_token".into(), toml::Value::String(v.into()));
+                }
             }
             if let Some(s) = payload.get("smtp").and_then(|v| v.as_object()) {
                 let smtp = toml_table_mut(&mut cfg.toml, &["smtp"]);
@@ -1744,8 +1847,21 @@ fn update_channel_config(state: &AppState, body: Bytes) -> Response<Body> {
                         smtp.insert(k.into(), toml::Value::String(v.into()));
                     }
                 }
+                if let Some(v) = s.get("user").and_then(|v| v.as_str()) {
+                    smtp.insert("user".into(), toml::Value::String(v.into()));
+                }
+                if let Some(v) = s
+                    .get("password")
+                    .and_then(|v| v.as_str())
+                    .filter(|v| *v != "***SET***")
+                {
+                    smtp.insert("password".into(), toml::Value::String(v.into()));
+                }
                 if let Some(p) = s.get("port").and_then(|v| v.as_i64()) {
                     smtp.insert("port".into(), toml::Value::Integer(p));
+                }
+                if let Some(v) = s.get("starttls").and_then(|v| v.as_bool()) {
+                    smtp.insert("starttls".into(), toml::Value::Boolean(v));
                 }
             }
             persist_reload(state, cfg.toml)
@@ -2875,8 +2991,31 @@ fn channel_config_payload(state: &AppState) -> Value {
             },
             "tokens_configured": legacy_tokens,
         },
-        "telegram": {"chat_id": cfg.tg_chat, "chat_id_from_env": !env_string("TELEGRAM_CHAT_ID").is_empty(), "bot_token_configured": !cfg.tg_token.is_empty()},
-        "smtp": {"host": cfg.smtp_host, "port": cfg.smtp_port, "from_addr": cfg.smtp_from, "to_addr": cfg.smtp_to, "host_from_env": !env_string("SMTP_HOST").is_empty(), "user_configured": !cfg.smtp_user.is_empty(), "password_configured": !cfg.smtp_pass.is_empty()},
+        "telegram": {
+            "chat_id": cfg.tg_chat,
+            "api_base": cfg.telegram_api_base,
+            "chat_id_from_env": !env_string("TELEGRAM_CHAT_ID").is_empty(),
+            "api_base_from_env": !env_string("TELEGRAM_API_BASE").is_empty(),
+            "bot_token_configured": !cfg.tg_token.is_empty(),
+            "bot_token_from_env": !env_string("TELEGRAM_BOT_TOKEN").is_empty(),
+        },
+        "smtp": {
+            "host": cfg.smtp_host,
+            "port": cfg.smtp_port,
+            "starttls": cfg.smtp_starttls,
+            "from_addr": cfg.smtp_from,
+            "to_addr": cfg.smtp_to,
+            "user": cfg.smtp_user,
+            "host_from_env": !env_string("SMTP_HOST").is_empty(),
+            "port_from_env": std::env::var("SMTP_PORT").is_ok(),
+            "starttls_from_env": std::env::var("SMTP_STARTTLS").is_ok(),
+            "from_from_env": !env_string("SMTP_FROM").is_empty(),
+            "to_from_env": !env_string("SMTP_TO").is_empty(),
+            "user_configured": !cfg.smtp_user.is_empty(),
+            "user_from_env": !env_string("SMTP_USER").is_empty(),
+            "password_configured": !cfg.smtp_pass.is_empty(),
+            "password_from_env": !env_string("SMTP_PASSWORD").is_empty(),
+        },
     })
 }
 

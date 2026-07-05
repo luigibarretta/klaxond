@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.14.20
+  version: 0.14.21
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -1064,7 +1064,7 @@ paths:
     get:
       tags: [Routing]
       operationId: getChannelConfig
-      summary: Return non-secret channel configuration and secret presence flags.
+      summary: Return channel configuration and redacted secret presence/source flags.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -1078,7 +1078,7 @@ paths:
     post:
       tags: [Routing]
       operationId: updateChannelConfig
-      summary: Update non-secret channel fields.
+      summary: Update channel fields, including TOML-backed secrets when env overrides are not used.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -1499,7 +1499,7 @@ paths:
     get:
       tags: [Render]
       operationId: getRenderConfig
-      summary: Return component dashboard mappings and Grafana base URL.
+      summary: Return component dashboard mappings and runtime render settings.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -1513,7 +1513,7 @@ paths:
     post:
       tags: [Render]
       operationId: updateRenderConfig
-      summary: Replace component dashboard mappings and Grafana base URL.
+      summary: Replace component dashboard mappings and TOML-backed render/runtime settings.
       security:
         - bearerAuth: []
         - sessionCookie: []

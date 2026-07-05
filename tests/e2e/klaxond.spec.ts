@@ -1153,6 +1153,14 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
   try {
     const renderUpdate = await request.post("/api/render-config", {
       data: {
+        settings: {
+          grafana_base: "https://grafana-e2e.example.test",
+          grafana_render_base: "https://render-e2e.example.test",
+          grafana_render_token: "render-secret-e2e",
+          render_image_ttl: 123,
+          public_url: "https://klaxond-e2e.example.test",
+          ack_default_ttl: 2345
+        },
         component_dashboards: {
           e2e_component: ["E2E dashboard", "/d/e2e-dashboard"]
         }
@@ -1161,7 +1169,57 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
     await expect(renderUpdate).toBeOK();
     const renderRead = await request.get("/api/render-config");
     await expect(renderRead).toBeOK();
-    expect((await renderRead.json()).component_dashboards.e2e_component).toEqual(["E2E dashboard", "/d/e2e-dashboard"]);
+    const renderPayload = await renderRead.json();
+    expect(renderPayload.component_dashboards.e2e_component).toEqual(["E2E dashboard", "/d/e2e-dashboard"]);
+    expect(renderPayload.settings).toMatchObject({
+      grafana_base: "https://grafana-e2e.example.test",
+      grafana_render_base: "https://render-e2e.example.test",
+      grafana_render_token_configured: true,
+      render_image_ttl: 123,
+      public_url: "https://klaxond-e2e.example.test",
+      ack_default_ttl: 2345
+    });
+
+    const channelUpdate = await request.post("/api/channel-config", {
+      data: {
+        ntfy: { url: "https://push-e2e.example.test" },
+        telegram: {
+          chat_id: "e2e-chat",
+          api_base: "https://telegram-e2e.example.test",
+          bot_token: "telegram-secret-e2e"
+        },
+        smtp: {
+          host: "smtp-e2e.example.test",
+          port: 2525,
+          starttls: false,
+          from_addr: "from-e2e@example.test",
+          to_addr: "to-e2e@example.test",
+          user: "smtp-user-e2e",
+          password: "smtp-secret-e2e"
+        }
+      }
+    });
+    await expect(channelUpdate).toBeOK();
+    const channelRead = await request.get("/api/channel-config");
+    await expect(channelRead).toBeOK();
+    expect(await channelRead.json()).toMatchObject({
+      ntfy: { url: "http://127.0.0.1:9", url_from_env: true },
+      telegram: {
+        chat_id: "e2e-chat",
+        api_base: "https://telegram-e2e.example.test",
+        bot_token_configured: true
+      },
+      smtp: {
+        host: "smtp-e2e.example.test",
+        port: 2525,
+        starttls: false,
+        from_addr: "from-e2e@example.test",
+        to_addr: "to-e2e@example.test",
+        user: "smtp-user-e2e",
+        user_configured: true,
+        password_configured: true
+      }
+    });
 
     const topicsUpdate = await request.post("/api/ntfy-topics", {
       data: {

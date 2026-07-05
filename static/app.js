@@ -1997,11 +1997,24 @@ const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&l
 
 // ---- Render config ----
 let rcData = {};
+let rcRuntimeSettings = {};
 async function loadRC() {
   try {
     const j = await J("/api/render-config");
     $("#gbase").textContent = j.grafana_base;
     rcData = j.component_dashboards;
+    rcRuntimeSettings = j.settings || {};
+    $("#rc-grafana-base").value = rcRuntimeSettings.grafana_base || j.grafana_base || "";
+    $("#rc-public-url").value = rcRuntimeSettings.public_url || "";
+    $("#rc-grafana-render-base").value = rcRuntimeSettings.grafana_render_base || "";
+    $("#rc-grafana-render-token").value = "";
+    $("#rc-grafana-render-token").placeholder = rcRuntimeSettings.grafana_render_token_configured ? "***SET***" : "";
+    $("#rc-grafana-render-token-clear").checked = false;
+    $("#rc-render-image-ttl").value = rcRuntimeSettings.render_image_ttl || 900;
+    $("#rc-ack-default-ttl").value = rcRuntimeSettings.ack_default_ttl || 3600;
+    const env = rcRuntimeSettings.from_env || {};
+    const overridden = Object.entries(env).filter(([, v]) => v).map(([k]) => k);
+    $("#rc-runtime-status").textContent = overridden.length ? tr("render.env_override", { keys: overridden.join(", ") }) : "";
     renderRCTable();
     populateTestComponentSelect();
   } catch (e) { fetchError("render-config", e); }
@@ -2056,11 +2069,22 @@ $("#btn-rc-save").addEventListener("click", async () => {
     const u = tr.querySelector('[data-f="url"]').value.trim();
     if (k && l && u) out[k] = [l, u];
   });
+  const settings = {
+    grafana_base: $("#rc-grafana-base").value.trim(),
+    public_url: $("#rc-public-url").value.trim(),
+    grafana_render_base: $("#rc-grafana-render-base").value.trim(),
+    render_image_ttl: parseInt($("#rc-render-image-ttl").value, 10) || 900,
+    ack_default_ttl: parseInt($("#rc-ack-default-ttl").value, 10) || 3600,
+  };
+  const renderToken = $("#rc-grafana-render-token").value.trim();
+  if ($("#rc-grafana-render-token-clear").checked) settings.grafana_render_token = "";
+  else if (renderToken) settings.grafana_render_token = renderToken;
   try {
-    const r = await J("/api/render-config", { method: "POST", body: JSON.stringify({component_dashboards: out}), headers: {"Content-Type": "application/json"} });
+    const r = await J("/api/render-config", { method: "POST", body: JSON.stringify({component_dashboards: out, settings}), headers: {"Content-Type": "application/json"} });
     notifySuccess(tr("render.saved_mappings", { count: r.count }), { status: "#rc-status", clearMs: 3000 });
     _markTabDirty("render", false);
     rcData = out;
+    await loadRC();
     populateTestComponentSelect();
   } catch (e) { notifyError("render-config-save", e, { status: "#rc-status" }); }
 });
@@ -2358,14 +2382,27 @@ async function loadRouting() {
     // The "Save routing" button only persists ntfy URL + telegram + smtp.
     $("#r-ntfy-status").innerHTML = c.ntfy.url_from_env ? `<em>${escapeHtml(tr("routing.url_overridden_env"))}</em>` : "";
     $("#r-tg-chat").value = c.telegram.chat_id || "";
+    $("#r-tg-api-base").value = c.telegram.api_base || "https://api.telegram.org";
+    $("#r-tg-token").value = "";
+    $("#r-tg-token").placeholder = c.telegram.bot_token_configured ? "***SET***" : "";
+    $("#r-tg-token-clear").checked = false;
     $("#r-tg-status").innerHTML = `${escapeHtml(tr("routing.bot_token"))} ${badge(c.telegram.bot_token_configured)}` +
-      (c.telegram.chat_id_from_env ? ` · <em>${escapeHtml(tr("routing.chat_overridden_env"))}</em>` : "");
+      (c.telegram.chat_id_from_env ? ` · <em>${escapeHtml(tr("routing.chat_overridden_env"))}</em>` : "") +
+      (c.telegram.api_base_from_env ? ` · <em>${escapeHtml(tr("routing.api_base_overridden_env"))}</em>` : "") +
+      (c.telegram.bot_token_from_env ? ` · <em>${escapeHtml(tr("routing.bot_token_overridden_env"))}</em>` : "");
     $("#r-smtp-host").value = c.smtp.host || "";
     $("#r-smtp-port").value = c.smtp.port || 587;
     $("#r-smtp-from").value = c.smtp.from_addr || "";
     $("#r-smtp-to").value = c.smtp.to_addr || "";
+    $("#r-smtp-user").value = c.smtp.user || "";
+    $("#r-smtp-password").value = "";
+    $("#r-smtp-password").placeholder = c.smtp.password_configured ? "***SET***" : "";
+    $("#r-smtp-starttls").checked = c.smtp.starttls !== false;
+    $("#r-smtp-password-clear").checked = false;
     $("#r-smtp-status").innerHTML = `${escapeHtml(tr("routing.user"))} ${badge(c.smtp.user_configured)} ${escapeHtml(tr("routing.password"))} ${badge(c.smtp.password_configured)}` +
-      (c.smtp.host_from_env ? ` · <em>${escapeHtml(tr("routing.host_overridden_env"))}</em>` : "");
+      (c.smtp.host_from_env ? ` · <em>${escapeHtml(tr("routing.host_overridden_env"))}</em>` : "") +
+      (c.smtp.user_from_env ? ` · <em>${escapeHtml(tr("routing.user_overridden_env"))}</em>` : "") +
+      (c.smtp.password_from_env ? ` · <em>${escapeHtml(tr("routing.password_overridden_env"))}</em>` : "");
   } catch (e) { fetchError("routing", e); }
 }
 
@@ -2375,14 +2412,25 @@ $("#btn-routing-save").addEventListener("click", async () => {
   // ntfy topics intentionally omitted — managed by the topic editor + /api/ntfy-topics.
   const payload = {
     ntfy: { url: $("#r-ntfy-url").value.trim() },
-    telegram: { chat_id: $("#r-tg-chat").value.trim() },
+    telegram: {
+      chat_id: $("#r-tg-chat").value.trim(),
+      api_base: $("#r-tg-api-base").value.trim(),
+    },
     smtp: {
       host: $("#r-smtp-host").value.trim(),
       port: parseInt($("#r-smtp-port").value, 10) || 587,
       from_addr: $("#r-smtp-from").value.trim(),
       to_addr: $("#r-smtp-to").value.trim(),
+      user: $("#r-smtp-user").value.trim(),
+      starttls: $("#r-smtp-starttls").checked,
     }
   };
+  const tgToken = $("#r-tg-token").value.trim();
+  if ($("#r-tg-token-clear").checked) payload.telegram.bot_token = "";
+  else if (tgToken) payload.telegram.bot_token = tgToken;
+  const smtpPassword = $("#r-smtp-password").value;
+  if ($("#r-smtp-password-clear").checked) payload.smtp.password = "";
+  else if (smtpPassword) payload.smtp.password = smtpPassword;
   try {
     await J("/api/channel-config", { method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" } });
     notifySuccess(tr("routing.saved"), { status: "#routing-msg", clearMs: 4000 });
