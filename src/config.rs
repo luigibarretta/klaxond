@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.21";
+pub const VERSION: &str = "0.14.22";
 pub const AUTHOR_NAME: &str = "Luigi Barretta";
 pub const AUTHOR_URL: &str = "https://github.com/luigibarretta";
 pub const DEDUP_SOURCES: &[&str] = &[
@@ -86,6 +86,86 @@ impl Paths {
             ),
         }
     }
+
+    pub fn resolve_from_config(mut self) -> Result<Self> {
+        bootstrap_config(&self)?;
+        let toml_text = fs::read_to_string(&self.config).unwrap_or_default();
+        let toml: toml::Value = toml::from_str(&toml_text)
+            .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()));
+        let config_dir = self.config.parent().unwrap_or_else(|| Path::new("."));
+        apply_toml_path(
+            &mut self.render_config,
+            "RENDER_CONFIG_PATH",
+            toml_get(&toml, &["paths", "render_config"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.ntfy_topics,
+            "NTFY_TOPICS_PATH",
+            toml_get(&toml, &["paths", "ntfy_topics"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.dedup_config,
+            "DEDUP_CONFIG_PATH",
+            toml_get(&toml, &["paths", "dedup_config"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.auth_config,
+            "AUTH_CONFIG_PATH",
+            toml_get(&toml, &["paths", "auth_config"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.auth_session_key,
+            "AUTH_SESSION_KEY_PATH",
+            toml_get(&toml, &["paths", "auth_session_key"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.backup_dir,
+            "KLAXOND_BACKUP_DIR",
+            toml_get(&toml, &["paths", "backup_dir"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.dedup_pending_dir,
+            "DEDUP_PENDING_DIR",
+            toml_get(&toml, &["paths", "dedup_pending_dir"]),
+            config_dir,
+        );
+        apply_toml_path(
+            &mut self.beszel_db,
+            "BESZEL_DB_PATH",
+            toml_get(&toml, &["paths", "beszel_db"]),
+            config_dir,
+        );
+        Ok(self)
+    }
+}
+
+fn apply_toml_path(
+    target: &mut PathBuf,
+    env_key: &str,
+    value: Option<&toml::Value>,
+    config_dir: &Path,
+) {
+    if std::env::var_os(env_key).is_some() {
+        return;
+    }
+    let Some(path) = value
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
+    else {
+        return;
+    };
+    let path = PathBuf::from(path);
+    *target = if path.is_absolute() {
+        path
+    } else {
+        config_dir.join(path)
+    };
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -177,6 +257,8 @@ pub struct DedupSetting {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthConfig {
     pub mode: String,
+    #[serde(default)]
+    pub session_secret: String,
     pub session_timeout_hours: u64,
     pub basic: BasicAuthConfig,
     pub oidc: OidcConfig,
@@ -275,6 +357,7 @@ impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             mode: "none".to_string(),
+            session_secret: String::new(),
             session_timeout_hours: 8,
             basic: BasicAuthConfig {
                 username: String::new(),
@@ -324,6 +407,7 @@ pub struct Schedule {
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub toml: toml::Value,
+    pub port: u16,
     pub ntfy_url: String,
     pub ntfy_topics: Vec<NtfyTopic>,
     pub priorities: HashMap<String, String>,
@@ -590,8 +674,18 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
                 .map(|v| v.max(1) as u64)
         })
         .unwrap_or(3600);
+    let port = std::env::var("PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .or_else(|| {
+            toml_get(&toml, &["server", "port"])
+                .and_then(|v| v.as_integer())
+                .and_then(|v| u16::try_from(v).ok())
+        })
+        .unwrap_or(8181);
     Ok(RuntimeConfig {
         toml,
+        port,
         ntfy_url,
         ntfy_topics,
         priorities,
@@ -1049,6 +1143,7 @@ pub fn save_auth(paths: &Paths, auth: &AuthConfig) -> Result<()> {
 
 fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {
     base.mode = raw.mode;
+    base.session_secret = raw.session_secret;
     base.session_timeout_hours = raw.session_timeout_hours;
     base.basic = raw.basic;
     base.oidc = raw.oidc;
@@ -1062,6 +1157,9 @@ fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {
 fn merge_auth_toml(mut base: AuthConfig, seed: &toml::Value) -> AuthConfig {
     if let Some(mode) = seed.get("mode").and_then(|v| v.as_str()) {
         base.mode = mode.to_string();
+    }
+    if let Some(secret) = seed.get("session_secret").and_then(|v| v.as_str()) {
+        base.session_secret = secret.to_string();
     }
     if let Some(h) = seed
         .get("session_timeout_hours")
@@ -1417,6 +1515,100 @@ mod tests {
         "BESZEL_DB_PATH",
     ];
 
+    const BOOTSTRAP_ONLY_COMPOSE_ENV_KEYS: &[&str] = &["KLAXOND_CONFIG"];
+
+    const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
+        ("NTFY_URL", "TOML [ntfy].url"),
+        (
+            "NTFY_TOKEN_INFO",
+            "TOML/JSON ntfy topic token for handles=[info]",
+        ),
+        (
+            "NTFY_TOKEN_WARN",
+            "TOML/JSON ntfy topic token for handles=[warning]",
+        ),
+        (
+            "NTFY_TOKEN_CRIT",
+            "TOML/JSON ntfy topic token for handles=[critical]",
+        ),
+        ("TOPIC_INFO", "TOML/JSON ntfy topic name for handles=[info]"),
+        (
+            "TOPIC_WARN",
+            "TOML/JSON ntfy topic name for handles=[warning]",
+        ),
+        (
+            "TOPIC_CRIT",
+            "TOML/JSON ntfy topic name for handles=[critical]",
+        ),
+        (
+            "CASCADE_ENABLED",
+            "TOML [cascade].default_enabled_for_webhook",
+        ),
+        ("TELEGRAM_BOT_TOKEN", "TOML [telegram].bot_token"),
+        ("TELEGRAM_CHAT_ID", "TOML [telegram].chat_id"),
+        ("TELEGRAM_API_BASE", "TOML [telegram].api_base"),
+        ("SMTP_HOST", "TOML [smtp].host"),
+        ("SMTP_PORT", "TOML [smtp].port"),
+        ("SMTP_STARTTLS", "TOML [smtp].starttls"),
+        ("SMTP_USER", "TOML [smtp].user"),
+        ("SMTP_PASSWORD", "TOML [smtp].password"),
+        ("SMTP_FROM", "TOML [smtp].from_addr"),
+        ("SMTP_TO", "TOML [smtp].to_addr"),
+        ("GRAFANA_BASE", "TOML [render].grafana_base"),
+        ("GRAFANA_RENDER_BASE", "TOML [render].grafana_render_base"),
+        ("GRAFANA_RENDER_TOKEN", "TOML [render].grafana_render_token"),
+        ("RENDER_IMAGE_TTL", "TOML [render].render_image_ttl"),
+        ("KLAXOND_PUBLIC_URL", "TOML [server].public_url"),
+        ("ACK_DEFAULT_TTL_SECONDS", "TOML [acks].default_ttl_seconds"),
+        ("AUTH_SESSION_SECRET", "TOML/JSON auth.session_secret"),
+        (
+            "AUTH_OIDC_CLIENT_SECRET",
+            "TOML/JSON auth.oidc.client_secret",
+        ),
+        (
+            "AUTH_BASIC_PASSWORD_HASH",
+            "TOML/JSON auth.basic.password_hash",
+        ),
+        (
+            "KLAXOND_INGEST_SECRET_GRAFANA",
+            "TOML [ingest.secrets].grafana",
+        ),
+        (
+            "KLAXOND_INGEST_SECRET_BESZEL",
+            "TOML [ingest.secrets].beszel",
+        ),
+        (
+            "KLAXOND_INGEST_SECRET_HEALTHCHECKS",
+            "TOML [ingest.secrets].healthchecks",
+        ),
+        ("KLAXOND_INGEST_SECRET_WUD", "TOML [ingest.secrets].wud"),
+        (
+            "KLAXOND_INGEST_SECRET_AUTHENTIK",
+            "TOML [ingest.secrets].authentik",
+        ),
+        (
+            "KLAXOND_INGEST_SECRET_SHELFMARK",
+            "TOML [ingest.secrets].shelfmark",
+        ),
+        (
+            "KLAXOND_INGEST_SECRET_PROWLARR",
+            "TOML [ingest.secrets].prowlarr",
+        ),
+        (
+            "KLAXOND_INGEST_SECRET_DECYPHARR",
+            "TOML [ingest.secrets].decypharr",
+        ),
+        ("PORT", "TOML [server].port"),
+        ("RENDER_CONFIG_PATH", "TOML [paths].render_config"),
+        ("NTFY_TOPICS_PATH", "TOML [paths].ntfy_topics"),
+        ("DEDUP_CONFIG_PATH", "TOML [paths].dedup_config"),
+        ("AUTH_CONFIG_PATH", "TOML [paths].auth_config"),
+        ("AUTH_SESSION_KEY_PATH", "TOML [paths].auth_session_key"),
+        ("KLAXOND_BACKUP_DIR", "TOML [paths].backup_dir"),
+        ("DEDUP_PENDING_DIR", "TOML [paths].dedup_pending_dir"),
+        ("BESZEL_DB_PATH", "TOML [paths].beszel_db"),
+    ];
+
     fn temp_paths(tmp: &TempDir) -> Paths {
         let data = tmp.path();
         Paths {
@@ -1439,6 +1631,27 @@ mod tests {
             // SAFETY: callers hold ENV_LOCK while mutating process-wide env state.
             unsafe { std::env::remove_var(key) };
         }
+    }
+
+    fn compose_env_keys(compose: &str) -> Vec<String> {
+        compose
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim_start();
+                if !line.starts_with("      ") || trimmed.starts_with('#') {
+                    return None;
+                }
+                let (key, _) = trimmed.split_once(':')?;
+                if key
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                {
+                    Some(key.to_string())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     #[test]
@@ -1598,10 +1811,17 @@ grafana_render_token = "render-token"
 render_image_ttl = 42
 
 [server]
+port = 19090
 public_url = "https://klaxond.example.test/"
 
 [acks]
 default_ttl_seconds = 1234
+
+[auth]
+session_secret = "toml-session-secret"
+
+[ingest.secrets]
+grafana = "toml-grafana-secret"
 "#,
         )
         .unwrap();
@@ -1623,8 +1843,49 @@ default_ttl_seconds = 1234
         assert_eq!(cfg.grafana_render_base, "https://render.example.test");
         assert_eq!(cfg.grafana_render_token, "render-token");
         assert_eq!(cfg.render_image_ttl, 42);
+        assert_eq!(cfg.port, 19090);
         assert_eq!(cfg.public_url, "https://klaxond.example.test");
         assert_eq!(cfg.ack_default_ttl, 1234);
+        assert_eq!(cfg.auth.session_secret, "toml-session-secret");
+        assert_eq!(
+            toml_get(&cfg.toml, &["ingest", "secrets", "grafana"]).and_then(|v| v.as_str()),
+            Some("toml-grafana-secret")
+        );
+    }
+
+    #[test]
+    fn toml_paths_cover_compose_path_overrides() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_runtime_env();
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        fs::write(
+            &paths.config,
+            r#"
+[paths]
+render_config = "sidecars/render.json"
+ntfy_topics = "sidecars/ntfy.json"
+dedup_config = "sidecars/dedup.json"
+auth_config = "sidecars/auth.json"
+auth_session_key = "secrets/session.key"
+backup_dir = "backup"
+dedup_pending_dir = "pending"
+beszel_db = "/external/beszel.db"
+"#,
+        )
+        .unwrap();
+
+        let resolved = paths.resolve_from_config().unwrap();
+        let root = tmp.path();
+
+        assert_eq!(resolved.render_config, root.join("sidecars/render.json"));
+        assert_eq!(resolved.ntfy_topics, root.join("sidecars/ntfy.json"));
+        assert_eq!(resolved.dedup_config, root.join("sidecars/dedup.json"));
+        assert_eq!(resolved.auth_config, root.join("sidecars/auth.json"));
+        assert_eq!(resolved.auth_session_key, root.join("secrets/session.key"));
+        assert_eq!(resolved.backup_dir, root.join("backup"));
+        assert_eq!(resolved.dedup_pending_dir, root.join("pending"));
+        assert_eq!(resolved.beszel_db, PathBuf::from("/external/beszel.db"));
     }
 
     #[test]
@@ -1689,10 +1950,46 @@ default_ttl_seconds = 1234
     }
 
     #[test]
+    fn compose_env_vars_have_toml_or_json_equivalent_declared() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let compose = fs::read_to_string(root.join("docker-compose.yml")).unwrap();
+        let compose_keys = compose_env_keys(&compose);
+        let mut missing = Vec::new();
+        for key in &compose_keys {
+            if BOOTSTRAP_ONLY_COMPOSE_ENV_KEYS.contains(&key.as_str()) {
+                continue;
+            }
+            let equivalent = COMPOSE_FILE_CONFIG_EQUIVALENTS
+                .iter()
+                .find(|(mapped, _)| *mapped == key.as_str())
+                .map(|(_, target)| *target);
+            match equivalent {
+                Some(target) if target.contains("TOML") || target.contains("JSON") => {}
+                _ => missing.push(key.clone()),
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "compose env vars without TOML/JSON equivalent: {missing:?}"
+        );
+    }
+
+    #[test]
     fn reference_compose_and_env_example_cover_runtime_env_vars() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let compose = fs::read_to_string(root.join("docker-compose.yml")).unwrap();
         let env_example = fs::read_to_string(root.join(".env.example")).unwrap();
+        let compose_keys = compose_env_keys(&compose);
+        assert!(
+            !compose_keys.is_empty(),
+            "docker-compose.yml has no env keys"
+        );
+        for key in &compose_keys {
+            assert!(
+                RUNTIME_COMPOSE_ENV_KEYS.contains(&key.as_str()),
+                "RUNTIME_COMPOSE_ENV_KEYS missing compose env {key}"
+            );
+        }
         for key in RUNTIME_COMPOSE_ENV_KEYS {
             assert!(
                 compose.contains(&format!("{key}: ${{{key}")),

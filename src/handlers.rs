@@ -338,6 +338,9 @@ fn anonymous_user() -> User {
 
 fn redacted_auth_settings(auth_cfg: &AuthConfig) -> Value {
     let mut settings = serde_json::to_value(auth_cfg).unwrap_or_else(|_| json!({}));
+    if !settings["session_secret"].as_str().unwrap_or("").is_empty() {
+        settings["session_secret"] = json!("***SET***");
+    }
     if !settings["basic"]["password_hash"]
         .as_str()
         .unwrap_or("")
@@ -1127,6 +1130,13 @@ fn update_auth_config(
                 .and_then(|v| v.as_u64())
             {
                 auth.session_timeout_hours = h.clamp(1, 720);
+            }
+            if let Some(v) = incoming
+                .get("session_secret")
+                .and_then(|v| v.as_str())
+                .filter(|v| *v != "***SET***")
+            {
+                auth.session_secret = v.into();
             }
             if let Some(b) = incoming.get("basic").and_then(|v| v.as_object()) {
                 if let Some(v) = b.get("username").and_then(|v| v.as_str()) {

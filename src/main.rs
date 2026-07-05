@@ -15,16 +15,13 @@ async fn main() -> Result<()> {
         .with(klaxond::log_buffer::LogCaptureLayer::new(log_buffer))
         .init();
 
-    let paths = Paths::from_env();
+    let paths = Paths::from_env().resolve_from_config()?;
     let state = AppState::new(paths)?;
     klaxond::dedup::restore_pending(&state).await;
     spawn_scheduler(state.clone());
     spawn_shutdown_flush(state.clone());
 
-    let port = std::env::var("PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(8181);
+    let port = state.with_cfg(|cfg| cfg.port);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let (cascade_default, enabled) = state.with_cfg(|cfg| {
         let enabled = cfg

@@ -85,10 +85,33 @@ beszel     = ["Beszel UI",            "https://beszel.luigibarretta.com/"]
 host = "infra-cluster-overview:10"
 
 [server]
+port = 8181
 public_url = "http://localhost:8181"
 
 [acks]
 default_ttl_seconds = 3600
+
+[paths]
+# Env vars still override these path values. Relative paths are resolved from
+# the directory containing klaxond.toml.
+render_config = "render-config.json"
+ntfy_topics = "ntfy-topics.json"
+dedup_config = "dedup-config.json"
+auth_config = "auth-config.json"
+auth_session_key = "auth-session.key"
+backup_dir = "backups"
+dedup_pending_dir = "dedup_pending"
+beszel_db = "/beszel_data/data.db"
+
+[ingest.secrets]
+grafana = ""
+beszel = ""
+healthchecks = ""
+wud = ""
+authentik = ""
+shelfmark = ""
+prowlarr = ""
+decypharr = ""
 
 
 # ============================================================================
@@ -200,6 +223,9 @@ override_critical = false
 # [[ntfy.topics]]
 # name = "oncall_backup"      handles = ["critical"]
 
+[ntfy]
+url = ""
+
 [telegram]
 api_base = "https://api.telegram.org"
 bot_token = ""
@@ -213,3 +239,33 @@ user = ""
 password = ""
 from_addr = ""
 to_addr = ""
+
+[auth]
+mode = "none"
+session_secret = ""
+session_timeout_hours = 8
+
+[auth.basic]
+username = ""
+password_hash = ""
+realm = "klaxond"
+
+[auth.oidc]
+provider = "authentik"
+issuer = ""
+client_id = ""
+client_secret = ""
+scopes = "openid profile email"
+required_group = ""
+redirect_path = "/auth/callback"
+
+[auth.trusted_proxy]
+user_header = "X-Forwarded-User"
+email_header = "X-Forwarded-Email"
+groups_header = "X-Forwarded-Groups"
+trusted_cidrs = ["127.0.0.1/32", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
+
+[auth.webauthn]
+enabled = true
+rp_id = ""
+origin = ""

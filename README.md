@@ -196,6 +196,7 @@ from_addr = "klaxond@example.com"
 to_addr   = "oncall@example.com"
 
 [server]
+port = 8181
 public_url = "https://klaxond.example.com"
 
 [acks]
@@ -261,11 +262,16 @@ Every UI-managed setting has a compose-managed path:
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
 | Dedup/grouping | `[dedup]` bootstrap or `/data/dedup-config.json` |
 | Auth, API keys/PATs, TOTP, passkeys | `[auth]` bootstrap or `/data/auth-config.json` |
+| Runtime paths exposed by compose | `[paths]` in `/data/klaxond.toml` |
 
 The reverse path is the UI **Full export** button. It exports
 `klaxond.toml`, `render-config.json`, `ntfy-topics.json`, `dedup-config.json`
 and `auth-config.json`; bind-mount those files in compose when you want the
 same settings managed declaratively.
+
+Every compose env var that changes application behavior has at least one
+TOML or JSON equivalent. `KLAXOND_CONFIG` is the only bootstrap-only exception:
+it selects the TOML file itself, so it cannot live inside that same TOML file.
 
 ### Optional env overrides
 
@@ -283,11 +289,13 @@ UI-saved values at runtime.
 | `KLAXOND_PUBLIC_URL` | `[server].public_url` |
 | `ACK_DEFAULT_TTL_SECONDS` | `[acks].default_ttl_seconds` |
 | `CASCADE_ENABLED` | `[cascade].default_enabled_for_webhook` |
-| `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | initial `[auth]` bootstrap when `auth-config.json` does not exist |
+| `PORT` | `[server].port` |
+| `AUTH_SESSION_SECRET` | `[auth].session_secret` or `auth-config.json` |
+| `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | `[auth.oidc].client_secret`, `[auth.basic].password_hash`, or `auth-config.json` |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | `[ingest.secrets].<source>` |
-| `KLAXOND_CONFIG` | path to klaxond.toml (default `/data/klaxond.toml`) |
-| `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | sidecar paths |
-| `PORT` | listen port (default `8181`) |
+| `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | `[paths].render_config`, `[paths].ntfy_topics`, `[paths].dedup_config`, `[paths].auth_config` |
+| `AUTH_SESSION_KEY_PATH` / `KLAXOND_BACKUP_DIR` / `DEDUP_PENDING_DIR` / `BESZEL_DB_PATH` | `[paths].auth_session_key`, `[paths].backup_dir`, `[paths].dedup_pending_dir`, `[paths].beszel_db` |
+| `KLAXOND_CONFIG` | bootstrap-only path to `klaxond.toml` (default `/data/klaxond.toml`) |
 
 ## Inhibition
 

@@ -105,7 +105,7 @@ impl AppState {
     pub fn new(paths: Paths) -> Result<Self> {
         let cfg = load_runtime_config(&paths)?;
         let cascade_runtime_enabled = cfg.cascade_default;
-        let session_key = load_or_create_session_key(&paths)?;
+        let session_key = load_or_create_session_key(&paths, &cfg)?;
         let mut queues = DedupQueues::default();
         for src in crate::config::DEDUP_SOURCES {
             queues.queues.insert((*src).to_string(), Vec::new());
@@ -254,11 +254,23 @@ pub fn esc_label(v: &str) -> String {
         .replace('\n', "\\n")
 }
 
-fn load_or_create_session_key(paths: &Paths) -> Result<Vec<u8>> {
+fn load_or_create_session_key(paths: &Paths, cfg: &RuntimeConfig) -> Result<Vec<u8>> {
     if let Ok(v) = std::env::var("AUTH_SESSION_SECRET")
         && !v.is_empty()
     {
         return Ok(v.into_bytes());
+    }
+    if !cfg.auth.session_secret.trim().is_empty() {
+        return Ok(cfg.auth.session_secret.as_bytes().to_vec());
+    }
+    if let Some(secret) = cfg
+        .toml
+        .get("auth")
+        .and_then(|v| v.get("session_secret"))
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.trim().is_empty())
+    {
+        return Ok(secret.as_bytes().to_vec());
     }
     if paths.auth_session_key.exists() {
         return fs::read(&paths.auth_session_key)
@@ -285,3 +297,49 @@ fn set_private_mode(path: &Path) {
 
 #[cfg(not(unix))]
 fn set_private_mode(_path: &Path) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn temp_paths(tmp: &TempDir) -> Paths {
+        let data = tmp.path();
+        Paths {
+            config: data.join("klaxond.toml"),
+            default_config: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("klaxond.default.toml"),
+            render_config: data.join("render-config.json"),
+            ntfy_topics: data.join("ntfy-topics.json"),
+            dedup_config: data.join("dedup-config.json"),
+            dedup_pending_dir: data.join("dedup_pending"),
+            auth_config: data.join("auth-config.json"),
+            auth_session_key: data.join("auth-session.key"),
+            backup_dir: data.join("backups"),
+            static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
+            beszel_db: data.join("missing-beszel.db"),
+        }
+    }
+
+    #[test]
+    fn auth_session_secret_can_come_from_toml_without_key_file() {
+        // SAFETY: this test is single-threaded with respect to its env mutation.
+        unsafe { std::env::remove_var("AUTH_SESSION_SECRET") };
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        fs::write(
+            &paths.config,
+            r#"
+[auth]
+session_secret = "toml-session-secret"
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_runtime_config(&paths).unwrap();
+        let key = load_or_create_session_key(&paths, &cfg).unwrap();
+
+        assert_eq!(key, b"toml-session-secret");
+        assert!(!paths.auth_session_key.exists());
+    }
+}

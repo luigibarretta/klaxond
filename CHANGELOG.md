@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.14.22 — 2026-07-05
+
+- Aggiunta una matrice testata che garantisce che ogni env applicativa esposta
+  dal compose abbia un equivalente TOML o JSON; `KLAXOND_CONFIG` resta l'unica
+  variabile bootstrap-only per scegliere il file TOML stesso.
+- Aggiunti equivalenti TOML per `PORT`, i path runtime (`[paths]`) e
+  `AUTH_SESSION_SECRET` (`[auth].session_secret`, esportabile anche in
+  `auth-config.json`).
+
 ## 0.14.21 — 2026-07-05
 
 - Allineata la parita' tra compose/TOML/sidecar e UI: i campi runtime
