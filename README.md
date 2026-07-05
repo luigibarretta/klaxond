@@ -582,6 +582,7 @@ curl -s -X POST 'http://127.0.0.1:8181/webhook/info?dry_run=1' \
 Verification:
 
 ```bash
+scripts/check-rsa-private-usage.sh
 npm run openapi:lint
 cargo test
 npm run test:e2e
@@ -600,6 +601,20 @@ The Redocly config keeps license metadata, 2xx/4xx response completeness and
 unused component cleanup as explicit warnings: they stay visible locally and in
 CI without blocking changes that only improve the contract incrementally.
 Redocly errors still fail the pipeline.
+
+Security checks include an RSA timing-advisory guard. `cargo audit` currently
+reports `RUSTSEC-2023-0071` for the transitive RustCrypto `rsa` crate, which has
+no fixed release yet. Klaxond accepts that dependency only for public-key
+OIDC/WebAuthn verification and does not perform RSA private-key decrypt/sign
+operations in the request path. Run:
+
+```bash
+cargo audit --ignore RUSTSEC-2023-0071
+scripts/check-rsa-private-usage.sh
+```
+
+The threat model and review checklist are tracked in
+[`docs/security-rsa-risk.md`](docs/security-rsa-risk.md).
 
 ## License
 

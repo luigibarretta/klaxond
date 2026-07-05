@@ -1,5 +1,12 @@
 # Klaxond — CHANGELOG
 
+## Unreleased
+
+- Documentato il rischio transitive `rsa`/`RUSTSEC-2023-0071` con threat model
+  esplicito per OIDC/WebAuthn public-key verification.
+- Aggiunto un guard CI che blocca dipendenze dirette `rsa` e API RSA
+  private-key/decrypt/signing nel codice Rust di produzione.
+
 ## 0.14.24 — 2026-07-05
 
 - Aggiunto storico delivery persistente con SQLite di default sotto `/data` e

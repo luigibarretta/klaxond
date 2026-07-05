@@ -19,6 +19,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check RSA private-key usage
+        run: bash scripts/check-rsa-private-usage.sh
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
