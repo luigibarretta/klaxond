@@ -250,11 +250,45 @@ function isPublicInfoPage(tabId = tabFromLocation().tabId) {
   return PUBLIC_INFO_PAGES.has(tabId);
 }
 
+function legalContextSearch(search = location.search) {
+  try {
+    return new URLSearchParams(search).get("from") === "login" ? "?from=login" : "";
+  } catch (e) {
+    return "";
+  }
+}
+
+function isLegalFromLogin() {
+  return legalContextSearch() === "?from=login";
+}
+
+function canonicalUrl(tabId, { search = location.search } = {}) {
+  const path = canonicalPath(tabId);
+  if (!PUBLIC_INFO_PAGES.has(tabId)) return path;
+  return path + legalContextSearch(search);
+}
+
+function updatePublicLegalContextLinks() {
+  const fromLogin = isLegalFromLogin();
+  document.querySelectorAll("[data-public-language-control]").forEach(el => {
+    el.hidden = !fromLogin;
+  });
+  document.querySelectorAll('.public-legal-brand, .footer-links a[href^="/legal/"]').forEach(link => {
+    try {
+      const url = new URL(link.getAttribute("href"), location.origin);
+      if (url.origin === location.origin && url.pathname.startsWith("/legal/")) {
+        link.setAttribute("href", url.pathname + (fromLogin ? "?from=login" : ""));
+      }
+    } catch (e) {}
+  });
+}
+
 function updatePublicChrome(tabId) {
   const isPublic = PUBLIC_INFO_PAGES.has(tabId);
   document.body.classList.toggle("public-info-route", isPublic);
   const publicBar = $("#public-legal-bar");
   if (publicBar) publicBar.hidden = !isPublic;
+  if (isPublic) updatePublicLegalContextLinks();
 }
 
 function canonicalPath(tabId) {
@@ -364,18 +398,19 @@ function syncTabFromPath({ replace = false } = {}) {
     return false;
   }
   if (ok && (replace || canonicalize)) {
-    history.replaceState({ tabId }, "", canonicalPath(tabId));
+    history.replaceState({ tabId }, "", canonicalUrl(tabId));
   }
   return ok;
 }
 
-function navigateToTab(tabId, { replace = false } = {}) {
+function navigateToTab(tabId, { replace = false, search = "" } = {}) {
   if (!isKnownTab(tabId)) return false;
   if (!(window.activateTab || activateTab)(tabId)) return false;
-  const url = canonicalPath(tabId);
-  if (location.pathname !== url || location.hash) {
+  const url = canonicalUrl(tabId, { search });
+  if (`${location.pathname}${location.search}` !== url || location.hash) {
     history[replace ? "replaceState" : "pushState"]({ tabId }, "", url);
   }
+  if (PUBLIC_INFO_PAGES.has(tabId)) updatePublicLegalContextLinks();
   return true;
 }
 
@@ -403,7 +438,7 @@ document.addEventListener("click", e => {
         : "";
   if (!isKnownTab(tabId)) return;
   e.preventDefault();
-  navigateToTab(tabId);
+  navigateToTab(tabId, { search: legalMatch ? url.search : "" });
 });
 
 window.addEventListener("popstate", () => syncTabFromPath());

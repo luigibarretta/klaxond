@@ -1,5 +1,13 @@
 # Klaxond — CHANGELOG
 
+## 0.14.20 — 2026-07-05
+
+- I link legal nella pagina di login ora passano `from=login`, cosi' le pagine
+  `/legal/*` possono distinguere il flusso pubblico di login.
+- Il selettore lingua sulle pagine `/legal/*` compare solo quando la pagina e'
+  stata aperta dalla login; negli altri casi resta valida la lingua gia' scelta
+  nell'app.
+
 ## 0.14.19 — 2026-07-05
 
 - Sulle pagine pubbliche `/legal/*`, la CTA in alto mostra `Back to app` /

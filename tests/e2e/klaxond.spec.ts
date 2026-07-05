@@ -343,6 +343,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   await expect(page.locator("#public-legal-bar")).toBeVisible();
   await expect(page.locator(".sidebar")).toBeHidden();
   await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
+  await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toBeHidden();
   await expect(page.locator(".public-login-link")).toHaveText("Back to app");
   await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/status");
   await page.click(".public-login-link");
@@ -360,16 +361,28 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   await expect(page).toHaveURL(/\/legal\/accessibility$/);
   await expect(page.locator("#tab-accessibility")).toHaveClass(/active/);
 
-  await page.click('#public-legal-bar [data-public-language-option="it"]');
+  await page.evaluate(() => (window as any).klaxondI18n.setLanguage("it"));
   await expect(page.locator("#tab-accessibility h2")).toHaveText("Dichiarazione di accessibilita'");
   await expect(page.locator(".public-login-link")).toHaveText("Torna all'app");
   await expect(page.locator('.footer-links a[href="/legal/notice"]')).toHaveText("Note legali");
-  await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toBeHidden();
 
   await page.click('.footer-links a[href="/legal/notice"]');
   await expect(page).toHaveURL(/\/legal\/notice$/);
   await expect(page.locator("#tab-legal a", { hasText: AUTHOR_NAME })).toHaveAttribute("href", AUTHOR_URL);
   await expect(page.locator("#tab-legal")).not.toContainText("klaxond.luigibarretta.com");
+
+  await page.evaluate(() => (window as any).klaxondI18n.setLanguage("en"));
+  await page.goto("/legal/accessibility?from=login");
+  await expect(page).toHaveURL(/\/legal\/accessibility\?from=login$/);
+  await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toBeVisible();
+  await page.click('#public-legal-bar [data-public-language-option="it"]');
+  await expect(page.locator("#tab-accessibility h2")).toHaveText("Dichiarazione di accessibilita'");
+  await expect(page.locator('.footer-links a[href="/legal/notice?from=login"]')).toHaveText("Note legali");
+  await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toHaveAttribute("aria-pressed", "true");
+  await page.click('.footer-links a[href="/legal/notice?from=login"]');
+  await expect(page).toHaveURL(/\/legal\/notice\?from=login$/);
+
   const footerBottomGap = await page.locator(".app-footer").evaluate(el =>
     Math.round(window.innerHeight - el.getBoundingClientRect().bottom)
   );
@@ -405,9 +418,9 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     const loginPage = await request.get("/auth/login?return_to=%2Fstatus", { maxRedirects: 0 });
     await expect(loginPage).toBeOK();
     const loginHtml = await loginPage.text();
-    expect(loginHtml).toContain('href="/legal/privacy"');
-    expect(loginHtml).toContain('href="/legal/accessibility"');
-    expect(loginHtml).toContain('href="/legal/notice"');
+    expect(loginHtml).toContain('href="/legal/privacy?from=login"');
+    expect(loginHtml).toContain('href="/legal/accessibility?from=login"');
+    expect(loginHtml).toContain('href="/legal/notice?from=login"');
     expect(loginHtml).not.toContain('href="/ui/privacy"');
     expect(loginHtml).not.toContain('href="/ui/legal"');
     expect(loginHtml).toContain('class="login-logo" src="/ui/favicon.svg"');
@@ -431,7 +444,12 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
     await expect(page.locator(".public-login-link")).toHaveText(/Sign in|Accedi/);
     await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/auth/login?start=1&return_to=%2Fstatus");
+    await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toBeHidden();
     await expect(page.locator("#tab-privacy h2")).toContainText(/Privacy notice|Informativa privacy/);
+
+    await page.goto("/legal/privacy?from=login");
+    await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toBeVisible();
+    await expect(page.locator('.footer-links a[href="/legal/terms?from=login"]')).toBeVisible();
   } finally {
     await restoreConfigBundle(request, originalBundle, { Authorization: cleanupBearer });
   }

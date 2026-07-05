@@ -450,6 +450,9 @@ main {
 .public-language-segment {
   width: 86px;
 }
+[data-public-language-control][hidden] {
+  display: none;
+}
 .public-login-link {
   min-height: 30px;
   padding: 4px 10px;

@@ -781,11 +781,11 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
 <p class="login-note">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
 <div class="login-actions">{primary}{passkey}</div>
 <nav class="login-legal" aria-label="Legal links">
-<a href="/legal/privacy">Privacy</a>
-<a href="/legal/accessibility">Accessibility</a>
-<a href="/legal/terms">Terms</a>
-<a href="/legal/cookies">Cookies</a>
-<a href="/legal/notice">Legal notice</a>
+<a href="/legal/privacy?from=login">Privacy</a>
+<a href="/legal/accessibility?from=login">Accessibility</a>
+<a href="/legal/terms?from=login">Terms</a>
+<a href="/legal/cookies?from=login">Cookies</a>
+<a href="/legal/notice?from=login">Legal notice</a>
 </nav>
 <p class="muted login-byline">by {author_link}</p>
 </section></main></body></html>"#,
