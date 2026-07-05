@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.17";
+pub const VERSION: &str = "0.14.18";
 pub const AUTHOR_NAME: &str = "Luigi Barretta";
 pub const AUTHOR_URL: &str = "https://github.com/luigibarretta";
 pub const DEDUP_SOURCES: &[&str] = &[

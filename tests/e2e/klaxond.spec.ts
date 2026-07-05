@@ -417,6 +417,10 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(logout.status()).toBe(302);
     expect(logout.headers().location).toBe("/auth/login?logged_out=1");
 
+    const legacyAdmin = await request.get("/ui/deliveries", { maxRedirects: 0 });
+    expect(legacyAdmin.status()).toBe(302);
+    expect(legacyAdmin.headers().location).toBe("/deliveries");
+
     const protectedAdmin = await request.get("/status", { maxRedirects: 0 });
     expect(protectedAdmin.status()).toBe(401);
 

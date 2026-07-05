@@ -1,5 +1,11 @@
 # Klaxond — CHANGELOG
 
+## 0.14.18 — 2026-07-05
+
+- Resi pubblici solo i redirect legacy `/ui/<pagina>` e `/ui/index.html`, in
+  modo che i vecchi bookmark vengano canonicalizzati a `/status`,
+  `/deliveries`, `/authentication`, ecc. prima dell'eventuale login.
+
 ## 0.14.17 — 2026-07-05
 
 - Spostate le pagine pubbliche Privacy, Accessibility, Terms, Cookies e Legal

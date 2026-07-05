@@ -1336,10 +1336,12 @@ mod tests {
         assert!(is_public("/ui/style.css"));
         assert!(is_public("/ui/meta.js"));
         assert!(is_public("/ui/app.js"));
+        assert!(is_public("/"));
+        assert!(is_public("/ui"));
+        assert!(is_public("/ui/deliveries"));
+        assert!(is_public("/ui/auth"));
         assert!(!is_public("/status"));
         assert!(!is_public("/authentication"));
-        assert!(!is_public("/ui/status"));
-        assert!(!is_public("/ui/auth"));
     }
 
     #[test]
