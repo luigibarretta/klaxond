@@ -119,6 +119,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/auth/me` | Current authenticated user, auth mode, scopes and browser CSRF token |
 | `GET` | `/api/auth/login` | Public login page and OIDC start flow |
 | `GET` | `/api/auth/methods` | Public auth method availability using the shared method names |
+| `GET` | `/api/auth/password-policy` | Shared Argon2id password policy limits consumed by the UI |
 | `POST` | `/api/auth/local/login` | Local username/password login; accepts optional TOTP code |
 | `POST` | `/api/auth/reauth` | Refresh the short reauthentication window for sensitive local-session actions |
 | `POST` | `/api/auth/totp/setup/start` | Generate a one-time TOTP setup secret and otpauth URI |

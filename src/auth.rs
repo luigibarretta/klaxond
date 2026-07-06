@@ -1617,6 +1617,7 @@ mod tests {
 
     #[test]
     fn magic_link_issue_and_consume_is_single_use() {
+        let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
         let tmp = TempDir::new().unwrap();
         let state = AppState::new(temp_paths(&tmp)).unwrap();
         let mut runtime = state.cfg();

@@ -451,6 +451,22 @@ paths:
                           enum: [password, oidc, totp, passkey, hardware_key, trusted_proxy, ldap, api_token, magic_link]
                         enabled:
                           type: boolean
+  /api/auth/password-policy:
+    get:
+      tags: [Auth]
+      operationId: getPasswordPolicy
+      summary: Return the active local password policy.
+      description: Returns the shared Argon2id password policy limits that the frontend uses for local password fields.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Password policy limits.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PasswordPolicy"
   /api/auth/local/login:
     post:
       tags: [Auth]
@@ -490,7 +506,10 @@ paths:
       tags: [Auth]
       operationId: requestMagicLink
       summary: Request a short-lived local magic login link.
-      description: Returns `sent: true` for known and unknown users; when Klaxond can surface the link directly for the configured local user, the JSON response includes `link`.
+      description: >
+        Returns `sent: true` for known and unknown users; when Klaxond can
+        surface the link directly for the configured local user, the JSON
+        response includes `link`.
       security: []
       requestBody:
         required: true
@@ -525,8 +544,9 @@ paths:
                   sent:
                     type: boolean
                   link:
-                    type: string
-                    nullable: true
+                    type:
+                      - string
+                      - "null"
                   expiresInSeconds:
                     type: integer
         "302":
@@ -1885,6 +1905,18 @@ components:
           type: string
         csrf:
           type: string
+    PasswordPolicy:
+      type: object
+      required: [min_length, max_length]
+      properties:
+        min_length:
+          type: integer
+          minimum: 1
+          description: Minimum allowed local password length.
+        max_length:
+          type: integer
+          minimum: 1
+          description: Maximum accepted local password length.
     SudoRequest:
       type: object
       required: [password]

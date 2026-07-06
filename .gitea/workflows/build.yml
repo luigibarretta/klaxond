@@ -22,6 +22,9 @@ jobs:
       - name: Check RSA private-key usage
         run: bash scripts/check-rsa-private-usage.sh
 
+      - name: Check auth gold standard
+        run: bash scripts/check-auth-gold-standard.sh
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

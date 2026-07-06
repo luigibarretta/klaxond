@@ -144,6 +144,7 @@ impl PathPattern {
 pub const ENDPOINT_POLICIES: &[EndpointPolicy] = &[
     get("/api/auth/me", "status:read"),
     get("/api/auth/config", "auth:read"),
+    get("/api/auth/password-policy", "auth:read"),
     get("/api/auth/tokens", DEFAULT_GET_SCOPE),
     get("/api/auth/passkey/credentials", DEFAULT_GET_SCOPE),
     get("/api/logs", "logs:read"),
@@ -475,6 +476,7 @@ mod tests {
             ("get", "/api/auth/callback"),
             ("post", "/api/auth/logout"),
             ("get", "/api/auth/me"),
+            ("get", "/api/auth/password-policy"),
             ("post", "/api/auth/reauth"),
             ("get", "/api/auth/passkey/login"),
             ("post", "/api/auth/passkey/login/options"),

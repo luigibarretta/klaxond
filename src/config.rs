@@ -12,11 +12,15 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Mutex;
 use webauthn_rs::prelude::Passkey;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const AUTHOR_NAME: &str = "Luigi Barretta";
 pub const AUTHOR_URL: &str = "https://github.com/luigibarretta";
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",
@@ -1677,10 +1681,7 @@ pub fn save_toml(paths: &Paths, cfg: &toml::Value) -> Result<()> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::sync::Mutex;
     use tempfile::TempDir;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn runtime_version_matches_crate_version() {
@@ -1920,7 +1921,7 @@ mod tests {
 
     fn clear_runtime_env() {
         for key in RUNTIME_COMPOSE_ENV_KEYS {
-            // SAFETY: callers hold ENV_LOCK while mutating process-wide env state.
+            // SAFETY: callers hold TEST_ENV_LOCK while mutating process-wide env state.
             unsafe { std::env::remove_var(key) };
         }
     }
@@ -1951,7 +1952,7 @@ mod tests {
 
     #[test]
     fn render_sidecar_overrides_toml_seed_after_ui_save() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         clear_runtime_env();
         let tmp = TempDir::new().unwrap();
         let paths = temp_paths(&tmp);
@@ -1982,7 +1983,7 @@ host = ["TOML dashboard", "/d/toml"]
 
     #[test]
     fn restore_sidecars_from_toml_replaces_stale_sidecar_values() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         clear_runtime_env();
         let tmp = TempDir::new().unwrap();
         let paths = temp_paths(&tmp);
@@ -2070,7 +2071,7 @@ override_critical = true
 
     #[test]
     fn toml_can_drive_runtime_settings_that_ui_can_edit() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         clear_runtime_env();
         let tmp = TempDir::new().unwrap();
         let paths = temp_paths(&tmp);
@@ -2158,7 +2159,7 @@ grafana = "toml-grafana-secret"
 
     #[test]
     fn toml_paths_cover_compose_path_overrides() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         clear_runtime_env();
         let tmp = TempDir::new().unwrap();
         let paths = temp_paths(&tmp);
@@ -2195,9 +2196,9 @@ history_db = "history/klaxond.db"
 
     #[test]
     fn env_overrides_toml_for_compose_runtime_settings() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         clear_runtime_env();
-        // SAFETY: this test holds ENV_LOCK for the full mutation window.
+        // SAFETY: this test holds TEST_ENV_LOCK for the full mutation window.
         unsafe {
             std::env::set_var("TELEGRAM_BOT_TOKEN", "env-telegram-token");
             std::env::set_var("TELEGRAM_API_BASE", "https://telegram-env.example.test/");
