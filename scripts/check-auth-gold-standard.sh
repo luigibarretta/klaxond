@@ -11,6 +11,7 @@ fallback_check() {
     -g '!.git/**'
     -g '!target/**'
     -g '!node_modules/**'
+    -g '!auth-modules/**'
     -g '!static/vendor/**'
     -g '!static/mermaid.min.js'
     -g '!docs/**'
