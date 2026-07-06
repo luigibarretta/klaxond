@@ -260,6 +260,20 @@ username = ""
 password_hash = ""
 realm = "klaxond"
 
+[auth.ldap]
+url = ""
+bind_dn_template = ""
+service_bind_dn = ""
+service_bind_password = ""
+base_dn = ""
+user_filter = "(|(uid={username})(sAMAccountName={username})(mail={username}))"
+scope = "subtree"
+username_attr = "uid"
+email_attr = "mail"
+name_attr = "cn"
+groups_attr = "memberOf"
+timeout_secs = 5
+
 [auth.oidc]
 provider = "authentik"
 issuer = ""
@@ -267,7 +281,7 @@ client_id = ""
 client_secret = ""
 scopes = "openid profile email"
 required_group = ""
-redirect_path = "/auth/callback"
+redirect_path = "/api/auth/callback"
 
 [auth.trusted_proxy]
 user_header = "X-Forwarded-User"

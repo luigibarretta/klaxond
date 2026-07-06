@@ -21,12 +21,16 @@ pub const PUBLIC_ROUTES: &[PathPattern] = &[
     PathPattern::Prefix("/metrics"),
     PathPattern::Prefix("/api/ack/"),
     PathPattern::Prefix("/img/"),
-    PathPattern::Prefix("/auth/login"),
-    PathPattern::Prefix("/auth/callback"),
-    PathPattern::Prefix("/auth/logout"),
-    PathPattern::Prefix("/auth/passkey"),
+    PathPattern::Prefix("/api/auth/login"),
+    PathPattern::Prefix("/api/auth/callback"),
+    PathPattern::Exact("/api/auth/methods"),
+    PathPattern::Exact("/api/auth/local/login"),
+    PathPattern::Exact("/api/auth/magic/request"),
+    PathPattern::Prefix("/api/auth/magic/callback/"),
+    PathPattern::Prefix("/api/auth/passkey/login"),
     PathPattern::Prefix("/static/"),
     PathPattern::Prefix("/favicon.ico"),
+    PathPattern::Exact("/api/auth/logout"),
     PathPattern::Exact("/"),
     PathPattern::Exact("/swagger"),
     PathPattern::Exact("/swagger/"),
@@ -129,16 +133,19 @@ impl PathPattern {
         match self {
             Self::Exact(exact) => exact,
             Self::Prefix("/api/test/") => "/api/test/{severity}",
+            Self::Prefix("/api/auth/tokens/") => "/api/auth/tokens/{id}",
+            Self::Prefix("/api/auth/magic/callback/") => "/api/auth/magic/callback/{token}",
+            Self::Prefix("/api/auth/passkey/credentials/") => "/api/auth/passkey/credentials/{id}",
             Self::Prefix(prefix) => prefix,
         }
     }
 }
 
 pub const ENDPOINT_POLICIES: &[EndpointPolicy] = &[
-    get("/auth/me", "status:read"),
-    get("/api/auth-config", "auth:read"),
+    get("/api/auth/me", "status:read"),
+    get("/api/auth/config", "auth:read"),
     get("/api/auth/tokens", DEFAULT_GET_SCOPE),
-    get("/api/auth/passkeys", DEFAULT_GET_SCOPE),
+    get("/api/auth/passkey/credentials", DEFAULT_GET_SCOPE),
     get("/api/logs", "logs:read"),
     get("/api/audit", "audit:read"),
     get("/api/config/backup", "config:read"),
@@ -160,27 +167,45 @@ pub const ENDPOINT_POLICIES: &[EndpointPolicy] = &[
     get("/api/schedules", DEFAULT_GET_SCOPE),
     get("/api/acks", DEFAULT_GET_SCOPE),
     get("/api/inhibition-rules", DEFAULT_GET_SCOPE),
-    sensitive_mutation("/api/auth-config", "auth:write", "auth.update"),
+    sensitive_mutation("/api/auth/config", "auth:write", "auth.update"),
     sensitive_mutation("/api/auth/tokens", "auth:write", "auth.token.create"),
-    sensitive_mutation("/api/auth/tokens/revoke", "auth:write", "auth.token.revoke"),
-    sensitive_mutation("/api/auth/totp/start", "auth:write", "auth.totp.start"),
-    sensitive_mutation("/api/auth/totp/enable", "auth:write", "auth.totp.enable"),
+    EndpointPolicy {
+        method: EndpointMethod::Mutation,
+        path: PathPattern::Prefix("/api/auth/tokens/"),
+        scope: "auth:write",
+        csrf: CsrfPolicy::Required,
+        reauth: ReauthPolicy::LocalSudo,
+        audit: AuditPolicy::Action("auth.token.revoke"),
+    },
+    sensitive_mutation(
+        "/api/auth/totp/setup/start",
+        "auth:write",
+        "auth.totp.start",
+    ),
+    sensitive_mutation(
+        "/api/auth/totp/setup/confirm",
+        "auth:write",
+        "auth.totp.enable",
+    ),
     sensitive_mutation("/api/auth/totp/disable", "auth:write", "auth.totp.disable"),
     sensitive_mutation(
-        "/api/auth/passkeys/register/start",
+        "/api/auth/passkey/register/options",
         "auth:write",
         "auth.passkey.register.start",
     ),
     sensitive_mutation(
-        "/api/auth/passkeys/register/finish",
+        "/api/auth/passkey/register/verify",
         "auth:write",
         "auth.passkey.register.finish",
     ),
-    sensitive_mutation(
-        "/api/auth/passkeys/delete",
-        "auth:write",
-        "auth.passkey.delete",
-    ),
+    EndpointPolicy {
+        method: EndpointMethod::Mutation,
+        path: PathPattern::Prefix("/api/auth/passkey/credentials/"),
+        scope: "auth:write",
+        csrf: CsrfPolicy::Required,
+        reauth: ReauthPolicy::LocalSudo,
+        audit: AuditPolicy::Action("auth.passkey.delete"),
+    },
     audited_exempt_mutation(
         "/api/config/import-preview",
         "config:read",
@@ -442,15 +467,18 @@ mod tests {
             ("post", "/prowlarr/{severity}"),
             ("post", "/decypharr/{severity}"),
             ("post", "/pve/{severity}"),
-            ("get", "/auth/login"),
-            ("post", "/auth/login"),
-            ("get", "/auth/callback"),
-            ("get", "/auth/logout"),
-            ("get", "/auth/me"),
-            ("post", "/auth/sudo"),
-            ("get", "/auth/passkey"),
-            ("post", "/auth/passkey/start"),
-            ("post", "/auth/passkey/finish"),
+            ("get", "/api/auth/login"),
+            ("get", "/api/auth/methods"),
+            ("post", "/api/auth/local/login"),
+            ("post", "/api/auth/magic/request"),
+            ("get", "/api/auth/magic/callback/{token}"),
+            ("get", "/api/auth/callback"),
+            ("post", "/api/auth/logout"),
+            ("get", "/api/auth/me"),
+            ("post", "/api/auth/reauth"),
+            ("get", "/api/auth/passkey/login"),
+            ("post", "/api/auth/passkey/login/options"),
+            ("post", "/api/auth/passkey/login/verify"),
             ("get", "/api/status"),
             ("get", "/api/setup-status"),
             ("get", "/api/channel-test-matrix"),
@@ -458,18 +486,18 @@ mod tests {
             ("get", "/api/audit"),
             ("post", "/api/client-log"),
             ("get", "/api/deliveries"),
-            ("get", "/api/auth-config"),
-            ("post", "/api/auth-config"),
+            ("get", "/api/auth/config"),
+            ("post", "/api/auth/config"),
             ("get", "/api/auth/tokens"),
             ("post", "/api/auth/tokens"),
-            ("post", "/api/auth/tokens/revoke"),
-            ("post", "/api/auth/totp/start"),
-            ("post", "/api/auth/totp/enable"),
+            ("delete", "/api/auth/tokens/{id}"),
+            ("post", "/api/auth/totp/setup/start"),
+            ("post", "/api/auth/totp/setup/confirm"),
             ("post", "/api/auth/totp/disable"),
-            ("get", "/api/auth/passkeys"),
-            ("post", "/api/auth/passkeys/register/start"),
-            ("post", "/api/auth/passkeys/register/finish"),
-            ("post", "/api/auth/passkeys/delete"),
+            ("get", "/api/auth/passkey/credentials"),
+            ("post", "/api/auth/passkey/register/options"),
+            ("post", "/api/auth/passkey/register/verify"),
+            ("delete", "/api/auth/passkey/credentials/{id}"),
             ("get", "/api/config/backup"),
             ("get", "/api/config/export"),
             ("get", "/api/config/backups"),
@@ -583,7 +611,7 @@ mod tests {
             "test:write"
         );
         assert_eq!(
-            required_scope(&Method::DELETE, "/api/auth-config"),
+            required_scope(&Method::DELETE, "/api/auth/config"),
             "auth:write"
         );
     }
@@ -593,8 +621,8 @@ mod tests {
         assert!(csrf_exempt_mutation("/api/render-preview"));
         assert!(csrf_exempt_mutation("/api/client-log"));
         assert!(csrf_exempt_mutation("/api/policy-simulate"));
-        assert!(!csrf_exempt_mutation("/api/auth-config"));
-        assert!(requires_sudo("/api/auth-config"));
+        assert!(!csrf_exempt_mutation("/api/auth/config"));
+        assert!(requires_sudo("/api/auth/config"));
         assert!(requires_sudo("/api/config/restore"));
         assert!(!requires_sudo("/api/render-preview"));
         assert!(!requires_sudo("/api/test/critical"));
@@ -603,7 +631,7 @@ mod tests {
     #[test]
     fn audit_actions_are_owned_by_endpoint_policy() {
         assert_eq!(
-            audit_action_for_post("/api/auth-config"),
+            audit_action_for_post("/api/auth/config"),
             Some("auth.update")
         );
         assert_eq!(
@@ -617,7 +645,11 @@ mod tests {
         let path = policy.path.openapi_path();
         let method = match policy.method {
             EndpointMethod::Get => "get",
-            EndpointMethod::Mutation => "post",
+            EndpointMethod::Mutation => match policy.path {
+                PathPattern::Prefix("/api/auth/tokens/")
+                | PathPattern::Prefix("/api/auth/passkey/credentials/") => "delete",
+                _ => "post",
+            },
         };
         openapi_operation_block(openapi, path, method).unwrap_or_else(|| {
             panic!(

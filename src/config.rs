@@ -2,6 +2,11 @@ use crate::util::{
     atomic_write, atomic_write_json, env_bool, env_string, toml_bool, toml_get, toml_string,
 };
 use anyhow::{Context, Result};
+use auth_modules::ldap::{
+    default_ldap_email_attr, default_ldap_groups_attr, default_ldap_name_attr, default_ldap_scope,
+    default_ldap_timeout_secs, default_ldap_user_filter, default_ldap_username_attr,
+    ldap_scope_from_name, ldap_scope_name,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -281,6 +286,8 @@ pub struct AuthConfig {
     pub session_timeout_hours: u64,
     pub basic: BasicAuthConfig,
     pub oidc: OidcConfig,
+    #[serde(default)]
+    pub ldap: LdapConfig,
     pub trusted_proxy: TrustedProxyConfig,
     #[serde(default)]
     pub webauthn: WebauthnConfig,
@@ -310,6 +317,33 @@ pub struct OidcConfig {
     pub scopes: String,
     pub required_group: String,
     pub redirect_path: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LdapConfig {
+    pub url: String,
+    #[serde(default)]
+    pub bind_dn_template: String,
+    #[serde(default)]
+    pub service_bind_dn: String,
+    #[serde(default)]
+    pub service_bind_password: String,
+    #[serde(default)]
+    pub base_dn: String,
+    #[serde(default = "default_ldap_user_filter")]
+    pub user_filter: String,
+    #[serde(default = "default_ldap_scope_name")]
+    pub scope: String,
+    #[serde(default = "default_ldap_username_attr")]
+    pub username_attr: String,
+    #[serde(default = "default_ldap_email_attr")]
+    pub email_attr: String,
+    #[serde(default = "default_ldap_name_attr")]
+    pub name_attr: String,
+    #[serde(default = "default_ldap_groups_attr")]
+    pub groups_attr: String,
+    #[serde(default = "default_ldap_timeout_secs")]
+    pub timeout_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -372,6 +406,70 @@ fn default_true() -> bool {
     true
 }
 
+fn default_ldap_scope_name() -> String {
+    ldap_scope_name(default_ldap_scope()).to_string()
+}
+
+impl Default for LdapConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            bind_dn_template: String::new(),
+            service_bind_dn: String::new(),
+            service_bind_password: String::new(),
+            base_dn: String::new(),
+            user_filter: default_ldap_user_filter(),
+            scope: default_ldap_scope_name(),
+            username_attr: default_ldap_username_attr(),
+            email_attr: default_ldap_email_attr(),
+            name_attr: default_ldap_name_attr(),
+            groups_attr: default_ldap_groups_attr(),
+            timeout_secs: default_ldap_timeout_secs(),
+        }
+    }
+}
+
+impl LdapConfig {
+    pub fn to_auth_modules_config(&self) -> Option<auth_modules::ldap::LdapAuthConfig> {
+        let url = self.url.trim();
+        if url.is_empty() {
+            return None;
+        }
+        let bind_dn_template = clean_optional_string(&self.bind_dn_template);
+        let service_bind_dn = clean_optional_string(&self.service_bind_dn);
+        let service_bind_password = clean_optional_string(&self.service_bind_password);
+        if bind_dn_template.is_none()
+            && (service_bind_dn.is_none() || service_bind_password.is_none())
+        {
+            return None;
+        }
+        Some(auth_modules::ldap::LdapAuthConfig {
+            url: url.to_string(),
+            bind_dn_template,
+            service_bind_dn,
+            service_bind_password,
+            base_dn: clean_optional_string(&self.base_dn),
+            user_filter: clean_optional_string(&self.user_filter)
+                .unwrap_or_else(default_ldap_user_filter),
+            scope: ldap_scope_from_name(&self.scope).unwrap_or_else(default_ldap_scope),
+            username_attr: clean_optional_string(&self.username_attr)
+                .unwrap_or_else(default_ldap_username_attr),
+            email_attr: clean_optional_string(&self.email_attr)
+                .unwrap_or_else(default_ldap_email_attr),
+            name_attr: clean_optional_string(&self.name_attr)
+                .unwrap_or_else(default_ldap_name_attr),
+            groups_attr: clean_optional_string(&self.groups_attr)
+                .unwrap_or_else(default_ldap_groups_attr),
+            timeout_secs: self.timeout_secs.clamp(1, 60),
+        })
+    }
+}
+
+fn clean_optional_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty() && trimmed != "***SET***").then(|| trimmed.to_string())
+}
+
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
@@ -392,8 +490,9 @@ impl Default for AuthConfig {
                 client_secret: String::new(),
                 scopes: "openid profile email".to_string(),
                 required_group: String::new(),
-                redirect_path: "/auth/callback".to_string(),
+                redirect_path: "/api/auth/callback".to_string(),
             },
+            ldap: LdapConfig::default(),
             trusted_proxy: TrustedProxyConfig {
                 user_header: "X-Forwarded-User".to_string(),
                 email_header: "X-Forwarded-Email".to_string(),
@@ -1223,6 +1322,7 @@ fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {
     base.session_timeout_hours = raw.session_timeout_hours;
     base.basic = raw.basic;
     base.oidc = raw.oidc;
+    base.ldap = raw.ldap;
     base.trusted_proxy = raw.trusted_proxy;
     base.webauthn = raw.webauthn;
     base.api_keys = raw.api_keys;
@@ -1246,7 +1346,8 @@ fn merge_auth_toml(mut base: AuthConfig, seed: &toml::Value) -> AuthConfig {
     for (section, setter) in [
         ("basic", 0_usize),
         ("oidc", 1_usize),
-        ("trusted_proxy", 2_usize),
+        ("ldap", 2_usize),
+        ("trusted_proxy", 3_usize),
     ] {
         let Some(t) = seed.get(section).and_then(|v| v.as_table()) else {
             continue;
@@ -1284,6 +1385,44 @@ fn merge_auth_toml(mut base: AuthConfig, seed: &toml::Value) -> AuthConfig {
                 }
                 if let Some(v) = t.get("redirect_path").and_then(|v| v.as_str()) {
                     base.oidc.redirect_path = v.to_string();
+                }
+            }
+            2 => {
+                if let Some(v) = t.get("url").and_then(|v| v.as_str()) {
+                    base.ldap.url = v.to_string();
+                }
+                if let Some(v) = t.get("bind_dn_template").and_then(|v| v.as_str()) {
+                    base.ldap.bind_dn_template = v.to_string();
+                }
+                if let Some(v) = t.get("service_bind_dn").and_then(|v| v.as_str()) {
+                    base.ldap.service_bind_dn = v.to_string();
+                }
+                if let Some(v) = t.get("service_bind_password").and_then(|v| v.as_str()) {
+                    base.ldap.service_bind_password = v.to_string();
+                }
+                if let Some(v) = t.get("base_dn").and_then(|v| v.as_str()) {
+                    base.ldap.base_dn = v.to_string();
+                }
+                if let Some(v) = t.get("user_filter").and_then(|v| v.as_str()) {
+                    base.ldap.user_filter = v.to_string();
+                }
+                if let Some(v) = t.get("scope").and_then(|v| v.as_str()) {
+                    base.ldap.scope = v.to_string();
+                }
+                if let Some(v) = t.get("username_attr").and_then(|v| v.as_str()) {
+                    base.ldap.username_attr = v.to_string();
+                }
+                if let Some(v) = t.get("email_attr").and_then(|v| v.as_str()) {
+                    base.ldap.email_attr = v.to_string();
+                }
+                if let Some(v) = t.get("name_attr").and_then(|v| v.as_str()) {
+                    base.ldap.name_attr = v.to_string();
+                }
+                if let Some(v) = t.get("groups_attr").and_then(|v| v.as_str()) {
+                    base.ldap.groups_attr = v.to_string();
+                }
+                if let Some(v) = t.get("timeout_secs").and_then(|v| v.as_integer()) {
+                    base.ldap.timeout_secs = v.clamp(1, 60) as u64;
                 }
             }
             _ => {
@@ -1546,6 +1685,43 @@ mod tests {
     #[test]
     fn runtime_version_matches_crate_version() {
         assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn ldap_config_builds_shared_direct_bind_config() {
+        let ldap = LdapConfig {
+            url: "ldaps://directory.example.com:636".to_string(),
+            bind_dn_template: "uid={username},ou=people,dc=example,dc=com".to_string(),
+            scope: "one".to_string(),
+            timeout_secs: 99,
+            ..LdapConfig::default()
+        };
+
+        let shared = ldap.to_auth_modules_config().expect("shared config");
+
+        assert_eq!(shared.url, "ldaps://directory.example.com:636");
+        assert_eq!(
+            shared.bind_dn_template.as_deref(),
+            Some("uid={username},ou=people,dc=example,dc=com")
+        );
+        assert_eq!(auth_modules::ldap::ldap_scope_name(shared.scope), "one");
+        assert_eq!(shared.timeout_secs, 60);
+    }
+
+    #[test]
+    fn ldap_config_requires_bind_strategy() {
+        let ldap = LdapConfig {
+            url: "ldap://directory.example.com:389".to_string(),
+            ..LdapConfig::default()
+        };
+        assert!(ldap.to_auth_modules_config().is_none());
+
+        let ldap = LdapConfig {
+            service_bind_dn: "cn=svc,dc=example,dc=com".to_string(),
+            service_bind_password: "secret".to_string(),
+            ..ldap
+        };
+        assert!(ldap.to_auth_modules_config().is_some());
     }
 
     const RUNTIME_COMPOSE_ENV_KEYS: &[&str] = &[
@@ -1856,7 +2032,7 @@ session_timeout_hours = 12
 
 [auth.basic]
 username = "restored"
-password_hash = "$2b$12$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWX"
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$abcdefghijklmnop$abcdefghijklmnopqrstuvwx"
 realm = "klaxond"
 
 [ntfy]
@@ -2198,7 +2374,7 @@ default_limit = 45
             "proxy_set_header X-Forwarded-Proto $klaxond_forwarded_proto",
             "proxy_set_header X-Forwarded-Host $klaxond_forwarded_host",
             "absolute_redirect off",
-            "location ~ ^/(api|auth)(/|$)",
+            "location ~ ^/api/",
             "location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve)(/|$)",
             "location ~ ^/img/",
             "location ~ ^/(swagger|api/docs|api/swagger|api/swagger-ui)(/|$)",

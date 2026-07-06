@@ -32,16 +32,34 @@ pub struct AppState {
     pub rendered_images: Arc<Mutex<HashMap<String, RenderedImage>>>,
     pub metrics: Arc<Metrics>,
     pub dedup: Arc<AsyncMutex<DedupQueues>>,
-    pub oidc_states: Arc<Mutex<HashMap<String, (f64, String)>>>,
+    pub oidc_states: Arc<Mutex<HashMap<String, PendingOidcState>>>,
+    pub magic_links: Arc<Mutex<HashMap<String, PendingMagicLink>>>,
     pub passkey_registrations: Arc<Mutex<HashMap<String, PendingPasskeyRegistration>>>,
     pub passkey_authentications: Arc<Mutex<HashMap<String, PendingPasskeyAuthentication>>>,
-    pub auth_failures: Arc<Mutex<HashMap<String, Vec<f64>>>>,
+    pub auth_failures: auth_modules::rate_limit::InMemoryRateLimiter,
 }
 
 #[derive(Clone)]
 pub struct RenderedImage {
     pub bytes: Vec<u8>,
     pub expires_at: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingOidcState {
+    pub created_at: f64,
+    pub return_to: String,
+    pub nonce: String,
+    pub code_verifier: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingMagicLink {
+    pub created_at: f64,
+    pub expires_at: f64,
+    pub username: String,
+    pub return_to: String,
+    pub used_at: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +108,7 @@ pub struct PendingPasskeyRegistration {
 pub struct PendingPasskeyAuthentication {
     pub ts: f64,
     pub user_sub: String,
+    pub rate_key: String,
     pub state: PasskeyAuthentication,
 }
 
@@ -124,9 +143,10 @@ impl AppState {
             metrics: Arc::new(Metrics::default()),
             dedup: Arc::new(AsyncMutex::new(queues)),
             oidc_states: Arc::new(Mutex::new(HashMap::new())),
+            magic_links: Arc::new(Mutex::new(HashMap::new())),
             passkey_registrations: Arc::new(Mutex::new(HashMap::new())),
             passkey_authentications: Arc::new(Mutex::new(HashMap::new())),
-            auth_failures: Arc::new(Mutex::new(HashMap::new())),
+            auth_failures: auth_modules::rate_limit::InMemoryRateLimiter::default(),
         })
     }
 

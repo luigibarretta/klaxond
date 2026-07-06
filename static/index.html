@@ -95,7 +95,7 @@
         <strong id="sidebar-user-name">anonymous</strong>
         <span id="sidebar-user-mode" class="muted">mode=none</span>
       </div>
-      <a href="/auth/logout" data-i18n-title="auth.logout" title="Logout" aria-label="Logout">↪</a>
+      <a href="/api/auth/logout" data-auth-logout data-i18n-title="auth.logout" title="Logout" aria-label="Logout">↪</a>
     </div>
   </aside>
 
@@ -723,9 +723,12 @@ host=it1-prd-dev-01</textarea>
       <span data-i18n-html="auth.mode_none"><b>None</b> — public (default; suitable when klaxond is on a trusted internal network)</span>
     </label><br/>
     <label><input type="radio" name="auth-mode" value="basic">
-      <span data-i18n-html="auth.mode_basic"><b>Basic</b> — single user with bcrypt password (browser native)</span>
+      <span data-i18n-html="auth.mode_basic"><b>Basic</b> — single user with Argon2id password (browser native)</span>
     </label>
-    <small id="auth-bcrypt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em" data-i18n="auth.bcrypt_warn">bcrypt support is unavailable — local basic auth will fail</small>
+    <br/>
+    <label><input type="radio" name="auth-mode" value="ldap">
+      <span data-i18n-html="auth.mode_ldap"><b>LDAP</b> — directory username/password with direct bind or service-bind search</span>
+    </label>
     <br/>
     <label><input type="radio" name="auth-mode" value="oidc">
       <span data-i18n-html="auth.mode_oidc"><b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)</span>
@@ -749,8 +752,9 @@ host=it1-prd-dev-01</textarea>
     <label><span data-i18n="auth.username">Username</span> <input type="text" id="auth-basic-user" autocomplete="username"></label>
     <label><span data-i18n="auth.realm">Realm</span> <input type="text" id="auth-basic-realm" value="klaxond"></label>
     <label><span data-i18n="auth.set_password">Set password (leave blank to keep existing)</span>
-      <input type="password" id="auth-basic-pwd" autocomplete="new-password" placeholder="new password (bcrypt-hashed before storage)" data-i18n-placeholder="auth.password_placeholder">
+      <input type="password" id="auth-basic-pwd" autocomplete="new-password" placeholder="new password (Argon2id-hashed before storage)" data-i18n-placeholder="auth.password_placeholder">
     </label>
+    <small id="auth-basic-pwd-policy" class="muted"></small>
     <p class="muted"><small><span data-i18n="auth.password_hash_status">Password hash status:</span> <code id="auth-basic-status">—</code></small></p>
     <div class="auth-totp-panel">
       <p class="muted"><small><span data-i18n="auth.totp_status">TOTP status:</span> <code id="auth-totp-status">—</code></small></p>
@@ -773,6 +777,57 @@ host=it1-prd-dev-01</textarea>
           <button type="button" class="btn primary" id="totp-enable" data-i18n="auth.totp_enable">Enable TOTP</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <h3 id="auth-ldap-h" data-i18n="auth.ldap_config">LDAP config</h3>
+  <div class="card" id="auth-ldap-card">
+    <div class="grid2">
+      <label><span data-i18n="auth.ldap_url">LDAP URL</span>
+        <input type="url" id="auth-ldap-url" placeholder="ldaps://directory.example.com:636">
+      </label>
+      <label><span data-i18n="auth.ldap_timeout">Timeout (seconds)</span>
+        <input type="number" id="auth-ldap-timeout" min="1" max="60" value="5">
+      </label>
+    </div>
+    <label><span data-i18n="auth.ldap_bind_template">Bind DN template</span>
+      <input type="text" id="auth-ldap-bind-template" placeholder="uid={username},ou=people,dc=example,dc=com">
+    </label>
+    <div class="grid2">
+      <label><span data-i18n="auth.ldap_service_dn">Service bind DN</span>
+        <input type="text" id="auth-ldap-service-dn" autocomplete="off">
+      </label>
+      <label><span data-i18n="auth.ldap_service_password">Service bind password</span>
+        <input type="password" id="auth-ldap-service-password" autocomplete="off" placeholder="(leave blank to keep existing)" data-i18n-placeholder="auth.keep_existing_placeholder">
+        <small class="muted"><span data-i18n="common.status">Status</span>: <code id="auth-ldap-service-status">—</code></small>
+      </label>
+    </div>
+    <label><span data-i18n="auth.ldap_base_dn">Base DN</span>
+      <input type="text" id="auth-ldap-base-dn" placeholder="ou=people,dc=example,dc=com">
+    </label>
+    <label><span data-i18n="auth.ldap_user_filter">User filter</span>
+      <input type="text" id="auth-ldap-user-filter" placeholder="(|(uid={username})(sAMAccountName={username})(mail={username}))">
+    </label>
+    <div class="grid2">
+      <label><span data-i18n="auth.ldap_scope">Search scope</span>
+        <select id="auth-ldap-scope">
+          <option value="subtree">Subtree</option>
+          <option value="one">One level</option>
+          <option value="base">Base</option>
+        </select>
+      </label>
+      <label><span data-i18n="auth.ldap_username_attr">Username attribute</span>
+        <input type="text" id="auth-ldap-username-attr" value="uid">
+      </label>
+      <label><span data-i18n="auth.ldap_email_attr">Email attribute</span>
+        <input type="text" id="auth-ldap-email-attr" value="mail">
+      </label>
+      <label><span data-i18n="auth.ldap_name_attr">Name attribute</span>
+        <input type="text" id="auth-ldap-name-attr" value="cn">
+      </label>
+      <label><span data-i18n="auth.ldap_groups_attr">Groups attribute</span>
+        <input type="text" id="auth-ldap-groups-attr" value="memberOf">
+      </label>
     </div>
   </div>
 
@@ -805,7 +860,7 @@ host=it1-prd-dev-01</textarea>
       <input type="text" id="auth-oidc-group" placeholder="e.g. klaxond-admins" data-i18n-placeholder="auth.group_placeholder">
     </label>
     <label><span data-i18n="auth.redirect_path">Redirect path</span>
-      <input type="text" id="auth-oidc-redirect" value="/auth/callback">
+      <input type="text" id="auth-oidc-redirect" value="/api/auth/callback">
     </label>
     <p class="muted"><small><span data-i18n="auth.redirect_uri">Redirect URI used at the IdP:</span> <code id="auth-oidc-full-redirect">https://&lt;host&gt;&lt;redirect_path&gt;</code></small></p>
   </div>
@@ -838,7 +893,7 @@ host=it1-prd-dev-01</textarea>
     <div class="row">
       <label style="margin:0"><span data-i18n="auth.passkey_name">Passkey name</span> <input type="text" id="passkey-name" placeholder="MacBook Touch ID"></label>
       <button id="passkey-register" class="btn" data-i18n="auth.passkey_register">Register passkey</button>
-      <a class="btn" href="/auth/passkey" data-i18n="auth.passkey_login_link">Passkey login page</a>
+      <a class="btn" href="/api/auth/passkey/login" data-i18n="auth.passkey_login_link">Passkey login page</a>
       <span id="passkey-status" class="muted"></span>
     </div>
     <div class="table-scroll">
@@ -885,7 +940,7 @@ host=it1-prd-dev-01</textarea>
     <button id="auth-save" class="primary" data-i18n="common.save">Save</button>
     <span id="auth-status" class="muted" style="margin-left:1em"></span>
     <span style="float:right">
-      <a href="/auth/logout" data-i18n="auth.logout">Logout</a>
+      <a href="/api/auth/logout" data-auth-logout data-i18n="auth.logout">Logout</a>
     </span>
   </p>
 </section>

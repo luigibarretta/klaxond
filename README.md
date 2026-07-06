@@ -25,7 +25,7 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 - **Rich ntfy push rendering**: severity emoji in title (RFC 2047 base64-encoded for non-ASCII), priority + tag mapping, up to 2 action buttons via `component` label → dashboard URL.
 - **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
 - **Full settings export/import**: TOML plus sidecar JSON files, import preview, automatic pre-restore backup and validated restore.
-- **Authentication**: local username/password login, optional TOTP/MFA, OIDC, trusted proxy, passkeys, API keys and PATs with granular scopes plus read-only viewer support.
+- **Authentication**: local Argon2id username/password login, LDAP, magic links, optional TOTP/MFA, OIDC, trusted proxy, passkeys, API keys and PATs with granular scopes plus read-only viewer support.
 - **Operational diagnostics**: audit log, backend/frontend log search, setup checklist, notification test matrix and policy simulator.
 - **Persistent delivery history**: SQLite by default under `/data`, with optional PostgreSQL for shared multi-backend history and a built-in migration command.
 - **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
@@ -49,7 +49,7 @@ Open `http://localhost:8181/` to access the admin UI. Edit channel URLs/topics f
 ### Public legal and accessibility pages
 
 klaxond ships public informational pages that remain reachable even when the
-admin UI is protected by SSO, Basic auth, trusted proxy auth, passkeys, API keys
+admin UI is protected by SSO, Basic auth, LDAP, magic links, trusted proxy auth, passkeys, API keys
 or PATs. Replace `localhost:8181` with your own self-hosted origin:
 
 - [Privacy notice](http://localhost:8181/legal/privacy)
@@ -63,11 +63,11 @@ screen.
 
 ### Authentication and browser safety
 
-The admin UI supports local username/password login backed by bcrypt, optional
-TOTP/MFA, OIDC, trusted proxy headers, passkeys, API keys and PATs. Browser
+The admin UI supports local username/password login backed by Argon2id,
+LDAP, optional TOTP/MFA, OIDC, trusted proxy headers, passkeys, magic links, API keys and PATs. Browser
 sessions receive a CSRF token and every same-origin mutation must send it back.
 Sensitive browser actions also require a short local reauthentication window
-when using local username/password login. Machine clients should use scoped
+when using local username/password or LDAP login. Machine clients should use scoped
 Bearer tokens or explicit Basic auth headers; those paths are not gated by
 browser CSRF/sudo prompts.
 
@@ -116,11 +116,13 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/deliveries` | Persistent delivery history; add `limit`/`offset` for the paginated shape |
 | `GET` | `/api/logs` | Runtime/backend/frontend log buffer with keyword, level and pagination filters |
 | `GET` | `/api/audit` | Security/configuration audit ring buffer with keyword and pagination filters |
-| `GET` | `/auth/me` | Current authenticated user, auth mode, scopes and browser CSRF token |
-| `POST` | `/auth/login` | Local username/password login; accepts optional TOTP code |
-| `POST` | `/auth/sudo` | Refresh the short reauthentication window for sensitive local-session actions |
-| `POST` | `/api/auth/totp/start` | Generate a one-time TOTP setup secret and otpauth URI |
-| `POST` | `/api/auth/totp/enable` | Enable local TOTP after validating the current code |
+| `GET` | `/api/auth/me` | Current authenticated user, auth mode, scopes and browser CSRF token |
+| `GET` | `/api/auth/login` | Public login page and OIDC start flow |
+| `GET` | `/api/auth/methods` | Public auth method availability using the shared method names |
+| `POST` | `/api/auth/local/login` | Local username/password login; accepts optional TOTP code |
+| `POST` | `/api/auth/reauth` | Refresh the short reauthentication window for sensitive local-session actions |
+| `POST` | `/api/auth/totp/setup/start` | Generate a one-time TOTP setup secret and otpauth URI |
+| `POST` | `/api/auth/totp/setup/confirm` | Enable local TOTP after validating the current code |
 | `POST` | `/api/auth/totp/disable` | Disable local TOTP |
 | `GET` | `/api/config/backup` | Download current `klaxond.toml` |
 | `GET` | `/api/config/export` | Admin-only full settings bundle: TOML, sidecars, auth sidecars and runtime-derived secrets |
@@ -317,7 +319,7 @@ Every UI-managed setting has a compose-managed path:
 | Cascade, delivery policies, inhibitions, schedules | `/data/klaxond.toml` |
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
 | Dedup/grouping | `[dedup]` bootstrap or `/data/dedup-config.json` |
-| Auth, API keys/PATs, TOTP, passkeys | `[auth]` bootstrap or `/data/auth-config.json` |
+| Auth, API keys/PATs, TOTP, passkeys, LDAP, magic links | `[auth]` bootstrap or `/data/auth-config.json` |
 | Delivery history storage | `[history]`, `[paths].history_db`, or `KLAXOND_HISTORY_*` / `KLAXOND_POSTGRES_URL` |
 | Runtime paths exposed by compose | `[paths]` in `/data/klaxond.toml` |
 
@@ -348,7 +350,7 @@ UI-saved values at runtime.
 | `CASCADE_ENABLED` | `[cascade].default_enabled_for_webhook` |
 | `PORT` | `[server].port` |
 | `AUTH_SESSION_SECRET` | `[auth].session_secret` or `auth-config.json` |
-| `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | `[auth.oidc].client_secret`, `[auth.basic].password_hash`, or `auth-config.json` |
+| `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | `[auth.oidc].client_secret`, `[auth.basic].password_hash`, or `auth-config.json`; LDAP is configured through `[auth.ldap]` or `auth-config.json` |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | `[ingest.secrets].<source>` |
 | `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | `[paths].render_config`, `[paths].ntfy_topics`, `[paths].dedup_config`, `[paths].auth_config` |
 | `AUTH_SESSION_KEY_PATH` / `KLAXOND_BACKUP_DIR` / `DEDUP_PENDING_DIR` / `BESZEL_DB_PATH` | `[paths].auth_session_key`, `[paths].backup_dir`, `[paths].dedup_pending_dir`, `[paths].beszel_db` |
@@ -386,7 +388,7 @@ docker compose -f docker-compose.split.yml --profile postgres up -d
 ```
 
 The split frontend image is nginx plus the files in `static/`. It serves the UI
-and reverse-proxies `/api/*`, `/auth/*`, webhook endpoints, `/img/*`,
+and reverse-proxies `/api/*`, webhook endpoints, `/img/*`,
 `/healthz`, `/metrics`, OpenAPI, and Swagger routes to `KLAXOND_BACKEND_URL`.
 This keeps browser auth and CSRF same-origin even when the frontend and backend
 containers run on different machines. When the frontend sits behind a TLS

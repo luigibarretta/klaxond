@@ -47,7 +47,7 @@ server {
     proxy_pass ${KLAXOND_BACKEND_URL};
   }
 
-  location ~ ^/(api|auth)(/|$) {
+  location ~ ^/api/ {
     proxy_pass ${KLAXOND_BACKEND_URL};
   }
 

@@ -17,7 +17,7 @@ async function revealVersionEgg(page: Page) {
 }
 
 async function enableBasicAuth(request: APIRequestContext) {
-  const res = await request.post("/api/auth-config", {
+  const res = await request.post("/api/auth/config", {
     headers: { Authorization: BASIC_AUTH },
     data: {
       settings: {
@@ -70,9 +70,9 @@ async function requestWithAuthFallback(request: APIRequestContext, method: "get"
     if (method === "get") {
       res = await run({ Authorization: BASIC_AUTH });
     } else {
-      let me = await request.get("/auth/me");
+      let me = await request.get("/api/auth/me");
       if (me.status() === 401) {
-        me = await request.get("/auth/me", { headers: { Authorization: BASIC_AUTH } });
+        me = await request.get("/api/auth/me", { headers: { Authorization: BASIC_AUTH } });
       }
       if (me.ok()) {
         const csrf = (await me.json()).csrf;
@@ -204,7 +204,7 @@ test("serves health and admin UI", async ({ page, request }) => {
     const body = await spec.text();
     expect(body).toContain("openapi: 3.1.0");
     expect(body).toContain("title: klaxond API");
-    expect(body).toContain("/api/auth/totp/start:");
+    expect(body).toContain("/api/auth/totp/setup/start:");
   }
   for (const path of ["/api/docs", "/api/swagger", "/api/swagger-ui", "/swagger"]) {
     const swagger = await request.get(path);
@@ -416,7 +416,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(metaJs).toContain(`version:"${APP_VERSION}"`);
     expect(metaJs).toContain(AUTHOR_URL);
 
-    const loginPage = await request.get("/auth/login?return_to=%2Fstatus", { maxRedirects: 0 });
+    const loginPage = await request.get("/api/auth/login?return_to=%2Fstatus", { maxRedirects: 0 });
     await expect(loginPage).toBeOK();
     const loginHtml = await loginPage.text();
     expect(loginHtml).toContain('href="/legal/privacy?from=login"');
@@ -429,9 +429,9 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(loginHtml).toContain(AUTHOR_URL);
     expect(loginHtml).not.toContain("klaxond.luigibarretta.com");
 
-    const logout = await request.get("/auth/logout", { maxRedirects: 0 });
-    expect(logout.status()).toBe(302);
-    expect(logout.headers().location).toBe("/auth/login?logged_out=1");
+    const logout = await request.post("/api/auth/logout");
+    expect(logout.status()).toBe(200);
+    expect(await logout.json()).toEqual({ ok: true });
 
     const legacyAdmin = await request.get("/ui/deliveries", { maxRedirects: 0 });
     expect(legacyAdmin.status()).toBe(302);
@@ -444,7 +444,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     await expect(page).toHaveURL(/\/legal\/privacy$/);
     await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
     await expect(page.locator(".public-login-link")).toHaveText(/Sign in|Accedi/);
-    await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/auth/login?start=1&return_to=%2Fstatus");
+    await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/api/auth/login?start=1&return_to=%2Fstatus");
     await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toBeHidden();
     await expect(page.locator("#tab-privacy h2")).toContainText(/Privacy notice|Informativa privacy/);
 
@@ -707,19 +707,19 @@ test("backend logs fetch failure clears stale count", async ({ page }) => {
 });
 
 test("expired UI session redirects to login without toast storm", async ({ page }) => {
-  await page.route("**/auth/login?**", async route => {
+  await page.route("**/api/auth/login?**", async route => {
     await route.fulfill({ status: 200, contentType: "text/html", body: "<title>login</title>" });
   });
   await page.route("**/api/status", async route => {
     await route.fulfill({
       status: 401,
-      headers: { "X-Klaxond-Login": "/auth/login?return_to=%2Fapi%2Fstatus" },
+      headers: { "X-Klaxond-Login": "/api/auth/login?return_to=%2Fapi%2Fstatus" },
       body: "",
     });
   });
 
   await page.goto("/status");
-  await expect(page).toHaveURL(/\/auth\/login\?return_to=%2Fstatus/);
+  await expect(page).toHaveURL(/\/api\/auth\/login\?return_to=%2Fstatus/);
   await expect(page.locator(".toast-error")).toHaveCount(0);
 });
 
@@ -877,9 +877,8 @@ test("API keys and PATs support prefixes, last-use tracking, revocation and scop
     });
     expect(bearerDeniedByScope.status()).toBe(403);
 
-    const revoke = await request.post("/api/auth/tokens/revoke", {
+    const revoke = await request.delete(`/api/auth/tokens/${encodeURIComponent(patPayload.record.id)}`, {
       headers: { Authorization: adminBearer },
-      data: { id: patPayload.record.id }
     });
     await expect(revoke).toBeOK();
 
@@ -910,11 +909,11 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     await expect(page.locator(".toast-success").last()).toContainText("Passkey registered");
 
     await page.setExtraHTTPHeaders({});
-    await page.goto(`${LOCAL_ORIGIN}/auth/passkey`);
+    await page.goto(`${LOCAL_ORIGIN}/api/auth/passkey/login`);
     await page.fill("#user", BASIC_USER);
     await page.click("#login");
     await expect(page).toHaveURL(/\/status$/);
-    const passkeyUser = await page.evaluate(() => fetch("/auth/me").then(r => r.json()));
+    const passkeyUser = await page.evaluate(() => fetch("/api/auth/me").then(r => r.json()));
     expect(passkeyUser).toMatchObject({ sub: BASIC_USER, mode: "passkey" });
 
     await page.goto(`${LOCAL_ORIGIN}/authentication`);
@@ -1394,7 +1393,7 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
 });
 
 test("backend logs require admin auth when auth is enabled", async ({ request }) => {
-  const unsafeBasic = await request.post("/api/auth-config", {
+  const unsafeBasic = await request.post("/api/auth/config", {
     data: {
       settings: {
         mode: "basic",
@@ -1405,7 +1404,7 @@ test("backend logs require admin auth when auth is enabled", async ({ request })
   expect(unsafeBasic.status()).toBe(400);
   expect(await unsafeBasic.text()).toContain("username");
 
-  const unsafeOidc = await request.post("/api/auth-config", {
+  const unsafeOidc = await request.post("/api/auth/config", {
     data: {
       settings: {
         mode: "oidc",
@@ -1418,9 +1417,9 @@ test("backend logs require admin auth when auth is enabled", async ({ request })
     }
   });
   expect(unsafeOidc.status()).toBe(400);
-  expect(await unsafeOidc.text()).toContain("/auth/callback");
+  expect(await unsafeOidc.text()).toContain("/api/auth/callback");
 
-  const unsafeTrustedProxy = await request.post("/api/auth-config", {
+  const unsafeTrustedProxy = await request.post("/api/auth/config", {
     data: {
       settings: {
         mode: "trusted-proxy",
@@ -1486,7 +1485,7 @@ test("backend logs require admin auth when auth is enabled", async ({ request })
   await expect(authWriterToken).toBeOK();
   const authWriterPayload = await authWriterToken.json();
 
-  const update = await request.post("/api/auth-config", {
+  const update = await request.post("/api/auth/config", {
     data: {
       settings: {
         mode: "basic",
@@ -1568,7 +1567,7 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
   const cleanupBearer = `Bearer ${(await cleanupToken.json()).token}`;
 
   try {
-    const update = await requestWithAuthFallback(request, "post", "/api/auth-config", {
+    const update = await requestWithAuthFallback(request, "post", "/api/auth/config", {
       data: {
         settings: {
           mode: "basic",
@@ -1590,7 +1589,7 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
     expect(basicMutationDenied.status()).toBe(403);
     expect(await basicMutationDenied.text()).toContain("CSRF");
 
-    const setup = await request.post("/api/auth/totp/start", {
+    const setup = await request.post("/api/auth/totp/setup/start", {
       headers: { Authorization: cleanupBearer },
       data: {}
     });
@@ -1599,20 +1598,20 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
     expect(setupBody.secret).toMatch(/^[A-Z2-7]+$/);
     expect(setupBody.otpauth_uri).toContain("otpauth://totp/");
 
-    const enable = await request.post("/api/auth/totp/enable", {
+    const enable = await request.post("/api/auth/totp/setup/confirm", {
       headers: { Authorization: cleanupBearer },
       data: { secret: setupBody.secret, code: totp(setupBody.secret) }
     });
     await expect(enable).toBeOK();
 
-    const noTotp = await request.post("/auth/login", {
+    const noTotp = await request.post("/api/auth/local/login", {
       headers: { "X-Klaxond-Request": "fetch" },
       data: { username: BASIC_USER, password: BASIC_PASSWORD, return_to: "/status" }
     });
     expect(noTotp.status()).toBe(401);
     expect(await noTotp.text()).toContain("TOTP");
 
-    const login = await request.post("/auth/login", {
+    const login = await request.post("/api/auth/local/login", {
       headers: { "X-Klaxond-Request": "fetch" },
       data: {
         username: BASIC_USER,
@@ -1625,7 +1624,7 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
     const loginBody = await login.json();
     expect(loginBody.csrf).toMatch(/^klx_csrf_/);
 
-    const me = await request.get("/auth/me");
+    const me = await request.get("/api/auth/me");
     await expect(me).toBeOK();
     const csrf = (await me.json()).csrf;
     expect(csrf).toBe(loginBody.csrf);
@@ -1641,13 +1640,13 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
     expect(needsSudo.status()).toBe(428);
     expect(needsSudo.headers()["x-klaxond-reauth"]).toBe("required");
 
-    const badSudo = await request.post("/auth/sudo", {
+    const badSudo = await request.post("/api/auth/reauth", {
       headers: { "X-Klaxond-CSRF": csrf },
       data: { password: "wrong", totp: totp(setupBody.secret) }
     });
     expect(badSudo.status()).toBe(401);
 
-    const sudo = await request.post("/auth/sudo", {
+    const sudo = await request.post("/api/auth/reauth", {
       headers: { "X-Klaxond-CSRF": csrf },
       data: { password: BASIC_PASSWORD, totp: totp(setupBody.secret) }
     });

@@ -9,6 +9,7 @@ let _csrfToken = "";
 let _reauthInFlight = null;
 let _localTotpEnabled = null;
 let _publicLegalSessionValid = false;
+let _authPasswordPolicy = { min_length: 12, max_length: 1024 };
 
 class AuthRedirectError extends Error {
   constructor() {
@@ -24,12 +25,17 @@ function isAuthRedirectError(e) {
 
 function currentReturnToPath() {
   const path = `${location.pathname || "/"}${location.search || ""}`;
-  if (!path || path === "/" || path === "/auth" || path.startsWith("/auth/")) return "/status";
+  if (
+    !path
+    || path === "/"
+    || path === "/api/auth"
+    || path.startsWith("/api/auth/")
+  ) return "/status";
   return path;
 }
 
 function loginStartUrl(returnTo = "/status") {
-  const url = new URL("/auth/login", location.origin);
+  const url = new URL("/api/auth/login", location.origin);
   url.searchParams.set("start", "1");
   url.searchParams.set("return_to", returnTo);
   return url.pathname + url.search;
@@ -51,7 +57,7 @@ function setupPublicLoginLinks() {
   const links = Array.from(document.querySelectorAll(".public-login-link"));
   if (!links.length) return;
   updatePublicLoginLinksText();
-  fetch("/auth/me", {
+  fetch("/api/auth/me", {
     headers: { "X-Klaxond-Request": "fetch" },
     redirect: "manual",
   }).then(res => {
@@ -65,7 +71,7 @@ function setupPublicLoginLinks() {
     link.addEventListener("click", async e => {
       e.preventDefault();
       try {
-        const res = await fetch("/auth/me", {
+          const res = await fetch("/api/auth/me", {
           headers: { "X-Klaxond-Request": "fetch" },
           redirect: "manual",
         });
@@ -81,13 +87,30 @@ function setupPublicLoginLinks() {
   });
 }
 
+function setupLogoutLinks() {
+  document.querySelectorAll("[data-auth-logout]").forEach(link => {
+    link.addEventListener("click", async e => {
+      e.preventDefault();
+      try {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "X-Klaxond-Request": "fetch" },
+          redirect: "manual",
+        });
+      } catch (err) {}
+          location.assign("/api/auth/login?logged_out=1");
+    });
+  });
+}
+
 function loginUrlForCurrentPage(loginHint = "") {
-  const fallback = new URL("/auth/login", location.origin);
+  const fallback = new URL("/api/auth/login", location.origin);
   fallback.searchParams.set("return_to", currentReturnToPath());
   if (!loginHint) return fallback.pathname + fallback.search;
   try {
     const hinted = new URL(loginHint, location.origin);
-    if (hinted.origin !== location.origin || hinted.pathname !== "/auth/login") {
+    if (hinted.origin !== location.origin || hinted.pathname !== "/api/auth/login") {
       return fallback.pathname + fallback.search;
     }
     hinted.searchParams.set("return_to", currentReturnToPath());
@@ -125,12 +148,12 @@ async function apiFetch(url, opts = {}) {
   }
   const res = await fetch(url, { ...opts, headers, redirect: "manual" });
   const loginHint = res.headers.get("X-Klaxond-Login") || res.headers.get("Location") || "";
-  const isLoginRedirect = res.status >= 300 && res.status < 400 && loginHint.includes("/auth/login");
+  const isLoginRedirect = res.status >= 300 && res.status < 400 && loginHint.includes("/api/auth/login");
   if ((res.status === 401 && loginHint) || isLoginRedirect || res.type === "opaqueredirect") {
     beginAuthRedirect(loginHint);
     throw new AuthRedirectError();
   }
-  if (res.status === 428 && res.headers.get("X-Klaxond-Reauth") === "required" && !opts.__sudoRetry && !String(url).includes("/auth/sudo")) {
+  if (res.status === 428 && res.headers.get("X-Klaxond-Reauth") === "required" && !opts.__sudoRetry && !String(url).includes("/api/auth/reauth")) {
     const ok = await requestSudoReauth();
     if (ok) return apiFetch(url, { ...opts, __sudoRetry: true });
   }
@@ -147,7 +170,7 @@ async function requestSudoReauth() {
     const password = window.prompt(tr("auth.reauth_password"));
     if (password === null) return false;
     const totp = _localTotpEnabled === false ? "" : (window.prompt(tr("auth.reauth_totp")) || "");
-    const res = await apiFetch("/auth/sudo", {
+    const res = await apiFetch("/api/auth/reauth", {
       method: "POST",
       body: JSON.stringify({ password, totp }),
       headers: { "Content-Type": "application/json" },
@@ -173,7 +196,7 @@ async function requestPasskeyReauth() {
     return false;
   }
   const user = _currentUser?.sub || _currentUser?.email || _currentUser?.name || "";
-  const start = await apiFetch("/auth/passkey/start", {
+  const start = await apiFetch("/api/auth/passkey/login/options", {
     method: "POST",
     body: JSON.stringify({ user }),
     headers: { "Content-Type": "application/json" },
@@ -185,7 +208,7 @@ async function requestPasskeyReauth() {
   }
   const challenge = await start.json();
   const credential = await navigator.credentials.get({ publicKey: webauthnGetOptions(challenge.publicKey) });
-  const finish = await apiFetch("/auth/passkey/finish", {
+  const finish = await apiFetch("/api/auth/passkey/login/verify", {
     method: "POST",
     body: JSON.stringify({ request_id: challenge.request_id, credential: webauthnGetPayload(credential) }),
     headers: { "Content-Type": "application/json" },
@@ -231,7 +254,7 @@ const QUERY_TTL_RULES = [
   ["/api/delivery-config", 30000],
   ["/api/dedup-config", 10000],
 ];
-const QUERY_CACHE_BYPASS_PATHS = new Set(["/auth/me", "/api/auth-config"]);
+const QUERY_CACHE_BYPASS_PATHS = new Set(["/api/auth/me", "/api/auth/config"]);
 const QUERY_CACHE_MUTATION_BYPASS_PATHS = new Set([
   "/api/config/import-preview",
   "/api/inhibition-rules/test",
@@ -591,6 +614,7 @@ if (document.readyState === "loading") {
   updateAllTabAccessibleLabels();
 }
 setupPublicLoginLinks();
+setupLogoutLinks();
 
 // ---- Status ----
 async function loadStatus(opts = {}) {
@@ -827,7 +851,7 @@ function updateCurrentUserUI(user = {}) {
 
 async function loadCurrentUser() {
   try {
-    updateCurrentUserUI(await J("/auth/me"));
+    updateCurrentUserUI(await J("/api/auth/me"));
   } catch (e) {
     updateCurrentUserUI({ sub: "anonymous", mode: "none" });
   }
@@ -3091,6 +3115,9 @@ function renderAuthGuard(settings) {
   if (mode === "basic") {
     const b = settings.basic || {};
     if (!b.username || b.password_hash !== "***SET***") warnings.push(tr("auth.guard_basic"));
+  } else if (mode === "ldap") {
+    const ldap = settings.ldap || {};
+    if (!ldap.url || (!ldap.bind_dn_template && (!ldap.service_bind_dn || ldap.service_bind_password !== "***SET***"))) warnings.push(tr("auth.guard_ldap"));
   } else if (mode === "oidc") {
     const o = settings.oidc || {};
     if (!o.issuer || !o.client_id) warnings.push(tr("auth.guard_oidc"));
@@ -3182,7 +3209,7 @@ async function startTotpSetup() {
   const status = $("#totp-status");
   setInlineStatus(status, tr("status.loading"));
   try {
-    const r = await J("/api/auth/totp/start", {
+    const r = await J("/api/auth/totp/setup/start", {
       method: "POST",
       body: JSON.stringify({}),
       headers: { "Content-Type": "application/json" },
@@ -3203,7 +3230,7 @@ async function enableTotp() {
   const secret = _pendingTotpSecret || $("#totp-secret")?.value || "";
   const code = $("#totp-code")?.value || "";
   try {
-    await J("/api/auth/totp/enable", {
+    await J("/api/auth/totp/setup/confirm", {
       method: "POST",
       body: JSON.stringify({ secret, code }),
       headers: { "Content-Type": "application/json" },
@@ -3288,14 +3315,39 @@ function webauthnGetPayload(credential) {
   };
 }
 
+async function loadAuthPasswordPolicy() {
+  try {
+    const policy = await J("/api/auth/password-policy");
+    const min = Number(policy?.min_length);
+    const max = Number(policy?.max_length);
+    _authPasswordPolicy = {
+      min_length: Number.isFinite(min) && min > 0 ? min : 12,
+      max_length: Number.isFinite(max) && max >= min ? max : 1024,
+    };
+  } catch (e) {
+    _authPasswordPolicy = { min_length: 12, max_length: 1024 };
+  }
+  applyAuthPasswordPolicy();
+}
+
+function applyAuthPasswordPolicy() {
+  const input = $("#auth-basic-pwd");
+  if (!input) return;
+  input.minLength = _authPasswordPolicy.min_length;
+  input.maxLength = _authPasswordPolicy.max_length;
+  const hint = $("#auth-basic-pwd-policy");
+  if (hint) hint.textContent = tr("auth.password_min_hint", { min: _authPasswordPolicy.min_length });
+}
+
 function _showSubcard(mode) {
   const map = {
     none: [],
     basic: ["auth-basic-h", "auth-basic-card"],
+    ldap: ["auth-ldap-h", "auth-ldap-card"],
     oidc:  ["auth-oidc-h", "auth-oidc-card"],
     "trusted-proxy": ["auth-tp-h", "auth-tp-card"],
   };
-  for (const id of ["auth-basic-h","auth-basic-card","auth-oidc-h","auth-oidc-card","auth-tp-h","auth-tp-card"]) {
+  for (const id of ["auth-basic-h","auth-basic-card","auth-ldap-h","auth-ldap-card","auth-oidc-h","auth-oidc-card","auth-tp-h","auth-tp-card"]) {
     document.getElementById(id)?.classList.add("hidden");
   }
   for (const id of (map[mode] || [])) {
@@ -3305,14 +3357,14 @@ function _showSubcard(mode) {
 
 async function loadAuth() {
   try {
-    const j = await J("/api/auth-config");
+    await loadAuthPasswordPolicy();
+    const j = await J("/api/auth/config");
     authData = j;
     const s = j.settings || {};
     document.querySelectorAll('input[name="auth-mode"]').forEach(r => {
       r.checked = (r.value === (s.mode || "none"));
     });
     _showSubcard(s.mode || "none");
-    $("#auth-bcrypt-warn")?.classList.toggle("hidden", !!j.bcrypt_available);
     $("#auth-jwt-warn")?.classList.toggle("hidden", !!j.jwt_available);
     $("#auth-session-h").value = s.session_timeout_hours || 8;
     const cu = j.current_user || {};
@@ -3324,6 +3376,21 @@ async function loadAuth() {
     $("#auth-basic-pwd").value = "";
     $("#auth-basic-status").textContent = b.password_hash === "***SET***" ? tr("auth.set") : tr("auth.not_set");
     renderTotp(b);
+    // ldap
+    const ldap = s.ldap || {};
+    $("#auth-ldap-url").value = ldap.url || "";
+    $("#auth-ldap-bind-template").value = ldap.bind_dn_template || "";
+    $("#auth-ldap-service-dn").value = ldap.service_bind_dn || "";
+    $("#auth-ldap-service-password").value = "";
+    $("#auth-ldap-service-status").textContent = ldap.service_bind_password === "***SET***" ? tr("auth.set") : tr("auth.not_set");
+    $("#auth-ldap-base-dn").value = ldap.base_dn || "";
+    $("#auth-ldap-user-filter").value = ldap.user_filter || "(|(uid={username})(sAMAccountName={username})(mail={username}))";
+    $("#auth-ldap-scope").value = ldap.scope || "subtree";
+    $("#auth-ldap-timeout").value = ldap.timeout_secs || 5;
+    $("#auth-ldap-username-attr").value = ldap.username_attr || "uid";
+    $("#auth-ldap-email-attr").value = ldap.email_attr || "mail";
+    $("#auth-ldap-name-attr").value = ldap.name_attr || "cn";
+    $("#auth-ldap-groups-attr").value = ldap.groups_attr || "memberOf";
     // oidc
     const o = s.oidc || {};
     $("#auth-oidc-provider").value = o.provider || "authentik";
@@ -3333,8 +3400,8 @@ async function loadAuth() {
     $("#auth-oidc-csec-status").textContent = o.client_secret === "***SET***" ? tr("auth.set") : tr("auth.not_set");
     $("#auth-oidc-scopes").value = o.scopes || "openid profile email";
     $("#auth-oidc-group").value = o.required_group || "";
-    $("#auth-oidc-redirect").value = o.redirect_path || "/auth/callback";
-    $("#auth-oidc-full-redirect").textContent = `${location.protocol}//${location.host}${o.redirect_path || "/auth/callback"}`;
+    $("#auth-oidc-redirect").value = o.redirect_path || "/api/auth/callback";
+    $("#auth-oidc-full-redirect").textContent = `${location.protocol}//${location.host}${o.redirect_path || "/api/auth/callback"}`;
     // trusted-proxy
     const tp = s.trusted_proxy || {};
     $("#auth-tp-uheader").value = tp.user_header || "X-Forwarded-User";
@@ -3367,13 +3434,22 @@ document.querySelectorAll("[data-token-kind-option]").forEach(btn => {
 
 $("#auth-save")?.addEventListener("click", async () => {
   const mode = document.querySelector('input[name="auth-mode"]:checked')?.value || "none";
+  const basicPassword = $("#auth-basic-pwd").value;
+  if (basicPassword && basicPassword.length < _authPasswordPolicy.min_length) {
+    notifyError(
+      "auth-save",
+      new Error(tr("auth.password_min_hint", { min: _authPasswordPolicy.min_length })),
+      { status: "#auth-status" },
+    );
+    return;
+  }
   const out = {
     mode,
     session_timeout_hours: parseInt($("#auth-session-h").value, 10) || 8,
     basic: {
       username: $("#auth-basic-user").value.trim(),
       realm:    $("#auth-basic-realm").value.trim(),
-      password: $("#auth-basic-pwd").value,  // empty = keep
+      password: basicPassword,  // empty = keep
     },
     oidc: {
       provider:       $("#auth-oidc-provider").value,
@@ -3382,7 +3458,21 @@ $("#auth-save")?.addEventListener("click", async () => {
       client_secret:  $("#auth-oidc-csec").value,  // empty = keep
       scopes:         $("#auth-oidc-scopes").value.trim(),
       required_group: $("#auth-oidc-group").value.trim(),
-      redirect_path:  $("#auth-oidc-redirect").value.trim() || "/auth/callback",
+      redirect_path:  $("#auth-oidc-redirect").value.trim() || "/api/auth/callback",
+    },
+    ldap: {
+      url: $("#auth-ldap-url").value.trim(),
+      bind_dn_template: $("#auth-ldap-bind-template").value.trim(),
+      service_bind_dn: $("#auth-ldap-service-dn").value.trim(),
+      service_bind_password: $("#auth-ldap-service-password").value,
+      base_dn: $("#auth-ldap-base-dn").value.trim(),
+      user_filter: $("#auth-ldap-user-filter").value.trim(),
+      scope: $("#auth-ldap-scope").value,
+      timeout_secs: parseInt($("#auth-ldap-timeout").value, 10) || 5,
+      username_attr: $("#auth-ldap-username-attr").value.trim(),
+      email_attr: $("#auth-ldap-email-attr").value.trim(),
+      name_attr: $("#auth-ldap-name-attr").value.trim(),
+      groups_attr: $("#auth-ldap-groups-attr").value.trim(),
     },
     trusted_proxy: {
       user_header:   $("#auth-tp-uheader").value.trim(),
@@ -3398,7 +3488,7 @@ $("#auth-save")?.addEventListener("click", async () => {
   };
   setInlineStatus("#auth-status", tr("status.saving"));
   try {
-    const r = await J("/api/auth-config", {
+    const r = await J("/api/auth/config", {
       method: "POST",
       body: JSON.stringify({ settings: out }),
       headers: { "Content-Type": "application/json" },
@@ -3445,11 +3535,7 @@ async function createAuthToken() {
 async function revokeAuthToken(id) {
   if (!confirm(tr("auth.revoke_confirm"))) return;
   try {
-    await J("/api/auth/tokens/revoke", {
-      method: "POST",
-      body: JSON.stringify({ id }),
-      headers: {"Content-Type": "application/json"},
-    });
+    await J(`/api/auth/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
     await loadAuth();
     notifySuccess(tr("auth.token_revoked"), { status: "#token-status", clearMs: 3000 });
   } catch (e) {
@@ -3465,13 +3551,13 @@ async function registerPasskey() {
   const status = $("#passkey-status");
   setInlineStatus(status, tr("status.saving"));
   try {
-    const start = await J("/api/auth/passkeys/register/start", {
+    const start = await J("/api/auth/passkey/register/options", {
       method: "POST",
       body: JSON.stringify({ name: $("#passkey-name").value.trim() || "passkey" }),
       headers: {"Content-Type": "application/json"},
     });
     const credential = await navigator.credentials.create({ publicKey: webauthnCreateOptions(start.publicKey) });
-    await J("/api/auth/passkeys/register/finish", {
+    await J("/api/auth/passkey/register/verify", {
       method: "POST",
       body: JSON.stringify({ request_id: start.request_id, credential: webauthnCreatePayload(credential) }),
       headers: {"Content-Type": "application/json"},
@@ -3486,11 +3572,7 @@ async function registerPasskey() {
 async function deletePasskey(id) {
   if (!confirm(tr("auth.passkey_delete_confirm"))) return;
   try {
-    await J("/api/auth/passkeys/delete", {
-      method: "POST",
-      body: JSON.stringify({ id }),
-      headers: {"Content-Type": "application/json"},
-    });
+    await J(`/api/auth/passkey/credentials/${encodeURIComponent(id)}`, { method: "DELETE" });
     await loadAuth();
     notifySuccess(tr("auth.passkey_deleted"), { status: "#passkey-status", clearMs: 3000 });
   } catch (e) {
@@ -3727,7 +3809,7 @@ async function loadFlow() {
       queryGet("flow-cascade-config", "/api/cascade-config", { cancelPrevious: false }),
       queryGet("flow-ntfy-topics", "/api/ntfy-topics", { cancelPrevious: false }),
       queryGet("flow-dedup-config", "/api/dedup-config", { cancelPrevious: false }),
-      J("/api/auth-config"),
+      J("/api/auth/config"),
       fetchDeliveries(10000, { scope: "flow-deliveries" }),
     ]);
     cfgs = { channel, cascade, ntfy, dedup, auth };

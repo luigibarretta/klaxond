@@ -5,16 +5,15 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+auth-modules = { path = "../auth-modules", default-features = false, features = ["password", "rate-limit", "oidc-async", "oidc-pkce", "totp", "ldap"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22"
-bcrypt = "0.17"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 constant_time_eq = "0.4"
 fs2 = "0.4"
 hmac = "0.12"
 hex = "0.4"
 ipnet = "2.11"
-jsonwebtoken = { version = "10.2", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "rustls-tls"] }
 mime_guess = "2.0"
 percent-encoding = "2.3"

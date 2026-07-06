@@ -10,7 +10,7 @@ info:
     Browser sessions use the `klaxond_session` cookie plus `X-Klaxond-CSRF` on
     same-origin mutations. Scoped machine clients should use Bearer tokens.
     Sensitive browser mutations can also return `428 Precondition Required`
-    with `X-Klaxond-Reauth: required`; call `/auth/sudo` or complete passkey
+    with `X-Klaxond-Reauth: required`; call `/api/auth/reauth` or complete passkey
     reauthentication before retrying.
 servers:
   - url: /
@@ -20,7 +20,7 @@ tags:
   - name: Ingest
     description: Machine-to-machine webhook ingress.
   - name: Auth
-    description: Login, local MFA, passkeys, sessions, API keys and PATs.
+    description: Login, local MFA, passkeys, magic links, sessions, API keys and PATs.
   - name: Operations
     description: Status, setup, logs, audit and channel diagnostics.
   - name: Config
@@ -397,7 +397,7 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
-  /auth/login:
+  /api/auth/login:
     get:
       tags: [Auth]
       operationId: loginPage
@@ -424,10 +424,39 @@ paths:
                 type: string
         "302":
           description: Redirect to OIDC or an already authenticated return URL.
+  /api/auth/methods:
+    get:
+      tags: [Auth]
+      operationId: listAuthMethods
+      summary: Return available authentication methods.
+      description: Returns stable auth method names and whether each method is enabled in the active Klaxond runtime configuration.
+      security: []
+      responses:
+        "200":
+          description: Authentication method availability.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [methods]
+                properties:
+                  methods:
+                    type: array
+                    items:
+                      type: object
+                      required: [method, enabled]
+                      properties:
+                        method:
+                          type: string
+                          enum: [password, oidc, totp, passkey, hardware_key, trusted_proxy, ldap, api_token, magic_link]
+                        enabled:
+                          type: boolean
+  /api/auth/local/login:
     post:
       tags: [Auth]
       operationId: localLogin
-      summary: Create a local username/password session.
+      summary: Create a local or LDAP username/password session.
+      description: Uses Argon2id local credentials in `basic` mode and LDAP bind verification in `ldap` mode.
       security: []
       requestBody:
         required: true
@@ -456,7 +485,74 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/TooManyRequests"
-  /auth/callback:
+  /api/auth/magic/request:
+    post:
+      tags: [Auth]
+      operationId: requestMagicLink
+      summary: Request a short-lived local magic login link.
+      description: Returns `sent: true` for known and unknown users; when Klaxond can surface the link directly for the configured local user, the JSON response includes `link`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+                return_to:
+                  type: string
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [username]
+              properties:
+                username:
+                  type: string
+                return_to:
+                  type: string
+      responses:
+        "200":
+          description: Magic link request accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sent, expiresInSeconds]
+                properties:
+                  sent:
+                    type: boolean
+                  link:
+                    type: string
+                    nullable: true
+                  expiresInSeconds:
+                    type: integer
+        "302":
+          description: Browser form requests redirect to the callback when a local user matches, or back to the login page otherwise.
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+  /api/auth/magic/callback/{token}:
+    get:
+      tags: [Auth]
+      operationId: consumeMagicLink
+      summary: Consume a one-time magic login token.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Session established and redirected to the sanitized return URL, or redirected to login with an error code.
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/auth/callback:
     get:
       tags: [Auth]
       operationId: oidcCallback
@@ -480,16 +576,24 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "502":
           description: OIDC discovery or token exchange failed.
-  /auth/logout:
-    get:
+  /api/auth/logout:
+    post:
       tags: [Auth]
       operationId: logout
-      summary: Clear session cookies and redirect to the login screen.
+      summary: Clear session cookies.
       security: []
       responses:
-        "302":
-          description: Redirects to `/auth/login?logged_out=1`.
-  /auth/me:
+        "200":
+          description: Session cookies cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok:
+                    type: boolean
+  /api/auth/me:
     get:
       tags: [Auth]
       operationId: currentUser
@@ -506,10 +610,10 @@ paths:
                 $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
-  /auth/sudo:
+  /api/auth/reauth:
     post:
       tags: [Auth]
-      operationId: sudoReauth
+      operationId: reauth
       summary: Refresh the short reauthentication window for local sessions.
       security:
         - sessionCookie: []
@@ -534,7 +638,7 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "429":
           $ref: "#/components/responses/TooManyRequests"
-  /auth/passkey:
+  /api/auth/passkey/login:
     get:
       tags: [Auth]
       operationId: passkeyLoginPage
@@ -543,11 +647,11 @@ paths:
       responses:
         "200":
           description: Passkey login HTML.
-  /auth/passkey/start:
+  /api/auth/passkey/login/options:
     post:
       tags: [Auth]
-      operationId: passkeyLoginStart
-      summary: Start passkey authentication.
+      operationId: passkeyLoginOptions
+      summary: Create passkey authentication options.
       security: []
       requestBody:
         required: false
@@ -565,11 +669,11 @@ paths:
             application/json:
               schema:
                 type: object
-  /auth/passkey/finish:
+  /api/auth/passkey/login/verify:
     post:
       tags: [Auth]
-      operationId: passkeyLoginFinish
-      summary: Complete passkey authentication and issue a session cookie.
+      operationId: passkeyLoginVerify
+      summary: Verify passkey authentication and issue a session cookie.
       security: []
       requestBody:
         required: true
@@ -725,7 +829,7 @@ paths:
                     items:
                       $ref: "#/components/schemas/Delivery"
                   - $ref: "#/components/schemas/PaginatedDeliveries"
-  /api/auth-config:
+  /api/auth/config:
     get:
       tags: [Auth]
       operationId: getAuthConfig
@@ -804,8 +908,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "428":
           $ref: "#/components/responses/ReauthRequired"
-  /api/auth/tokens/revoke:
-    post:
+  /api/auth/tokens/{id}:
+    delete:
       tags: [Auth]
       operationId: revokeToken
       summary: Revoke an API key or PAT.
@@ -813,25 +917,21 @@ paths:
         - bearerAuth: []
         - sessionCookie: []
           csrfHeader: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [id]
-              properties:
-                id:
-                  type: string
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           $ref: "#/components/responses/OkJson"
         "428":
           $ref: "#/components/responses/ReauthRequired"
-  /api/auth/totp/start:
+  /api/auth/totp/setup/start:
     post:
       tags: [Auth]
-      operationId: startTotp
+      operationId: startTotpSetup
       summary: Generate a local TOTP setup secret and otpauth URI.
       security:
         - bearerAuth: []
@@ -846,10 +946,10 @@ paths:
                 $ref: "#/components/schemas/TotpSetup"
         "428":
           $ref: "#/components/responses/ReauthRequired"
-  /api/auth/totp/enable:
+  /api/auth/totp/setup/confirm:
     post:
       tags: [Auth]
-      operationId: enableTotp
+      operationId: confirmTotpSetup
       summary: Enable local TOTP after validating the current code.
       security:
         - bearerAuth: []
@@ -882,7 +982,7 @@ paths:
           $ref: "#/components/responses/OkJson"
         "428":
           $ref: "#/components/responses/ReauthRequired"
-  /api/auth/passkeys:
+  /api/auth/passkey/credentials:
     get:
       tags: [Auth]
       operationId: listPasskeys
@@ -897,11 +997,11 @@ paths:
             application/json:
               schema:
                 type: object
-  /api/auth/passkeys/register/start:
+  /api/auth/passkey/register/options:
     post:
       tags: [Auth]
-      operationId: passkeyRegisterStart
-      summary: Start passkey registration for the current local user.
+      operationId: passkeyRegisterOptions
+      summary: Create passkey registration options for the current local user.
       security:
         - sessionCookie: []
           csrfHeader: []
@@ -923,11 +1023,11 @@ paths:
                 type: object
         "428":
           $ref: "#/components/responses/ReauthRequired"
-  /api/auth/passkeys/register/finish:
+  /api/auth/passkey/register/verify:
     post:
       tags: [Auth]
-      operationId: passkeyRegisterFinish
-      summary: Complete passkey registration.
+      operationId: passkeyRegisterVerify
+      summary: Verify passkey registration.
       security:
         - sessionCookie: []
           csrfHeader: []
@@ -942,8 +1042,8 @@ paths:
           $ref: "#/components/responses/OkJson"
         "428":
           $ref: "#/components/responses/ReauthRequired"
-  /api/auth/passkeys/delete:
-    post:
+  /api/auth/passkey/credentials/{id}:
+    delete:
       tags: [Auth]
       operationId: deletePasskey
       summary: Delete a registered passkey.
@@ -951,16 +1051,12 @@ paths:
         - bearerAuth: []
         - sessionCookie: []
           csrfHeader: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [id]
-              properties:
-                id:
-                  type: string
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           $ref: "#/components/responses/OkJson"
@@ -1605,7 +1701,7 @@ components:
     basicAuth:
       type: http
       scheme: basic
-      description: Local username/password auth for non-browser clients in basic mode.
+      description: Username/password auth for non-browser clients in basic or LDAP mode.
   parameters:
     Severity:
       name: severity
@@ -1702,6 +1798,12 @@ components:
         text/plain:
           schema:
             type: string
+    NotFound:
+      description: Resource or auth method not available.
+      content:
+        text/plain:
+          schema:
+            type: string
     ReauthRequired:
       description: Sensitive browser mutation requires a fresh local reauthentication window.
       headers:
@@ -1745,7 +1847,7 @@ components:
             type: string
         mode:
           type: string
-          enum: [none, basic, oidc, trusted-proxy, api_key, pat, passkey]
+          enum: [none, basic, ldap, oidc, trusted-proxy, api_key, pat, passkey, magic_link]
         exp:
           type: integer
           format: int64

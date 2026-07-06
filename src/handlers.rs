@@ -21,6 +21,11 @@ use crate::state::{
 };
 use crate::static_files;
 use crate::util::{atomic_write, env_string, random_hex, token_urlsafe, toml_table_mut};
+use auth_modules::methods::{
+    API_TOKEN, HARDWARE_KEY, LDAP, MAGIC_LINK, OIDC, PASSKEY, PASSWORD, TOTP, TRUSTED_PROXY,
+    canonical_auth_method_statuses,
+};
+use auth_modules::rate_limit::{GOLD_AUTH_ACCOUNT_FAILURE_MAX, GOLD_AUTH_ACCOUNT_FAILURE_WINDOW};
 use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, State};
 use axum::http::header::{
@@ -57,14 +62,14 @@ pub async fn dispatch(
         .unwrap_or(uri.path())
         .to_string();
 
-    if method == Method::GET && path.starts_with("/auth/login") {
+    if method == Method::GET && path.starts_with("/api/auth/login") {
         return auth::login(&state, headers, &full_path).await;
     }
-    if method == Method::GET && path.starts_with("/auth/callback") {
+    if method == Method::GET && path.starts_with("/api/auth/callback") {
         return auth::oidc_callback(&state, headers, &full_path).await;
     }
-    if method == Method::GET && path.starts_with("/auth/logout") {
-        return auth::logout(&headers);
+    if method == Method::POST && path == "/api/auth/logout" {
+        return auth::api_logout(&headers);
     }
 
     let mut authed_user: Option<User> = None;
@@ -79,7 +84,7 @@ pub async fn dispatch(
         }
     }
 
-    if method == Method::POST
+    if method != Method::GET
         && !auth::is_public(&path)
         && let Some(user) = authed_user.as_ref()
     {
@@ -96,6 +101,7 @@ pub async fn dispatch(
         Method::POST => {
             handle_post(&state, &path, &full_path, &headers, body, peer, authed_user).await
         }
+        Method::DELETE => handle_delete(&state, &path, authed_user).await,
         _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
     };
     if let Some(cookie) = pending_cookie
@@ -167,18 +173,29 @@ async fn handle_get(
                 "runtime_enabled": state.cascade_runtime_enabled.load(Ordering::Relaxed),
             }))
         }
-        "/api/auth-config" => {
+        "/api/auth/config" => {
             let cfg = state.cfg();
             let settings = redacted_auth_settings(&cfg.auth);
             json_response(json!({
                 "settings": settings,
-                "available_modes": ["none", "basic", "oidc", "trusted-proxy"],
+                "available_modes": ["none", "basic", "ldap", "oidc", "trusted-proxy"],
                 "available_token_scopes": auth::TOKEN_SCOPES,
-                "bcrypt_available": true,
+                "argon2_available": true,
                 "jwt_available": true,
                 "current_user": authed_user.unwrap_or_else(anonymous_user),
             }))
         }
+        "/api/auth/methods" => {
+            let cfg = state.cfg();
+            json_response(auth_methods_payload(&cfg.auth))
+        }
+        _ if path.starts_with("/api/auth/magic/callback/") => {
+            let Some(token) = path_id(path, "/api/auth/magic/callback/") else {
+                return text(StatusCode::NOT_FOUND, "not found");
+            };
+            auth::magic_link_callback(state, &token)
+        }
+        "/api/auth/password-policy" => password_policy_response(),
         "/api/auth/tokens" => {
             let cfg = state.cfg();
             json_response(json!({
@@ -186,7 +203,7 @@ async fn handle_get(
                 "available_scopes": auth::TOKEN_SCOPES,
             }))
         }
-        "/api/auth/passkeys" => {
+        "/api/auth/passkey/credentials" => {
             let cfg = state.cfg();
             json_response(json!({
                 "webauthn": webauthn_public_config(&cfg),
@@ -248,8 +265,8 @@ async fn handle_get(
         "/api/config/backups" => json_response(config_backups_payload(state)),
         "/api/setup-status" => json_response(setup_status_payload(state)),
         "/api/channel-test-matrix" => json_response(channel_test_matrix_payload(state).await),
-        "/auth/me" => json_response(authed_user.unwrap_or_else(anonymous_user)),
-        "/auth/passkey" | "/auth/passkey/" => passkey_login_page(),
+        "/api/auth/me" => json_response(authed_user.unwrap_or_else(anonymous_user)),
+        "/api/auth/passkey/login" | "/api/auth/passkey/login/" => passkey_login_page(),
         _ if path.starts_with("/img/") => static_files::image_response(state, path),
         _ if path.starts_with("/ui/") => {
             static_files::ui_response(state, path.trim_start_matches("/ui/"))
@@ -362,6 +379,13 @@ fn redacted_auth_settings(auth_cfg: &AuthConfig) -> Value {
     {
         settings["oidc"]["client_secret"] = json!("***SET***");
     }
+    if !settings["ldap"]["service_bind_password"]
+        .as_str()
+        .unwrap_or("")
+        .is_empty()
+    {
+        settings["ldap"]["service_bind_password"] = json!("***SET***");
+    }
     settings["api_keys"] = json!(
         auth_cfg
             .api_keys
@@ -379,6 +403,32 @@ fn redacted_auth_settings(auth_cfg: &AuthConfig) -> Value {
     settings
 }
 
+fn auth_methods_payload(auth_cfg: &AuthConfig) -> Value {
+    let mode = auth_cfg.mode.as_str();
+    let methods: Vec<_> = canonical_auth_method_statuses(|method| match method {
+        PASSWORD => mode == "basic" && !auth_cfg.basic.password_hash.is_empty(),
+        OIDC => {
+            mode == "oidc"
+                && !auth_cfg.oidc.issuer.is_empty()
+                && !auth_cfg.oidc.client_id.is_empty()
+        }
+        TOTP => mode == "basic" && auth_cfg.basic.totp_enabled,
+        PASSKEY => auth_cfg.webauthn.enabled,
+        HARDWARE_KEY => auth_cfg.webauthn.enabled,
+        TRUSTED_PROXY => mode == "trusted-proxy",
+        LDAP => auth::ldap_login_enabled(auth_cfg),
+        API_TOKEN => mode != "none",
+        MAGIC_LINK => auth::magic_link_enabled(auth_cfg),
+        _ => false,
+    })
+    .into_iter()
+    .map(|row| json!({ "method": row.method, "enabled": row.enabled }))
+    .collect();
+    json!({
+        "methods": methods
+    })
+}
+
 async fn handle_post(
     state: &AppState,
     path: &str,
@@ -390,22 +440,21 @@ async fn handle_post(
 ) -> Response<Body> {
     let body_len = body.len();
     let resp = match path {
-        "/auth/login" => auth::local_login(state, body).await,
-        "/auth/sudo" => auth::sudo(state, body, authed_user.as_ref()),
-        "/auth/passkey/start" => passkey_login_start(state, body),
-        "/auth/passkey/finish" => passkey_login_finish(state, body),
+        "/api/auth/local/login" => auth::local_login(state, body).await,
+        "/api/auth/reauth" => auth::sudo(state, body, authed_user.as_ref()),
+        "/api/auth/magic/request" => auth::magic_link_request(state, headers, peer, body),
+        "/api/auth/passkey/login/options" => passkey_login_start(state, headers, peer, body),
+        "/api/auth/passkey/login/verify" => passkey_login_finish(state, headers, peer, body),
         "/api/client-log" => client_log_response(body, authed_user.as_ref()),
-        "/api/auth-config" => update_auth_config(state, body, authed_user.as_ref(), peer, headers),
+        "/api/auth/config" => update_auth_config(state, body, authed_user.as_ref(), peer, headers),
         "/api/auth/tokens" => create_auth_token(state, body, authed_user.as_ref()),
-        "/api/auth/tokens/revoke" => revoke_auth_token(state, body),
-        "/api/auth/totp/start" => auth::totp_start(state),
-        "/api/auth/totp/enable" => auth::totp_enable(state, body),
+        "/api/auth/totp/setup/start" => auth::totp_start(state),
+        "/api/auth/totp/setup/confirm" => auth::totp_enable(state, body),
         "/api/auth/totp/disable" => auth::totp_disable(state),
-        "/api/auth/passkeys/register/start" => {
+        "/api/auth/passkey/register/options" => {
             passkey_register_start(state, body, authed_user.as_ref())
         }
-        "/api/auth/passkeys/register/finish" => passkey_register_finish(state, body),
-        "/api/auth/passkeys/delete" => passkey_delete(state, body, authed_user.as_ref()),
+        "/api/auth/passkey/register/verify" => passkey_register_finish(state, body),
         "/api/cascade/toggle" => cascade_toggle(state, body),
         "/api/render-config" => update_render_config(state, body),
         "/api/cascade-config" => update_cascade_config(state, body),
@@ -423,14 +472,35 @@ async fn handle_post(
         "/api/inhibitions/clear" => clear_inhibitions(state, body),
         "/api/inhibition-rules/test" => inhibition_rules_test(state, body),
         "/api/policy-simulate" => policy_simulate(state, body),
+        _ if path.starts_with("/api/auth") => StatusCode::NOT_FOUND.into_response(),
         _ if path.starts_with("/api/test/") => api_test(state, path, body).await,
         _ => ingest(state, path, full_path, headers, body, peer).await,
     };
-    record_admin_post_audit(path, resp.status(), authed_user.as_ref(), body_len);
+    record_admin_mutation_audit(path, resp.status(), authed_user.as_ref(), body_len);
     resp
 }
 
-fn record_admin_post_audit(
+async fn handle_delete(state: &AppState, path: &str, authed_user: Option<User>) -> Response<Body> {
+    let resp = if let Some(id) = path_id(path, "/api/auth/tokens/") {
+        revoke_auth_token(state, &id)
+    } else if let Some(id) = path_id(path, "/api/auth/passkey/credentials/") {
+        passkey_delete(state, &id, authed_user.as_ref())
+    } else {
+        StatusCode::METHOD_NOT_ALLOWED.into_response()
+    };
+    record_admin_mutation_audit(path, resp.status(), authed_user.as_ref(), 0);
+    resp
+}
+
+fn path_id(path: &str, prefix: &str) -> Option<String> {
+    let raw = path.strip_prefix(prefix)?;
+    if raw.is_empty() || raw.contains('/') {
+        return None;
+    }
+    Some(urlencoding::decode(raw).ok()?.into_owned())
+}
+
+fn record_admin_mutation_audit(
     path: &str,
     status: StatusCode,
     authed_user: Option<&User>,
@@ -1040,12 +1110,26 @@ fn validate_auth_config(
             }
             Ok(())
         }
+        "ldap" => {
+            if !(auth.ldap.url.starts_with("ldap://") || auth.ldap.url.starts_with("ldaps://")) {
+                return Err("LDAP requires an ldap:// or ldaps:// URL".into());
+            }
+            if auth_modules::ldap::ldap_scope_from_name(&auth.ldap.scope).is_none() {
+                return Err("LDAP scope must be base, one, or subtree".into());
+            }
+            if auth.ldap.to_auth_modules_config().is_none() {
+                return Err(
+                    "LDAP requires either bind_dn_template or service bind DN/password".into(),
+                );
+            }
+            Ok(())
+        }
         "oidc" => {
             if auth.oidc.issuer.trim().is_empty() || auth.oidc.client_id.trim().is_empty() {
                 return Err("OIDC requires issuer and client_id before it can be enabled".into());
             }
-            if auth.oidc.redirect_path != "/auth/callback" {
-                return Err("OIDC redirect_path must be /auth/callback".into());
+            if auth.oidc.redirect_path != "/api/auth/callback" {
+                return Err("OIDC redirect_path must be /api/auth/callback".into());
             }
             if let Some(user) = current_user
                 && !auth.oidc.required_group.trim().is_empty()
@@ -1117,7 +1201,7 @@ fn update_auth_config(
         .with_config_write_lock(|| {
             let mut auth = state.cfg().auth;
             if let Some(mode) = incoming.get("mode").and_then(|v| v.as_str()) {
-                if !matches!(mode, "none" | "basic" | "oidc" | "trusted-proxy") {
+                if !matches!(mode, "none" | "basic" | "ldap" | "oidc" | "trusted-proxy") {
                     return text(StatusCode::BAD_REQUEST, "invalid mode");
                 }
                 auth.mode = mode.into();
@@ -1147,7 +1231,12 @@ fn update_auth_config(
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                 {
-                    match bcrypt::hash(pwd, bcrypt::DEFAULT_COST) {
+                    if let Err(error) =
+                        auth::validate_password_policy(pwd, Some(&auth.basic.username))
+                    {
+                        return text(StatusCode::BAD_REQUEST, &error.message());
+                    }
+                    match auth::hash_password(pwd) {
                         Ok(h) => auth.basic.password_hash = h,
                         Err(err) => {
                             return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
@@ -1180,6 +1269,34 @@ fn update_auth_config(
                     .filter(|s| !s.is_empty() && *s != "***SET***")
                 {
                     auth.oidc.client_secret = v.into();
+                }
+            }
+            if let Some(ldap) = incoming.get("ldap").and_then(|v| v.as_object()) {
+                for (key, slot) in [
+                    ("url", &mut auth.ldap.url),
+                    ("bind_dn_template", &mut auth.ldap.bind_dn_template),
+                    ("service_bind_dn", &mut auth.ldap.service_bind_dn),
+                    ("base_dn", &mut auth.ldap.base_dn),
+                    ("user_filter", &mut auth.ldap.user_filter),
+                    ("scope", &mut auth.ldap.scope),
+                    ("username_attr", &mut auth.ldap.username_attr),
+                    ("email_attr", &mut auth.ldap.email_attr),
+                    ("name_attr", &mut auth.ldap.name_attr),
+                    ("groups_attr", &mut auth.ldap.groups_attr),
+                ] {
+                    if let Some(v) = ldap.get(key).and_then(|v| v.as_str()) {
+                        *slot = v.trim().to_string();
+                    }
+                }
+                if let Some(v) = ldap
+                    .get("service_bind_password")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty() && *s != "***SET***")
+                {
+                    auth.ldap.service_bind_password = v.to_string();
+                }
+                if let Some(v) = ldap.get("timeout_secs").and_then(|v| v.as_u64()) {
+                    auth.ldap.timeout_secs = v.clamp(1, 60);
                 }
             }
             if let Some(tp) = incoming.get("trusted_proxy").and_then(|v| v.as_object()) {
@@ -1327,11 +1444,7 @@ fn token_scopes_allowed_for_actor(current_user: Option<&User>, requested: &[Stri
         .all(|scope| auth::scopes_allow(&user.groups, scope))
 }
 
-fn revoke_auth_token(state: &AppState, body: Bytes) -> Response<Body> {
-    let Ok(payload) = json_body(&body) else {
-        return text(StatusCode::BAD_REQUEST, "bad json");
-    };
-    let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
+fn revoke_auth_token(state: &AppState, id: &str) -> Response<Body> {
     if id.is_empty() {
         return text(StatusCode::BAD_REQUEST, "token id is required");
     }
@@ -1561,7 +1674,12 @@ fn passkey_register_finish(state: &AppState, body: Bytes) -> Response<Body> {
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
-fn passkey_login_start(state: &AppState, body: Bytes) -> Response<Body> {
+fn passkey_login_start(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+    body: Bytes,
+) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
@@ -1571,7 +1689,13 @@ fn passkey_login_start(state: &AppState, body: Bytes) -> Response<Body> {
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
+    let rate_key = passkey_auth_rate_key("passkey", &user_hint, headers, peer);
+    if passkey_auth_rate_limited(state, &rate_key) {
+        record_passkey_auth_failure(state, &rate_key, "rate_limited");
+        return passkey_auth_rate_limited_response();
+    }
     if user_hint.is_empty() {
+        record_passkey_auth_failure(state, &rate_key, "missing user");
         return text(StatusCode::BAD_REQUEST, "user is required");
     }
     let cfg = state.cfg();
@@ -1591,6 +1715,7 @@ fn passkey_login_start(state: &AppState, body: Bytes) -> Response<Body> {
         .cloned()
         .collect::<Vec<_>>();
     if matching.is_empty() {
+        record_passkey_auth_failure(state, &rate_key, "no passkey registered for user");
         return text(StatusCode::NOT_FOUND, "no passkey registered for that user");
     }
     let webauthn = match webauthn_for_cfg(&cfg) {
@@ -1603,7 +1728,10 @@ fn passkey_login_start(state: &AppState, body: Bytes) -> Response<Body> {
         .collect::<Vec<Passkey>>();
     let (challenge, auth_state) = match webauthn.start_passkey_authentication(&creds) {
         Ok(v) => v,
-        Err(err) => return text(StatusCode::BAD_REQUEST, &err.to_string()),
+        Err(err) => {
+            record_passkey_auth_failure(state, &rate_key, "passkey start failed");
+            return text(StatusCode::BAD_REQUEST, &err.to_string());
+        }
     };
     let request_id = random_hex(16);
     {
@@ -1615,6 +1743,7 @@ fn passkey_login_start(state: &AppState, body: Bytes) -> Response<Body> {
             PendingPasskeyAuthentication {
                 ts: crate::util::now_epoch(),
                 user_sub: matching[0].user_sub.clone(),
+                rate_key,
                 state: auth_state,
             },
         );
@@ -1622,10 +1751,20 @@ fn passkey_login_start(state: &AppState, body: Bytes) -> Response<Body> {
     json_response(json!({"ok": true, "request_id": request_id, "publicKey": challenge.public_key}))
 }
 
-fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
+fn passkey_login_finish(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+    body: Bytes,
+) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
+    let unknown_rate_key = passkey_auth_rate_key("passkey", "", headers, peer);
+    if passkey_auth_rate_limited(state, &unknown_rate_key) {
+        record_passkey_auth_failure(state, &unknown_rate_key, "rate_limited");
+        return passkey_auth_rate_limited_response();
+    }
     let request_id = payload
         .get("request_id")
         .and_then(|v| v.as_str())
@@ -1642,6 +1781,7 @@ fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
         match pending.remove(request_id) {
             Some(v) => v,
             None => {
+                record_passkey_auth_failure(state, &unknown_rate_key, "unknown passkey request");
                 return text(
                     StatusCode::BAD_REQUEST,
                     "unknown or expired passkey request",
@@ -1649,6 +1789,10 @@ fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
             }
         }
     };
+    if passkey_auth_rate_limited(state, &pending.rate_key) {
+        record_passkey_auth_failure(state, &pending.rate_key, "rate_limited");
+        return passkey_auth_rate_limited_response();
+    }
     let cfg = state.cfg();
     let webauthn = match webauthn_for_cfg(&cfg) {
         Ok(v) => v,
@@ -1656,7 +1800,10 @@ fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
     };
     let result = match webauthn.finish_passkey_authentication(&credential, &pending.state) {
         Ok(v) => v,
-        Err(err) => return text(StatusCode::UNAUTHORIZED, &err.to_string()),
+        Err(err) => {
+            record_passkey_auth_failure(state, &pending.rate_key, "passkey verification failed");
+            return text(StatusCode::UNAUTHORIZED, &err.to_string());
+        }
     };
     state
         .with_config_write_lock(|| {
@@ -1672,6 +1819,7 @@ fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
                 }
             }
             let Some(idx) = matched_idx else {
+                record_passkey_auth_failure(state, &pending.rate_key, "passkey credential missing");
                 return text(StatusCode::UNAUTHORIZED, "passkey credential not found");
             };
             let record = &mut cfg.auth.passkeys[idx];
@@ -1692,6 +1840,7 @@ fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
             }
             state.replace_config(cfg);
             let cookie = auth::issue_session_cookie(state, &mut user);
+            clear_passkey_auth_failures(state, &pending.rate_key);
             let mut resp = json_response(json!({"ok": true, "user": user}));
             if let Ok(value) = HeaderValue::from_str(&cookie) {
                 resp.headers_mut().insert(SET_COOKIE, value);
@@ -1701,11 +1850,70 @@ fn passkey_login_finish(state: &AppState, body: Bytes) -> Response<Body> {
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
 }
 
-fn passkey_delete(state: &AppState, body: Bytes, current_user: Option<&User>) -> Response<Body> {
-    let Ok(payload) = json_body(&body) else {
-        return text(StatusCode::BAD_REQUEST, "bad json");
-    };
-    let id = payload.get("id").and_then(|v| v.as_str()).unwrap_or("");
+fn passkey_auth_rate_key(
+    action: &str,
+    subject: &str,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+) -> String {
+    let subject = subject.trim().to_ascii_lowercase();
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| peer.ip().to_string());
+    format!(
+        "{action}:{}:{ip}",
+        if subject.is_empty() {
+            "unknown"
+        } else {
+            subject.as_str()
+        }
+    )
+}
+
+fn passkey_auth_rate_limited(state: &AppState, rate_key: &str) -> bool {
+    state.auth_failures.blocked(
+        rate_key,
+        GOLD_AUTH_ACCOUNT_FAILURE_MAX,
+        GOLD_AUTH_ACCOUNT_FAILURE_WINDOW,
+    )
+}
+
+fn record_passkey_auth_failure(state: &AppState, rate_key: &str, detail: &'static str) {
+    state
+        .auth_failures
+        .record(rate_key, GOLD_AUTH_ACCOUNT_FAILURE_WINDOW);
+    audit::record(
+        rate_key.to_string(),
+        "auth.passkey",
+        "error",
+        detail.to_string(),
+    );
+}
+
+fn clear_passkey_auth_failures(state: &AppState, rate_key: &str) {
+    state.auth_failures.clear(rate_key);
+}
+
+fn passkey_auth_rate_limited_response() -> Response<Body> {
+    text(
+        StatusCode::TOO_MANY_REQUESTS,
+        "too many authentication failures",
+    )
+}
+
+fn passkey_delete(state: &AppState, id: &str, current_user: Option<&User>) -> Response<Body> {
     if id.is_empty() {
         return text(StatusCode::BAD_REQUEST, "passkey id is required");
     }
@@ -1750,7 +1958,7 @@ const b64uToBuf=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');s+='==='.slice((s.le
 const bufToB64u=b=>btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 function publicKeyGetOptions(pk){pk.challenge=b64uToBuf(pk.challenge);(pk.allowCredentials||[]).forEach(c=>c.id=b64uToBuf(c.id));return pk}
 function credentialGetPayload(c){return {id:c.id,rawId:bufToB64u(c.rawId),type:c.type,response:{authenticatorData:bufToB64u(c.response.authenticatorData),clientDataJSON:bufToB64u(c.response.clientDataJSON),signature:bufToB64u(c.response.signature),userHandle:c.response.userHandle?bufToB64u(c.response.userHandle):null},extensions:c.getClientExtensionResults?c.getClientExtensionResults():{}}}
-document.getElementById('login').onclick=async()=>{const s=document.getElementById('status');try{const user=document.getElementById('user').value.trim();const a=await fetch('/auth/passkey/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});if(!a.ok)throw new Error(await a.text());const ch=await a.json();const cred=await navigator.credentials.get({publicKey:publicKeyGetOptions(ch.publicKey)});const f=await fetch('/auth/passkey/finish',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request_id:ch.request_id,credential:credentialGetPayload(cred)})});if(!f.ok)throw new Error(await f.text());location.href='/status'}catch(e){s.textContent=e.message||String(e);s.style.color='var(--red)'}};
+document.getElementById('login').onclick=async()=>{const s=document.getElementById('status');try{const user=document.getElementById('user').value.trim();const a=await fetch('/api/auth/passkey/login/options',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({user})});if(!a.ok)throw new Error(await a.text());const ch=await a.json();const cred=await navigator.credentials.get({publicKey:publicKeyGetOptions(ch.publicKey)});const f=await fetch('/api/auth/passkey/login/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({request_id:ch.request_id,credential:credentialGetPayload(cred)})});if(!f.ok)throw new Error(await f.text());location.href='/status'}catch(e){s.textContent=e.message||String(e);s.style.color='var(--red)'}};
 </script></body></html>"#;
     Response::builder()
         .status(StatusCode::OK)
@@ -3503,6 +3711,14 @@ fn json_body(body: &Bytes) -> Result<Value, serde_json::Error> {
     }
 }
 
+fn password_policy_response() -> Response<Body> {
+    let policy = auth_modules::password::PasswordPolicy::gold_standard();
+    json_response(json!({
+        "min_length": policy.min_length,
+        "max_length": policy.max_length,
+    }))
+}
+
 fn parse_query(full_path: &str) -> HashMap<String, String> {
     let query = full_path.split_once('?').map(|(_, q)| q).unwrap_or("");
     form_urlencoded::parse(query.as_bytes())
@@ -3560,4 +3776,69 @@ fn redirect(location: &str) -> Response<Body> {
         .header("Location", location)
         .body(Body::empty())
         .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_methods_payload_maps_hardware_key_and_magic_link() {
+        let mut auth = AuthConfig::default();
+        auth.mode = "basic".to_string();
+        auth.basic.username = "luigi".to_string();
+        auth.basic.password_hash = "$argon2id$configured".to_string();
+        auth.basic.totp_enabled = true;
+        auth.webauthn.enabled = true;
+
+        let payload = auth_methods_payload(&auth);
+        let actual = payload["methods"]
+            .as_array()
+            .expect("methods")
+            .iter()
+            .map(|row| {
+                (
+                    row["method"].as_str().expect("method"),
+                    row["enabled"].as_bool().expect("enabled"),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            actual,
+            vec![
+                ("password", true),
+                ("oidc", false),
+                ("totp", true),
+                ("passkey", true),
+                ("hardware_key", true),
+                ("trusted_proxy", false),
+                ("ldap", false),
+                ("api_token", true),
+                ("magic_link", true),
+            ]
+        );
+    }
+
+    #[test]
+    fn auth_methods_payload_enables_configured_ldap() {
+        let mut auth = AuthConfig::default();
+        auth.mode = "ldap".to_string();
+        auth.ldap.url = "ldaps://directory.example.com:636".to_string();
+        auth.ldap.bind_dn_template = "uid={username},ou=people,dc=example,dc=com".to_string();
+
+        let payload = auth_methods_payload(&auth);
+        let methods = payload["methods"].as_array().expect("methods");
+
+        assert!(
+            methods
+                .iter()
+                .any(|row| row["method"] == "ldap" && row["enabled"] == true)
+        );
+        assert!(
+            methods
+                .iter()
+                .any(|row| row["method"] == "password" && row["enabled"] == false)
+        );
+    }
 }

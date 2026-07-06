@@ -1,20 +1,16 @@
 use crate::config::{AuthConfig, AuthToken, save_auth};
 use crate::endpoints;
-use crate::state::{AppState, lock_mutex};
+use crate::state::{AppState, PendingMagicLink, PendingOidcState, lock_mutex};
 use crate::totp;
-use crate::util::{
-    b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch, now_epoch_i64, token_urlsafe,
-};
+use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch_i64, token_urlsafe};
 use axum::body::{Body, Bytes};
 use axum::http::header::{
     AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, COOKIE, HOST, SET_COOKIE, WWW_AUTHENTICATE,
 };
 use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use axum::response::IntoResponse;
-use bcrypt::verify;
 use constant_time_eq::constant_time_eq;
 use ipnet::IpNet;
-use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -22,10 +18,16 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use url::{Url, form_urlencoded};
 
+use auth_modules::oidc::{OidcClientConfig, async_client as oidc_client};
+use auth_modules::rate_limit::{
+    GOLD_AUTH_ACCOUNT_FAILURE_MAX, GOLD_AUTH_ACCOUNT_FAILURE_WINDOW, GOLD_AUTH_SHORT_BURST_MAX,
+    GOLD_AUTH_SHORT_BURST_WINDOW,
+};
+
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
+pub const MIN_PASSWORD_LEN: usize = auth_modules::password::DEFAULT_MIN_PASSWORD_LENGTH;
 const SUDO_WINDOW_SECS: i64 = 10 * 60;
-const AUTH_FAILURE_WINDOW_SECS: f64 = 300.0;
-const AUTH_FAILURE_MAX: usize = 10;
+const MAGIC_LINK_TTL_SECS: i64 = 10 * 60;
 
 pub const TOKEN_SCOPES: &[&str] = &[
     "admin:*",
@@ -118,7 +120,21 @@ pub async fn authenticate(
                 AuthOutcome::Rejected(resp)
                     if resp.status() == StatusCode::UNAUTHORIZED && is_ui_fetch(headers) =>
                 {
-                    let location = format!("/auth/login?return_to={}", urlencoding::encode(path));
+                    let location =
+                        format!("/api/auth/login?return_to={}", urlencoding::encode(path));
+                    AuthOutcome::Rejected(auth_required(&location))
+                }
+                other => other,
+            }
+        }
+        "ldap" => {
+            let outcome = authenticate_ldap_basic(state, &cfg, headers).await;
+            match outcome {
+                AuthOutcome::Rejected(resp)
+                    if resp.status() == StatusCode::UNAUTHORIZED && is_ui_fetch(headers) =>
+                {
+                    let location =
+                        format!("/api/auth/login?return_to={}", urlencoding::encode(path));
                     AuthOutcome::Rejected(auth_required(&location))
                 }
                 other => other,
@@ -126,7 +142,7 @@ pub async fn authenticate(
         }
         "trusted-proxy" => authenticate_trusted_proxy(&cfg, headers, peer),
         "oidc" => {
-            let location = format!("/auth/login?return_to={}", urlencoding::encode(path));
+            let location = format!("/api/auth/login?return_to={}", urlencoding::encode(path));
             if is_ui_fetch(headers) {
                 AuthOutcome::Rejected(auth_required(&location))
             } else {
@@ -210,8 +226,10 @@ pub fn csrf_rejected() -> Response<Body> {
 }
 
 pub fn sudo_required(_headers: &HeaderMap, path: &str, user: &User) -> bool {
-    matches!(user.mode.as_str(), "basic" | "passkey")
-        && !user.via_authorization
+    matches!(
+        user.mode.as_str(),
+        "basic" | "ldap" | "passkey" | "magic_link"
+    ) && !user.via_authorization
         && is_sensitive_mutation_path(path)
 }
 
@@ -381,6 +399,21 @@ fn viewer_allows_scope(required: &str) -> bool {
     matches!(required, "status:read" | "logs:read" | "audit:read")
 }
 
+pub fn hash_password(password: &str) -> anyhow::Result<String> {
+    auth_modules::password::hash_password(password).map_err(|err| anyhow::anyhow!(err))
+}
+
+pub fn validate_password_policy(
+    password: &str,
+    username: Option<&str>,
+) -> Result<(), auth_modules::password::PolicyError> {
+    auth_modules::password::validate_gold_standard(password, username)
+}
+
+pub fn verify_password(password: &str, hash: &str) -> bool {
+    auth_modules::password::verify_password(password, hash)
+}
+
 fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -> AuthOutcome {
     if let Some(auth) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
         && let Some(raw) = auth.strip_prefix("Basic ")
@@ -389,7 +422,7 @@ fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -
         && let Some((user, pwd)) = s.split_once(':')
         && cfg.basic.username == user
         && !cfg.basic.password_hash.is_empty()
-        && verify(pwd, &cfg.basic.password_hash).unwrap_or(false)
+        && verify_password(pwd, &cfg.basic.password_hash)
         && (!cfg.basic.totp_enabled
             || headers
                 .get("X-Klaxond-TOTP")
@@ -421,6 +454,61 @@ fn authenticate_basic(state: &AppState, cfg: &AuthConfig, headers: &HeaderMap) -
         HeaderValue::from_str(&format!("Basic realm=\"{}\"", cfg.basic.realm)).unwrap(),
     );
     AuthOutcome::Rejected(resp)
+}
+
+async fn authenticate_ldap_basic(
+    state: &AppState,
+    cfg: &AuthConfig,
+    headers: &HeaderMap,
+) -> AuthOutcome {
+    let Some((username, password)) = basic_credentials(headers) else {
+        return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
+    };
+    let rate_key = auth_rate_key("ldap", &username);
+    if auth_rate_limited(state, &rate_key) {
+        record_auth_failure(state, &rate_key, "auth.ldap", "rate_limited");
+        return AuthOutcome::Rejected(
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many authentication failures",
+            )
+                .into_response(),
+        );
+    }
+    let identity = match authenticate_ldap_credentials(cfg, &username, &password).await {
+        Ok(identity) => identity,
+        Err(err) => {
+            tracing::warn!(?err, "LDAP Basic authentication failed");
+            record_auth_failure(state, &rate_key, "auth.ldap", "ldap authentication failed");
+            return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
+        }
+    };
+    clear_auth_failures(state, &rate_key);
+    let mut user = ldap_user(identity);
+    user.sudo_until = now_epoch_i64() + sudo_window_seconds();
+    let cookie = issue_session(state, cfg, &mut user);
+    AuthOutcome::Authorized(user, Some(cookie))
+}
+
+fn basic_credentials(headers: &HeaderMap) -> Option<(String, String)> {
+    let auth = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())?;
+    let raw = auth.strip_prefix("Basic ")?;
+    let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw).ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (user, password) = decoded.split_once(':')?;
+    Some((user.to_string(), password.to_string()))
+}
+
+fn basic_challenge(realm: &str) -> Response<Body> {
+    let mut resp = Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Body::empty())
+        .unwrap();
+    resp.headers_mut().insert(
+        WWW_AUTHENTICATE,
+        HeaderValue::from_str(&format!("Basic realm=\"{realm}\"")).unwrap(),
+    );
+    resp
 }
 
 fn authenticate_trusted_proxy(
@@ -485,15 +573,30 @@ pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<
     if start && auth.mode == "oidc" {
         return oidc_login_redirect(state, headers, uri).await;
     }
-    login_page(&auth.mode, auth.webauthn.enabled, &return_to)
+    login_page(
+        &auth.mode,
+        auth.webauthn.enabled,
+        magic_link_enabled(&auth),
+        &return_to,
+    )
+}
+
+pub fn magic_link_enabled(cfg: &AuthConfig) -> bool {
+    cfg.mode == "basic"
+        && !cfg.basic.username.trim().is_empty()
+        && !cfg.basic.password_hash.trim().is_empty()
+}
+
+pub fn ldap_login_enabled(cfg: &AuthConfig) -> bool {
+    cfg.mode == "ldap" && cfg.ldap.to_auth_modules_config().is_some()
 }
 
 pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
     let cfg = state.cfg().auth;
-    if cfg.mode != "basic" {
+    if !matches!(cfg.mode.as_str(), "basic" | "ldap") {
         return (
             StatusCode::BAD_REQUEST,
-            "local login is available only in basic mode",
+            "local login is available only in basic or ldap mode",
         )
             .into_response();
     }
@@ -520,34 +623,47 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
             .map(String::as_str)
             .unwrap_or("/status"),
     );
-    if username != cfg.basic.username
-        || cfg.basic.password_hash.is_empty()
-        || !verify(password, &cfg.basic.password_hash).unwrap_or(false)
-    {
-        record_auth_failure(
-            state,
-            &rate_key,
-            "auth.login",
-            "invalid username or password",
-        );
-        return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
-    }
-    if cfg.basic.totp_enabled && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
-        record_auth_failure(state, &rate_key, "auth.login", "invalid TOTP code");
-        return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
-    }
-    clear_auth_failures(state, &rate_key);
-    let mut user = User {
-        sub: username.to_string(),
-        email: String::new(),
-        name: String::new(),
-        groups: vec![],
-        mode: "basic".into(),
-        exp: 0,
-        csrf: String::new(),
-        sudo_until: 0,
-        via_authorization: false,
+    let mut user = if cfg.mode == "ldap" {
+        match authenticate_ldap_credentials(&cfg, username, password).await {
+            Ok(identity) => ldap_user(identity),
+            Err(err) => {
+                tracing::warn!(?err, "LDAP login failed");
+                record_auth_failure(state, &rate_key, "auth.ldap", "ldap authentication failed");
+                return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
+            }
+        }
+    } else {
+        if username != cfg.basic.username
+            || cfg.basic.password_hash.is_empty()
+            || !verify_password(password, &cfg.basic.password_hash)
+        {
+            record_auth_failure(
+                state,
+                &rate_key,
+                "auth.login",
+                "invalid username or password",
+            );
+            return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
+        }
+        if cfg.basic.totp_enabled
+            && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64())
+        {
+            record_auth_failure(state, &rate_key, "auth.login", "invalid TOTP code");
+            return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
+        }
+        User {
+            sub: username.to_string(),
+            email: String::new(),
+            name: String::new(),
+            groups: vec![],
+            mode: "basic".into(),
+            exp: 0,
+            csrf: String::new(),
+            sudo_until: 0,
+            via_authorization: false,
+        }
     };
+    clear_auth_failures(state, &rate_key);
     let cookie = issue_session(state, &cfg, &mut user);
     let mut resp = if payload
         .get("fetch")
@@ -567,10 +683,10 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
     let Some(user) = user else {
         return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
     };
-    if user.mode != "basic" {
+    if !matches!(user.mode.as_str(), "basic" | "ldap" | "magic_link") {
         return (
             StatusCode::BAD_REQUEST,
-            "sudo reauth is available only for local login",
+            "sudo reauth is available only for local or LDAP login",
         )
             .into_response();
     }
@@ -587,15 +703,36 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
         )
             .into_response();
     }
-    if cfg.basic.password_hash.is_empty()
-        || !verify(password, &cfg.basic.password_hash).unwrap_or(false)
-    {
-        record_auth_failure(state, &rate_key, "auth.sudo", "invalid password");
-        return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
-    }
-    if cfg.basic.totp_enabled && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64()) {
-        record_auth_failure(state, &rate_key, "auth.sudo", "invalid TOTP code");
-        return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
+    if user.mode == "ldap" {
+        let cfg_for_ldap = cfg.clone();
+        let username = user.sub.clone();
+        let password = password.to_string();
+        let result = tokio::task::block_in_place(|| {
+            cfg_for_ldap
+                .ldap
+                .to_auth_modules_config()
+                .ok_or_else(|| "LDAP is not configured".to_string())?
+                .authenticate(&username, &password)
+                .map_err(|err| err.to_string())
+        });
+        if let Err(err) = result {
+            tracing::warn!(?err, "LDAP sudo reauth failed");
+            record_auth_failure(state, &rate_key, "auth.sudo", "ldap reauth failed");
+            return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
+        }
+    } else {
+        if cfg.basic.password_hash.is_empty()
+            || !verify_password(password, &cfg.basic.password_hash)
+        {
+            record_auth_failure(state, &rate_key, "auth.sudo", "invalid password");
+            return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
+        }
+        if cfg.basic.totp_enabled
+            && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64())
+        {
+            record_auth_failure(state, &rate_key, "auth.sudo", "invalid TOTP code");
+            return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
+        }
     }
     clear_auth_failures(state, &rate_key);
     let mut refreshed = user.clone();
@@ -607,6 +744,264 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
     resp.headers_mut()
         .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
     resp
+}
+
+async fn authenticate_ldap_credentials(
+    cfg: &AuthConfig,
+    username: &str,
+    password: &str,
+) -> Result<auth_modules::ldap::LdapIdentity, String> {
+    let ldap = cfg
+        .ldap
+        .to_auth_modules_config()
+        .ok_or_else(|| "LDAP is not configured".to_string())?;
+    let username = username.to_string();
+    let password = password.to_string();
+    tokio::task::spawn_blocking(move || {
+        ldap.authenticate(&username, &password)
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| format!("LDAP worker failed: {err}"))?
+}
+
+fn ldap_user(identity: auth_modules::ldap::LdapIdentity) -> User {
+    User {
+        sub: identity.username,
+        email: identity.email.unwrap_or_default(),
+        name: identity.name,
+        groups: identity.groups,
+        mode: "ldap".into(),
+        exp: 0,
+        csrf: String::new(),
+        sudo_until: 0,
+        via_authorization: false,
+    }
+}
+
+pub fn magic_link_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+    body: Bytes,
+) -> Response<Body> {
+    let cfg = state.cfg();
+    if !magic_link_enabled(&cfg.auth) {
+        return (StatusCode::NOT_FOUND, "magic link login is not configured").into_response();
+    }
+    let payload = login_payload(&body);
+    let username = payload
+        .get("username")
+        .map(String::as_str)
+        .unwrap_or("")
+        .trim();
+    if username.is_empty() {
+        return (StatusCode::BAD_REQUEST, "username is required").into_response();
+    }
+    let return_to = sanitize_return_to(
+        payload
+            .get("return_to")
+            .map(String::as_str)
+            .unwrap_or("/status"),
+    );
+    let rate_key = magic_link_rate_key(username, headers, peer);
+    let decision = state.auth_failures.record_attempt(
+        &rate_key,
+        GOLD_AUTH_SHORT_BURST_MAX,
+        GOLD_AUTH_SHORT_BURST_WINDOW,
+    );
+    if !decision.allowed {
+        crate::audit::record(
+            rate_key,
+            "auth.magic_link",
+            "error",
+            "rate_limited".to_string(),
+        );
+        return rate_limited_retry_after(decision.retry_after);
+    }
+
+    let token = issue_magic_link(state, &cfg.auth, username, &return_to);
+    let link = token
+        .as_deref()
+        .map(|token| magic_link_callback_url(&cfg.public_url, token));
+    let wants_json = payload
+        .get("fetch")
+        .map(|value| value == "1")
+        .unwrap_or_else(|| body_is_json(&body));
+    if wants_json {
+        return json_response(json!({
+            "sent": true,
+            "link": link,
+            "expiresInSeconds": MAGIC_LINK_TTL_SECS,
+        }));
+    }
+    if let Some(link) = link {
+        return redirect(&link);
+    }
+    redirect(&format!(
+        "/api/auth/login?magic_sent=1&return_to={}",
+        urlencoding::encode(&return_to)
+    ))
+}
+
+pub fn magic_link_callback(state: &AppState, token: &str) -> Response<Body> {
+    let cfg = state.cfg().auth;
+    if !magic_link_enabled(&cfg) {
+        return (StatusCode::NOT_FOUND, "magic link login is not configured").into_response();
+    }
+    let (mut user, return_to) = match consume_magic_link(state, &cfg, token) {
+        Ok(value) => value,
+        Err(error) => {
+            return redirect(&format!("/api/auth/login?magic_error={}", error.code()));
+        }
+    };
+    let cookie = issue_session(state, &cfg, &mut user);
+    let mut resp = redirect(&return_to);
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        resp.headers_mut().insert(SET_COOKIE, value);
+    }
+    resp
+}
+
+fn issue_magic_link(
+    state: &AppState,
+    cfg: &AuthConfig,
+    username: &str,
+    return_to: &str,
+) -> Option<String> {
+    if cfg.basic.username != username {
+        let now = crate::util::now_epoch();
+        let mut pending = lock_mutex(&state.magic_links, "magic links");
+        prune_magic_links(&mut pending, now);
+        return None;
+    }
+    let token = token_urlsafe(32);
+    let now = crate::util::now_epoch();
+    let mut pending = lock_mutex(&state.magic_links, "magic links");
+    prune_magic_links(&mut pending, now);
+    pending.insert(
+        token_hash(&token),
+        PendingMagicLink {
+            created_at: now,
+            expires_at: now + MAGIC_LINK_TTL_SECS as f64,
+            username: username.to_string(),
+            return_to: return_to.to_string(),
+            used_at: None,
+        },
+    );
+    Some(token)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MagicLinkError {
+    Invalid,
+    Used,
+    Expired,
+    Unavailable,
+}
+
+impl MagicLinkError {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Invalid => "invalid",
+            Self::Used => "used",
+            Self::Expired => "expired",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+fn consume_magic_link(
+    state: &AppState,
+    cfg: &AuthConfig,
+    token: &str,
+) -> Result<(User, String), MagicLinkError> {
+    let token_hash = token_hash(token);
+    let now = crate::util::now_epoch();
+    let challenge = {
+        let mut pending = lock_mutex(&state.magic_links, "magic links");
+        let Some(challenge) = pending.get_mut(&token_hash) else {
+            return Err(MagicLinkError::Invalid);
+        };
+        if challenge.used_at.is_some() {
+            return Err(MagicLinkError::Used);
+        }
+        if challenge.expires_at <= now {
+            return Err(MagicLinkError::Expired);
+        }
+        challenge.used_at = Some(now);
+        challenge.clone()
+    };
+    if cfg.basic.username != challenge.username {
+        return Err(MagicLinkError::Unavailable);
+    }
+    Ok((
+        User {
+            sub: challenge.username,
+            email: String::new(),
+            name: String::new(),
+            groups: vec!["magic-link".into()],
+            mode: "magic_link".into(),
+            exp: 0,
+            csrf: String::new(),
+            sudo_until: 0,
+            via_authorization: false,
+        },
+        challenge.return_to,
+    ))
+}
+
+fn prune_magic_links(pending: &mut HashMap<String, PendingMagicLink>, now: f64) {
+    pending.retain(|_, challenge| challenge.expires_at > now);
+}
+
+pub fn magic_link_callback_url(public_url: &str, token: &str) -> String {
+    let path = format!("/api/auth/magic/callback/{token}");
+    let public_url = public_url.trim().trim_end_matches('/');
+    if public_url.is_empty() {
+        path
+    } else {
+        format!("{public_url}{path}")
+    }
+}
+
+fn magic_link_rate_key(username: &str, headers: &HeaderMap, peer: SocketAddr) -> String {
+    let subject = username.trim().to_ascii_lowercase();
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(str::to_string)
+        .unwrap_or_else(|| peer.ip().to_string());
+    format!(
+        "magic_link:{}:{ip}",
+        if subject.is_empty() {
+            "unknown"
+        } else {
+            subject.as_str()
+        }
+    )
+}
+
+fn rate_limited_retry_after(retry_after: Option<std::time::Duration>) -> Response<Body> {
+    let seconds = retry_after
+        .unwrap_or(GOLD_AUTH_SHORT_BURST_WINDOW)
+        .as_secs()
+        .max(1);
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("Retry-After", seconds.to_string())
+        .body(Body::from("too many authentication attempts"))
+        .unwrap()
 }
 
 pub fn totp_start(state: &AppState) -> Response<Body> {
@@ -675,16 +1070,6 @@ async fn oidc_login_redirect(state: &AppState, headers: HeaderMap, uri: &str) ->
         )
             .into_response();
     }
-    let discovery = match oidc_discovery(state, &issuer).await {
-        Ok(d) => d,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!("OIDC discovery failed: {err}"),
-            )
-                .into_response();
-        }
-    };
     let return_to = login_return_to(uri);
     let host = headers
         .get(HOST)
@@ -702,26 +1087,37 @@ async fn oidc_login_redirect(state: &AppState, headers: HeaderMap, uri: &str) ->
     };
     let redirect_uri = format!("{scheme}://{host}{}", cfg.redirect_path);
     let state_token = token_urlsafe(24);
+    let flow = match oidc_client::authorization_url(
+        &oidc_client_config(&cfg, &redirect_uri),
+        &state_token,
+    )
+    .await
+    {
+        Ok(flow) => flow,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("OIDC discovery failed: {err}"),
+            )
+                .into_response();
+        }
+    };
     {
         let mut states = lock_mutex(&state.oidc_states, "oidc states");
-        states.insert(state_token.clone(), (crate::util::now_epoch(), return_to));
-        let cutoff = crate::util::now_epoch() - 600.0;
-        states.retain(|_, (ts, _)| *ts >= cutoff);
+        let now = crate::util::now_epoch();
+        states.insert(
+            state_token.clone(),
+            PendingOidcState {
+                created_at: now,
+                return_to,
+                nonce: flow.nonce,
+                code_verifier: flow.pkce_verifier,
+            },
+        );
+        let cutoff = now - 600.0;
+        states.retain(|_, pending| pending.created_at >= cutoff);
     }
-    let mut url = Url::parse(
-        discovery
-            .get("authorization_endpoint")
-            .and_then(|v| v.as_str())
-            .unwrap_or(""),
-    )
-    .unwrap();
-    url.query_pairs_mut()
-        .append_pair("response_type", "code")
-        .append_pair("client_id", &cfg.client_id)
-        .append_pair("redirect_uri", &redirect_uri)
-        .append_pair("scope", &cfg.scopes)
-        .append_pair("state", &state_token);
-    redirect(url.as_str())
+    redirect(&flow.authorization_url)
 }
 
 fn login_return_to(uri: &str) -> String {
@@ -736,9 +1132,14 @@ fn login_return_to(uri: &str) -> String {
     sanitize_return_to(&return_to)
 }
 
-fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<Body> {
+fn login_page(
+    mode: &str,
+    passkeys_enabled: bool,
+    magic_link_enabled: bool,
+    return_to: &str,
+) -> Response<Body> {
     let start_url = format!(
-        "/auth/login?start=1&return_to={}",
+        "/api/auth/login?start=1&return_to={}",
         urlencoding::encode(return_to)
     );
     let start_url = html_attr(&start_url);
@@ -746,7 +1147,7 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
     let primary = match mode {
         "oidc" => format!(r#"<a class="btn primary" href="{start_url}">Continue with SSO</a>"#),
         "basic" => format!(
-            r#"<form class="login-form" method="post" action="/auth/login">
+            r#"<form class="login-form" method="post" action="/api/auth/local/login">
 <input type="hidden" name="return_to" value="{return_to}">
 <label><span>Username</span><input name="username" autocomplete="username" required></label>
 <label><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
@@ -762,9 +1163,20 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
         _ => format!(r#"<a class="btn primary" href="{return_to}">Continue</a>"#),
     };
     let passkey = if passkeys_enabled {
-        r#"<a class="btn" href="/auth/passkey">Use passkey</a>"#
+        r#"<a class="btn" href="/api/auth/passkey/login">Use passkey</a>"#
     } else {
         ""
+    };
+    let magic_link = if magic_link_enabled {
+        format!(
+            r#"<form class="login-form" method="post" action="/api/auth/magic/request">
+<input type="hidden" name="return_to" value="{return_to}">
+<label><span>Username</span><input name="username" autocomplete="username" required></label>
+<button class="btn" type="submit">Use magic link</button>
+</form>"#
+        )
+    } else {
+        String::new()
     };
     let author_link = author_link_html();
     let html = format!(
@@ -779,7 +1191,7 @@ fn login_page(mode: &str, passkeys_enabled: bool, return_to: &str) -> Response<B
 </div>
 <h2>Sign in</h2>
 <p class="login-note">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
-<div class="login-actions">{primary}{passkey}</div>
+<div class="login-actions">{primary}{passkey}{magic_link}</div>
 <nav class="login-legal" aria-label="Legal links">
 <a href="/legal/privacy?from=login">Privacy</a>
 <a href="/legal/accessibility?from=login">Accessibility</a>
@@ -868,28 +1280,22 @@ fn auth_rate_key(action: &str, subject: &str) -> String {
 }
 
 fn auth_rate_limited(state: &AppState, key: &str) -> bool {
-    let now = now_epoch();
-    let cutoff = now - AUTH_FAILURE_WINDOW_SECS;
-    let mut failures = lock_mutex(&state.auth_failures, "auth failures");
-    let entries = failures.entry(key.to_string()).or_default();
-    entries.retain(|ts| *ts >= cutoff);
-    entries.len() >= AUTH_FAILURE_MAX
+    state
+        .auth_failures
+        .blocked(key, GOLD_AUTH_ACCOUNT_FAILURE_MAX, auth_failure_window())
 }
 
 fn record_auth_failure(state: &AppState, key: &str, action: &'static str, detail: &'static str) {
-    let now = now_epoch();
-    let cutoff = now - AUTH_FAILURE_WINDOW_SECS;
-    {
-        let mut failures = lock_mutex(&state.auth_failures, "auth failures");
-        let entries = failures.entry(key.to_string()).or_default();
-        entries.retain(|ts| *ts >= cutoff);
-        entries.push(now);
-    }
+    state.auth_failures.record(key, auth_failure_window());
     crate::audit::record(key.to_string(), action, "error", detail.to_string());
 }
 
 fn clear_auth_failures(state: &AppState, key: &str) {
-    lock_mutex(&state.auth_failures, "auth failures").remove(key);
+    state.auth_failures.clear(key);
+}
+
+fn auth_failure_window() -> std::time::Duration {
+    GOLD_AUTH_ACCOUNT_FAILURE_WINDOW
 }
 
 fn sudo_window_seconds() -> i64 {
@@ -898,7 +1304,6 @@ fn sudo_window_seconds() -> i64 {
 
 pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
     let cfg = state.cfg().auth.oidc;
-    let issuer = cfg.issuer.trim_end_matches('/').to_string();
     let parsed = Url::parse(&format!("http://localhost{uri}")).unwrap();
     let code = parsed
         .query_pairs()
@@ -911,23 +1316,14 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
     let (Some(code), Some(state_param)) = (code, state_param) else {
         return (StatusCode::BAD_REQUEST, "missing code or state").into_response();
     };
-    let return_to = {
+    let pending = {
         let mut states = lock_mutex(&state.oidc_states, "oidc states");
         match states.remove(&state_param) {
-            Some((_, ret)) => sanitize_return_to(&ret),
+            Some(pending) => pending,
             None => return redirect("/"),
         }
     };
-    let discovery = match oidc_discovery(state, &issuer).await {
-        Ok(d) => d,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!("OIDC discovery failed: {err}"),
-            )
-                .into_response();
-        }
-    };
+    let return_to = sanitize_return_to(&pending.return_to);
     let host = headers
         .get(HOST)
         .and_then(|v| v.to_str().ok())
@@ -943,58 +1339,15 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
         "http"
     };
     let redirect_uri = format!("{scheme}://{host}{}", cfg.redirect_path);
-    let token_endpoint = discovery
-        .get("token_endpoint")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let tokens = match state
-        .http
-        .post(token_endpoint)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", &code),
-            ("redirect_uri", &redirect_uri),
-            ("client_id", &cfg.client_id),
-            ("client_secret", &cfg.client_secret),
-        ])
-        .send()
-        .await
+    let identity = match oidc_client::exchange_code(
+        &oidc_client_config(&cfg, &redirect_uri),
+        &code,
+        &pending.nonce,
+        &pending.code_verifier,
+    )
+    .await
     {
-        Ok(resp) if resp.status().is_success() => match resp.json::<Value>().await {
-            Ok(v) => v,
-            Err(err) => {
-                return (
-                    StatusCode::BAD_GATEWAY,
-                    format!("token exchange failed: {err}"),
-                )
-                    .into_response();
-            }
-        },
-        Ok(resp) => {
-            let code = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!(
-                    "token exchange failed: {code} {}",
-                    &body[..body.len().min(200)]
-                ),
-            )
-                .into_response();
-        }
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!("token exchange failed: {err}"),
-            )
-                .into_response();
-        }
-    };
-    let Some(id_token) = tokens.get("id_token").and_then(|v| v.as_str()) else {
-        return (StatusCode::BAD_GATEWAY, "no id_token in response").into_response();
-    };
-    let claims = match verify_id_token(state, &issuer, &discovery, id_token, &cfg.client_id).await {
-        Ok(v) => v,
+        Ok(identity) => identity,
         Err(err) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -1004,14 +1357,10 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
         }
     };
     if !cfg.required_group.trim().is_empty() {
-        let groups = claims
-            .get("groups")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        if !groups
+        if !identity
+            .groups
             .iter()
-            .any(|g| g.as_str() == Some(cfg.required_group.as_str()))
+            .any(|group| group == cfg.required_group.as_str())
         {
             return (
                 StatusCode::FORBIDDEN,
@@ -1021,31 +1370,14 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
         }
     }
     let mut user = User {
-        sub: claims
-            .get("sub")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        email: claims
-            .get("email")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        name: claims
-            .get("name")
-            .or_else(|| claims.get("preferred_username"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        groups: claims
-            .get("groups")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        sub: identity.subject,
+        email: identity.email.unwrap_or_default(),
+        name: if identity.name.trim().is_empty() {
+            identity.username
+        } else {
+            identity.name
+        },
+        groups: identity.groups,
         mode: "oidc".into(),
         exp: 0,
         csrf: String::new(),
@@ -1064,8 +1396,8 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
     resp
 }
 
-pub fn logout(headers: &HeaderMap) -> Response<Body> {
-    let mut resp = redirect("/auth/login?logged_out=1");
+pub fn api_logout(headers: &HeaderMap) -> Response<Body> {
+    let mut resp = json_response(json!({"ok": true}));
     for cookie in expired_session_cookies(headers) {
         if let Ok(value) = HeaderValue::from_str(&cookie) {
             resp.headers_mut().append(SET_COOKIE, value);
@@ -1119,25 +1451,16 @@ fn cookie_values<'a>(cookie: &'a str, name: &str) -> Vec<&'a str> {
 }
 
 fn sanitize_return_to(value: &str) -> String {
-    let value = value.trim();
-    if value.is_empty()
-        || !value.starts_with('/')
-        || value.starts_with("//")
-        || value.starts_with("/\\")
-        || value.contains(['\r', '\n'])
-        || value == "/auth"
-        || value.starts_with("/auth/")
-    {
-        "/".to_string()
-    } else {
-        value.to_string()
-    }
+    auth_modules::oidc_pkce::sanitize_local_redirect(
+        Some(value),
+        auth_modules::oidc_pkce::LocalRedirectPolicy::default(),
+    )
 }
 
 fn expired_session_cookies(headers: &HeaderMap) -> Vec<String> {
     let mut cookies = Vec::new();
     let domains = logout_domain_candidates(headers);
-    for path in ["/", "/auth", "/auth/", "/auth/login", "/auth/callback"] {
+    for path in ["/", "/api/auth/login", "/api/auth/callback"] {
         cookies.push(expired_session_cookie(path, None));
         for domain in &domains {
             cookies.push(expired_session_cookie(path, Some(domain)));
@@ -1214,92 +1537,59 @@ fn auth_required(location: &str) -> Response<Body> {
         .unwrap()
 }
 
-async fn oidc_discovery(state: &AppState, issuer: &str) -> anyhow::Result<Value> {
-    let url = format!(
-        "{}/.well-known/openid-configuration",
-        issuer.trim_end_matches('/')
-    );
-    Ok(state
-        .http
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<Value>()
-        .await?)
-}
-
-async fn verify_id_token(
-    state: &AppState,
-    issuer: &str,
-    discovery: &Value,
-    id_token: &str,
-    client_id: &str,
-) -> anyhow::Result<Value> {
-    let jwks_uri = discovery
-        .get("jwks_uri")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("issuer discovery missing jwks_uri"))?;
-    let jwks = state
-        .http
-        .get(jwks_uri)
-        .send()
-        .await?
-        .error_for_status()?
-        .json::<JwkSet>()
-        .await?;
-    let header = decode_header(id_token)?;
-    let kid = header.kid.ok_or_else(|| anyhow::anyhow!("missing kid"))?;
-    let jwk = jwks
-        .find(&kid)
-        .ok_or_else(|| anyhow::anyhow!("kid not found in JWKS"))?;
-    let key = DecodingKey::from_jwk(jwk)?;
-    let alg = header.alg;
-    let mut validation = Validation::new(match alg {
-        Algorithm::RS256
-        | Algorithm::RS384
-        | Algorithm::RS512
-        | Algorithm::ES256
-        | Algorithm::ES384 => alg,
-        _ => Algorithm::RS256,
-    });
-    validation.set_audience(&[client_id]);
-    validation.set_issuer(&[discovery
-        .get("issuer")
-        .and_then(|v| v.as_str())
-        .unwrap_or(issuer)]);
-    let data = decode::<Value>(id_token, &key, &validation)?;
-    Ok(data.claims)
+fn oidc_client_config(cfg: &crate::config::OidcConfig, redirect_uri: &str) -> OidcClientConfig {
+    OidcClientConfig::new(
+        cfg.issuer.trim_end_matches('/').to_string(),
+        cfg.client_id.clone(),
+        Some(cfg.client_secret.clone()),
+        redirect_uri.to_string(),
+        cfg.scopes
+            .split_whitespace()
+            .filter(|scope| !scope.trim().is_empty())
+            .map(str::to_string)
+            .collect(),
+    )
+    .with_userinfo(true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jsonwebtoken::{EncodingKey, Header};
+    use crate::config::Paths;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn temp_paths(tmp: &TempDir) -> Paths {
+        let data = tmp.path();
+        Paths {
+            config: data.join("klaxond.toml"),
+            default_config: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("klaxond.default.toml"),
+            render_config: data.join("render-config.json"),
+            ntfy_topics: data.join("ntfy-topics.json"),
+            dedup_config: data.join("dedup-config.json"),
+            dedup_pending_dir: data.join("dedup_pending"),
+            auth_config: data.join("auth-config.json"),
+            auth_session_key: data.join("auth-session.key"),
+            backup_dir: data.join("backups"),
+            static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
+            beszel_db: data.join("missing-beszel.db"),
+            history_db: data.join("klaxond.db"),
+        }
+    }
 
     #[test]
-    fn jwt_crypto_provider_is_available() {
-        let claims = serde_json::json!({
-            "sub": "probe",
-            "exp": 4_102_444_800_i64
-        });
-        let token = jsonwebtoken::encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(b"secret"),
-        )
-        .expect("JWT encode should have a crypto provider");
-        let data = decode::<Value>(
-            &token,
-            &DecodingKey::from_secret(b"secret"),
-            &Validation::new(Algorithm::HS256),
-        )
-        .expect("JWT decode should have a crypto provider");
+    fn password_helpers_use_shared_argon2_contract() {
+        let hash = hash_password("correct horse battery staple").unwrap();
 
         assert_eq!(
-            data.claims.get("sub").and_then(Value::as_str),
-            Some("probe")
+            MIN_PASSWORD_LEN,
+            auth_modules::password::DEFAULT_MIN_PASSWORD_LENGTH
         );
+        assert!(hash.starts_with("$argon2id$"));
+        assert!(validate_password_policy("Unique passphrase 123", Some("luigi")).is_ok());
+        assert!(validate_password_policy("welcome12345", Some("luigi")).is_err());
+        assert!(verify_password("correct horse battery staple", &hash));
+        assert!(!verify_password("wrong password", &hash));
     }
 
     #[test]
@@ -1319,9 +1609,69 @@ mod tests {
         assert_eq!(sanitize_return_to("https://example.test/"), "/");
         assert_eq!(sanitize_return_to("//example.test/"), "/");
         assert_eq!(sanitize_return_to("/ui\r\nLocation: //example.test"), "/");
-        assert_eq!(sanitize_return_to("/auth/login?return_to=%2F"), "/");
-        assert_eq!(sanitize_return_to("/auth"), "/");
+        assert_eq!(sanitize_return_to("/api/auth/login?return_to=%2F"), "/");
+        assert_eq!(sanitize_return_to("/api/auth"), "/");
+        assert_eq!(sanitize_return_to("/api/auth/callback"), "/");
         assert_eq!(sanitize_return_to(""), "/");
+    }
+
+    #[test]
+    fn magic_link_issue_and_consume_is_single_use() {
+        let tmp = TempDir::new().unwrap();
+        let state = AppState::new(temp_paths(&tmp)).unwrap();
+        let mut runtime = state.cfg();
+        runtime.public_url = "https://klaxond.example.test".to_string();
+        runtime.auth.mode = "basic".to_string();
+        runtime.auth.basic.username = "luigi".to_string();
+        runtime.auth.basic.password_hash = hash_password("correct horse battery staple").unwrap();
+        state.replace_config(runtime.clone());
+
+        assert!(magic_link_enabled(&runtime.auth));
+        assert!(issue_magic_link(&state, &runtime.auth, "nobody", "/status").is_none());
+
+        let token = issue_magic_link(&state, &runtime.auth, "luigi", "/status").expect("token");
+        assert_eq!(
+            magic_link_callback_url(&runtime.public_url, &token),
+            format!("https://klaxond.example.test/api/auth/magic/callback/{token}")
+        );
+        {
+            let pending = lock_mutex(&state.magic_links, "magic links");
+            let stored = pending
+                .get(&token_hash(&token))
+                .expect("stored token hash only");
+            assert_eq!(stored.username, "luigi");
+            assert!(stored.created_at <= stored.expires_at);
+        }
+
+        let (user, return_to) =
+            consume_magic_link(&state, &runtime.auth, &token).expect("consume token");
+        assert_eq!(user.sub, "luigi");
+        assert_eq!(user.mode, "magic_link");
+        assert_eq!(return_to, "/status");
+        assert!(matches!(
+            consume_magic_link(&state, &runtime.auth, &token),
+            Err(MagicLinkError::Used)
+        ));
+
+        let expired = "expired-token";
+        {
+            let mut pending = lock_mutex(&state.magic_links, "magic links");
+            let now = crate::util::now_epoch();
+            pending.insert(
+                token_hash(expired),
+                PendingMagicLink {
+                    created_at: now - MAGIC_LINK_TTL_SECS as f64,
+                    expires_at: now - 1.0,
+                    username: "luigi".to_string(),
+                    return_to: "/status".to_string(),
+                    used_at: None,
+                },
+            );
+        }
+        assert!(matches!(
+            consume_magic_link(&state, &runtime.auth, expired),
+            Err(MagicLinkError::Expired)
+        ));
     }
 
     #[test]
@@ -1362,13 +1712,13 @@ mod tests {
         headers.insert("X-Klaxond-Request", HeaderValue::from_static("fetch"));
         assert!(is_ui_fetch(&headers));
 
-        let resp = auth_required("/auth/login?return_to=%2Fstatus");
+        let resp = auth_required("/api/auth/login?return_to=%2Fstatus");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
         assert_eq!(
             resp.headers()
                 .get("X-Klaxond-Login")
                 .and_then(|v| v.to_str().ok()),
-            Some("/auth/login?return_to=%2Fstatus")
+            Some("/api/auth/login?return_to=%2Fstatus")
         );
         assert_eq!(
             resp.headers()
@@ -1396,12 +1746,8 @@ mod tests {
     fn logout_clears_host_and_parent_domain_cookie_variants() {
         let mut headers = HeaderMap::new();
         headers.insert(HOST, HeaderValue::from_static("klaxond.example.com"));
-        let resp = logout(&headers);
-        assert_eq!(resp.status(), StatusCode::FOUND);
-        assert_eq!(
-            resp.headers().get("Location").and_then(|v| v.to_str().ok()),
-            Some("/auth/login?logged_out=1")
-        );
+        let resp = api_logout(&headers);
+        assert_eq!(resp.status(), StatusCode::OK);
         let cookies = resp
             .headers()
             .get_all(SET_COOKIE)
@@ -1416,6 +1762,10 @@ mod tests {
         );
         assert!(cookies.iter().any(|c| c.contains("Domain=example.com")));
         assert!(cookies.iter().any(|c| c.contains("Domain=.example.com")));
-        assert!(cookies.iter().any(|c| c.contains("Path=/auth/callback;")));
+        assert!(
+            cookies
+                .iter()
+                .any(|c| c.contains("Path=/api/auth/callback;"))
+        );
     }
 }
