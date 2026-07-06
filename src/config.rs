@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use webauthn_rs::prelude::Passkey;
 
-pub const VERSION: &str = "0.14.24";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const AUTHOR_NAME: &str = "Luigi Barretta";
 pub const AUTHOR_URL: &str = "https://github.com/luigibarretta";
 pub const DEDUP_SOURCES: &[&str] = &[
@@ -1542,6 +1542,11 @@ mod tests {
     use tempfile::TempDir;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn runtime_version_matches_crate_version() {
+        assert_eq!(VERSION, env!("CARGO_PKG_VERSION"));
+    }
 
     const RUNTIME_COMPOSE_ENV_KEYS: &[&str] = &[
         "NTFY_URL",

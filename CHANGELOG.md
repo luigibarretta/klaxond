@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.14.26 — 2026-07-06
+
+- Rimossa la costante runtime hardcoded della versione: login page, status,
+  metriche e meta UI ora derivano sempre da `CARGO_PKG_VERSION`.
+
 ## 0.14.25 — 2026-07-06
 
 - Documentato il rischio transitive `rsa`/`RUSTSEC-2023-0071` con threat model
