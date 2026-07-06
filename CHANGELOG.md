@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+## 0.14.25 — 2026-07-06
+
 - Documentato il rischio transitive `rsa`/`RUSTSEC-2023-0071` con threat model
   esplicito per OIDC/WebAuthn public-key verification.
 - Aggiunto un guard CI che blocca dipendenze dirette `rsa` e API RSA
   private-key/decrypt/signing nel codice Rust di produzione.
+- Ottimizzato il frontend con debounce condiviso per le ricerche, TTL cache per
+  GET ripetute, coalescing delle richieste identiche, abort delle richieste
+  superate e invalidazione cache dopo mutation riuscite.
 
 ## 0.14.24 — 2026-07-05
 
