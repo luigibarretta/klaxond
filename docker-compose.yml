@@ -10,7 +10,10 @@ services:
   klaxond:
     image: ghcr.io/your-org/klaxond:latest  # or: git.luigibarretta.com/luigibarretta/klaxond:latest
     # Comment image: above and uncomment build: to build locally:
-    # build: .
+    # build:
+    #   context: .
+    #   additional_contexts:
+    #     auth-modules: ../auth-modules
     container_name: klaxond
     restart: always
     ports:

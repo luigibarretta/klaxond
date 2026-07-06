@@ -5,6 +5,7 @@
 .env.*
 node_modules/
 target/
+auth-modules/
 .tmp/
 .e2e-data/
 test-results/

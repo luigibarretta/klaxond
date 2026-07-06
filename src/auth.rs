@@ -18,16 +18,19 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use url::{Url, form_urlencoded};
 
+use auth_modules::audit::AuthAuditKind;
+use auth_modules::errors;
 use auth_modules::oidc::{OidcClientConfig, async_client as oidc_client};
+use auth_modules::one_time_token::{self, OneTimeTokenPolicy};
 use auth_modules::rate_limit::{
     GOLD_AUTH_ACCOUNT_FAILURE_MAX, GOLD_AUTH_ACCOUNT_FAILURE_WINDOW, GOLD_AUTH_SHORT_BURST_MAX,
-    GOLD_AUTH_SHORT_BURST_WINDOW,
+    GOLD_AUTH_SHORT_BURST_WINDOW, RateLimitOutcome,
 };
+use auth_modules::session_policy::{SameSitePolicy, SessionPolicy};
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
 pub const MIN_PASSWORD_LEN: usize = auth_modules::password::DEFAULT_MIN_PASSWORD_LENGTH;
 const SUDO_WINDOW_SECS: i64 = 10 * 60;
-const MAGIC_LINK_TTL_SECS: i64 = 10 * 60;
 
 pub const TOKEN_SCOPES: &[&str] = &[
     "admin:*",
@@ -466,7 +469,7 @@ async fn authenticate_ldap_basic(
     };
     let rate_key = auth_rate_key("ldap", &username);
     if auth_rate_limited(state, &rate_key) {
-        record_auth_failure(state, &rate_key, "auth.ldap", "rate_limited");
+        record_auth_failure(state, &rate_key, "auth.ldap", errors::RATE_LIMITED);
         return AuthOutcome::Rejected(
             (
                 StatusCode::TOO_MANY_REQUESTS,
@@ -610,7 +613,7 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
     let code = payload.get("totp").map(String::as_str).unwrap_or("");
     let rate_key = auth_rate_key("login", username);
     if auth_rate_limited(state, &rate_key) {
-        record_auth_failure(state, &rate_key, "auth.login", "rate_limited");
+        record_auth_failure(state, &rate_key, "auth.login", errors::RATE_LIMITED);
         return (
             StatusCode::TOO_MANY_REQUESTS,
             "too many authentication failures",
@@ -696,7 +699,7 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
     let code = payload.get("totp").map(String::as_str).unwrap_or("");
     let rate_key = auth_rate_key("sudo", &user.sub);
     if auth_rate_limited(state, &rate_key) {
-        record_auth_failure(state, &rate_key, "auth.sudo", "rate_limited");
+        record_auth_failure(state, &rate_key, "auth.sudo", errors::RATE_LIMITED);
         return (
             StatusCode::TOO_MANY_REQUESTS,
             "too many authentication failures",
@@ -811,13 +814,13 @@ pub fn magic_link_request(
         GOLD_AUTH_SHORT_BURST_WINDOW,
     );
     if !decision.allowed {
-        crate::audit::record(
+        record_auth_audit_failure(
             rate_key,
             "auth.magic_link",
-            "error",
-            "rate_limited".to_string(),
+            AuthAuditKind::RateLimitExceeded,
+            errors::RATE_LIMITED.to_string(),
         );
-        return rate_limited_retry_after(decision.retry_after);
+        return rate_limited_retry_after(RateLimitOutcome::from(decision).retry_after());
     }
 
     let token = issue_magic_link(state, &cfg.auth, username, &return_to);
@@ -832,7 +835,7 @@ pub fn magic_link_request(
         return json_response(json!({
             "sent": true,
             "link": link,
-            "expiresInSeconds": MAGIC_LINK_TTL_SECS,
+            "expiresInSeconds": magic_link_ttl_seconds(),
         }));
     }
     if let Some(link) = link {
@@ -875,15 +878,17 @@ fn issue_magic_link(
         prune_magic_links(&mut pending, now);
         return None;
     }
-    let token = token_urlsafe(32);
+    let policy = OneTimeTokenPolicy::magic_link();
+    let token = one_time_token::generate_token(policy.token_bytes);
+    let token_hash = one_time_token::hash_token(&token);
     let now = crate::util::now_epoch();
     let mut pending = lock_mutex(&state.magic_links, "magic links");
     prune_magic_links(&mut pending, now);
     pending.insert(
-        token_hash(&token),
+        token_hash,
         PendingMagicLink {
             created_at: now,
-            expires_at: now + MAGIC_LINK_TTL_SECS as f64,
+            expires_at: now + policy.ttl.as_secs() as f64,
             username: username.to_string(),
             return_to: return_to.to_string(),
             used_at: None,
@@ -916,7 +921,7 @@ fn consume_magic_link(
     cfg: &AuthConfig,
     token: &str,
 ) -> Result<(User, String), MagicLinkError> {
-    let token_hash = token_hash(token);
+    let token_hash = one_time_token::hash_token(token);
     let now = crate::util::now_epoch();
     let challenge = {
         let mut pending = lock_mutex(&state.magic_links, "magic links");
@@ -953,6 +958,18 @@ fn consume_magic_link(
 
 fn prune_magic_links(pending: &mut HashMap<String, PendingMagicLink>, now: f64) {
     pending.retain(|_, challenge| challenge.expires_at > now);
+}
+
+fn magic_link_ttl_seconds() -> i64 {
+    i64::try_from(OneTimeTokenPolicy::magic_link().ttl.as_secs()).unwrap_or(i64::MAX)
+}
+
+fn same_site_header(value: SameSitePolicy) -> &'static str {
+    match value {
+        SameSitePolicy::Lax => "Lax",
+        SameSitePolicy::Strict => "Strict",
+        SameSitePolicy::None => "None",
+    }
 }
 
 pub fn magic_link_callback_url(public_url: &str, token: &str) -> String {
@@ -1287,11 +1304,43 @@ fn auth_rate_limited(state: &AppState, key: &str) -> bool {
 
 fn record_auth_failure(state: &AppState, key: &str, action: &'static str, detail: &'static str) {
     state.auth_failures.record(key, auth_failure_window());
-    crate::audit::record(key.to_string(), action, "error", detail.to_string());
+    let kind = auth_audit_kind_for_failure(action, detail);
+    record_auth_audit_failure(key.to_string(), action, kind, detail);
 }
 
 fn clear_auth_failures(state: &AppState, key: &str) {
     state.auth_failures.clear(key);
+}
+
+fn auth_audit_kind_for_failure(action: &str, detail: &str) -> AuthAuditKind {
+    if detail == errors::RATE_LIMITED {
+        AuthAuditKind::RateLimitExceeded
+    } else if action == "auth.ldap" {
+        AuthAuditKind::LdapLoginFailure
+    } else if detail.contains("TOTP") {
+        AuthAuditKind::TotpVerificationFailure
+    } else {
+        AuthAuditKind::LoginFailure
+    }
+}
+
+fn record_auth_audit_failure(
+    actor: String,
+    action: &str,
+    kind: AuthAuditKind,
+    detail: impl Into<String>,
+) {
+    let detail = detail.into();
+    crate::audit::record(
+        actor,
+        action,
+        "error",
+        json!({
+            "kind": kind.as_str(),
+            "reason": detail,
+        })
+        .to_string(),
+    );
 }
 
 fn auth_failure_window() -> std::time::Duration {
@@ -1415,8 +1464,13 @@ fn issue_session(state: &AppState, cfg: &AuthConfig, user: &mut User) -> String 
     let body = b64url_no_pad(&payload);
     let sig = hmac_hex(state.session_key.as_slice(), body.as_bytes());
     let val = format!("{body}.{sig}");
+    let cookie = SessionPolicy::gold_standard().cookie;
+    let http_only = if cookie.http_only { "; HttpOnly" } else { "" };
     format!(
-        "{AUTH_SESSION_COOKIE}={val}; HttpOnly; Path=/; SameSite=Lax; Max-Age={}",
+        "{AUTH_SESSION_COOKIE}={val}{}; Path={}; SameSite={}; Max-Age={}",
+        http_only,
+        cookie.path,
+        same_site_header(cookie.same_site),
         cfg.session_timeout_hours * 3600
     )
 }
@@ -1638,7 +1692,7 @@ mod tests {
         {
             let pending = lock_mutex(&state.magic_links, "magic links");
             let stored = pending
-                .get(&token_hash(&token))
+                .get(&one_time_token::hash_token(&token))
                 .expect("stored token hash only");
             assert_eq!(stored.username, "luigi");
             assert!(stored.created_at <= stored.expires_at);
@@ -1659,9 +1713,9 @@ mod tests {
             let mut pending = lock_mutex(&state.magic_links, "magic links");
             let now = crate::util::now_epoch();
             pending.insert(
-                token_hash(expired),
+                one_time_token::hash_token(expired),
                 PendingMagicLink {
-                    created_at: now - MAGIC_LINK_TTL_SECS as f64,
+                    created_at: now - magic_link_ttl_seconds() as f64,
                     expires_at: now - 1.0,
                     username: "luigi".to_string(),
                     return_to: "/status".to_string(),
@@ -1767,6 +1821,29 @@ mod tests {
             cookies
                 .iter()
                 .any(|c| c.contains("Path=/api/auth/callback;"))
+        );
+    }
+
+    #[test]
+    fn shared_auth_modules_are_enabled_for_app_contract() {
+        use auth_modules::audit::{AuthAuditEvent, AuthAuditKind};
+        use auth_modules::security_profile::GoldAuthProfile;
+        use auth_modules::testing::CapturedEvents;
+        use auth_modules::{errors, methods};
+
+        let profile = GoldAuthProfile::personal_default();
+        assert_eq!(profile.password_policy.min_length, MIN_PASSWORD_LEN);
+        assert_eq!(errors::INVALID_CREDENTIALS, "invalid_credentials");
+
+        let event = AuthAuditEvent::login_failure("alice", methods::PASSWORD);
+        assert_eq!(event.kind, AuthAuditKind::LoginFailure);
+        assert_eq!(event.method, Some(methods::PASSWORD));
+
+        let mut captured = CapturedEvents::new();
+        captured.push(event);
+        assert_eq!(
+            captured.as_slice()[0].kind.as_str(),
+            AuthAuditKind::LoginFailure.as_str()
         );
     }
 }

@@ -24,6 +24,7 @@ pub const PUBLIC_ROUTES: &[PathPattern] = &[
     PathPattern::Prefix("/api/auth/login"),
     PathPattern::Prefix("/api/auth/callback"),
     PathPattern::Exact("/api/auth/methods"),
+    PathPattern::Exact("/api/auth/password-policy"),
     PathPattern::Exact("/api/auth/local/login"),
     PathPattern::Exact("/api/auth/magic/request"),
     PathPattern::Prefix("/api/auth/magic/callback/"),

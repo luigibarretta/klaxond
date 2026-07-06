@@ -589,7 +589,7 @@ scripts/check-rsa-private-usage.sh
 npm run openapi:lint
 cargo test
 npm run test:e2e
-docker build -t klaxond:local .
+docker buildx build --build-context auth-modules=../auth-modules -t klaxond:local .
 ```
 
 `npm run openapi:lint` runs the pinned Redocly CLI from `package-lock.json`

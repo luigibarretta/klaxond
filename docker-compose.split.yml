@@ -20,6 +20,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      additional_contexts:
+        auth-modules: ../auth-modules
     container_name: ${KLAXOND_BACKEND_CONTAINER:-klaxond-backend}
     restart: unless-stopped
     profiles: ["backend", "all"]

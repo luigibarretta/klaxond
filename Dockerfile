@@ -1,21 +1,23 @@
 # syntax=docker/dockerfile:1.7
-FROM rust:1.96-alpine AS build
+FROM mirror.gcr.io/library/rust:1.96-alpine AS build
 
-WORKDIR /src
+WORKDIR /src/klaxond
 
 RUN apk add --no-cache build-base perl
 
 COPY Cargo.toml Cargo.lock ./
+COPY --from=auth-modules Cargo.toml /src/auth-modules/Cargo.toml
+COPY --from=auth-modules src/ /src/auth-modules/src/
 COPY src/ ./src/
 COPY docs/openapi.yaml ./docs/openapi.yaml
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked \
+    CARGO_TARGET_DIR=/src/target cargo build --release --locked \
     && cp /src/target/release/klaxond /tmp/klaxond
 
-FROM alpine:3.23
+FROM mirror.gcr.io/library/alpine:3.23
 
 LABEL org.opencontainers.image.title="klaxond"
 LABEL org.opencontainers.image.description="Homelab notification bridge — Grafana/Beszel webhook → ntfy with cascade (Telegram, SMTP) and admin UI"

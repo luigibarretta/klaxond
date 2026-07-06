@@ -457,9 +457,7 @@ paths:
       operationId: getPasswordPolicy
       summary: Return the active local password policy.
       description: Returns the shared Argon2id password policy limits that the frontend uses for local password fields.
-      security:
-        - bearerAuth: []
-        - sessionCookie: []
+      security: []
       responses:
         "200":
           description: Password policy limits.

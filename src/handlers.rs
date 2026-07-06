@@ -3712,7 +3712,8 @@ fn json_body(body: &Bytes) -> Result<Value, serde_json::Error> {
 }
 
 fn password_policy_response() -> Response<Body> {
-    let policy = auth_modules::password::PasswordPolicy::gold_standard();
+    let profile = auth_modules::security_profile::GoldAuthProfile::personal_default();
+    let policy = profile.password_policy;
     json_response(json!({
         "min_length": policy.min_length,
         "max_length": policy.max_length,

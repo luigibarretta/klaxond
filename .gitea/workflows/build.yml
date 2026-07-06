@@ -19,6 +19,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout auth-modules
+        uses: actions/checkout@v4
+        with:
+          repository: luigibarretta/auth-modules
+          path: auth-modules
+
+      - name: Install check tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ripgrep
+
       - name: Check RSA private-key usage
         run: bash scripts/check-rsa-private-usage.sh
 
@@ -59,6 +70,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-contexts: |
+            auth-modules=auth-modules
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
