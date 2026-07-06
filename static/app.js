@@ -134,6 +134,7 @@ async function apiFetch(url, opts = {}) {
     const ok = await requestSudoReauth();
     if (ok) return apiFetch(url, { ...opts, __sudoRetry: true });
   }
+  if (res.ok && shouldInvalidateQueryCache(method, url, opts)) invalidateQueryCache();
   return res;
 }
 
@@ -208,6 +209,148 @@ const J = async (url, opts) => {
 };
 const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key, vars) : key;
 const APP_META = window.KLAXOND_META || {};
+
+const SEARCH_DEBOUNCE_MS = 300;
+const QUERY_TTL_RULES = [
+  ["/api/status", 3000],
+  ["/api/logs", 5000],
+  ["/api/audit", 10000],
+  ["/api/deliveries", 10000],
+  ["/api/inhibitions", 5000],
+  ["/api/acks", 5000],
+  ["/api/schedules", 30000],
+  ["/api/inhibition-rules", 30000],
+  ["/api/config/backups", 30000],
+  ["/api/setup-status", 30000],
+  ["/api/channel-test-matrix", 30000],
+  ["/api/render-config", 30000],
+  ["/api/channel-config", 30000],
+  ["/api/ntfy-topics", 30000],
+  ["/api/ingest-auth", 30000],
+  ["/api/cascade-config", 30000],
+  ["/api/delivery-config", 30000],
+  ["/api/dedup-config", 10000],
+];
+const QUERY_CACHE_BYPASS_PATHS = new Set(["/auth/me", "/api/auth-config"]);
+const QUERY_CACHE_MUTATION_BYPASS_PATHS = new Set([
+  "/api/config/import-preview",
+  "/api/inhibition-rules/test",
+  "/api/policy-simulate",
+  "/api/render-preview",
+]);
+const _queryCache = new Map();
+const _queryInflight = new Map();
+const _queryPendingByKey = new Map();
+
+function isAbortError(e) {
+  return e?.name === "AbortError" || (typeof DOMException !== "undefined" && e?.code === DOMException.ABORT_ERR);
+}
+
+function urlPath(url) {
+  try {
+    return new URL(url, location.origin).pathname;
+  } catch (e) {
+    return String(url || "").split("?")[0];
+  }
+}
+
+function queryCacheKey(url) {
+  try {
+    const parsed = new URL(url, location.origin);
+    return parsed.pathname + parsed.search;
+  } catch (e) {
+    return String(url || "");
+  }
+}
+
+function queryTtlFor(url) {
+  const path = urlPath(url);
+  if (QUERY_CACHE_BYPASS_PATHS.has(path)) return 0;
+  const match = QUERY_TTL_RULES.find(([prefix]) => path === prefix || path.startsWith(prefix + "/"));
+  return match ? match[1] : 0;
+}
+
+function cloneQueryValue(value) {
+  if (value == null || typeof value !== "object") return value;
+  if (typeof structuredClone === "function") return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function shouldInvalidateQueryCache(method, url, opts = {}) {
+  if (opts.__skipQueryInvalidation) return false;
+  if (["GET", "HEAD", "OPTIONS"].includes(String(method || "GET").toUpperCase())) return false;
+  return !QUERY_CACHE_MUTATION_BYPASS_PATHS.has(urlPath(url));
+}
+
+function invalidateQueryCache(match = null) {
+  if (!match) {
+    _queryCache.clear();
+    return;
+  }
+  const patterns = Array.isArray(match) ? match : [match];
+  for (const key of Array.from(_queryCache.keys())) {
+    if (patterns.some(pattern => key.startsWith(pattern) || key.includes(pattern))) _queryCache.delete(key);
+  }
+}
+
+function debounce(fn, delayMs = SEARCH_DEBOUNCE_MS) {
+  let timer = null;
+  const wrapped = (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      fn(...args);
+    }, delayMs);
+  };
+  wrapped.cancel = () => {
+    clearTimeout(timer);
+    timer = null;
+  };
+  return wrapped;
+}
+
+async function queryGet(scope, url, opts = {}) {
+  const ttlMs = opts.ttlMs ?? queryTtlFor(url);
+  const key = queryCacheKey(url);
+  const now = Date.now();
+  if (ttlMs > 0 && !opts.force) {
+    const cached = _queryCache.get(key);
+    if (cached && cached.expiresAt > now) return cloneQueryValue(cached.value);
+    const pending = _queryPendingByKey.get(key);
+    if (pending && opts.joinInflight !== false) return cloneQueryValue(await pending);
+  }
+  if (opts.cancelPrevious !== false) {
+    const prev = _queryInflight.get(scope);
+    if (prev) prev.abort();
+  }
+  const controller = new AbortController();
+  _queryInflight.set(scope, controller);
+  const requestPromise = J(url, {
+    ...(opts.fetchOptions || {}),
+    signal: controller.signal,
+  }).then(payload => {
+    if (ttlMs > 0) {
+      _queryCache.set(key, {
+        expiresAt: Date.now() + ttlMs,
+        value: cloneQueryValue(payload),
+      });
+    }
+    return payload;
+  });
+  if (ttlMs > 0 && !opts.force) _queryPendingByKey.set(key, requestPromise);
+  try {
+    return await requestPromise;
+  } finally {
+    if (_queryInflight.get(scope) === controller) _queryInflight.delete(scope);
+    if (_queryPendingByKey.get(key) === requestPromise) _queryPendingByKey.delete(key);
+  }
+}
+
+window.KlaxondQuery = Object.freeze({
+  invalidate: invalidateQueryCache,
+  cacheSize: () => _queryCache.size,
+  debounceMs: SEARCH_DEBOUNCE_MS,
+});
 
 // ---- Tab switching (with URL path routing) ----
 const UI_TABS = new Set(Array.from(document.querySelectorAll(".tab[data-tab]"), t => t.dataset.tab));
@@ -450,9 +593,9 @@ if (document.readyState === "loading") {
 setupPublicLoginLinks();
 
 // ---- Status ----
-async function loadStatus() {
+async function loadStatus(opts = {}) {
   try {
-    const s = await J("/api/status");
+    const s = await queryGet("status", "/api/status", { force: opts.force });
     const setCh = (id, up, url) => {
       const card = $("#" + id);
       const dot = card.querySelector(".dot");
@@ -718,9 +861,12 @@ function normalizeDeliveries(payload) {
   return [];
 }
 
-async function fetchDeliveries(limit = 0) {
+async function fetchDeliveries(limit = 0, opts = {}) {
   const suffix = limit ? `?limit=${encodeURIComponent(limit)}` : "";
-  return normalizeDeliveries(await J(`/api/deliveries${suffix}`));
+  return normalizeDeliveries(await queryGet(opts.scope || `deliveries:${limit || "all"}`, `/api/deliveries${suffix}`, {
+    cancelPrevious: false,
+    force: opts.force,
+  }));
 }
 
 function deliveryTsSeconds(item) {
@@ -755,14 +901,14 @@ async function loadStatusActivity() {
   }
   // Active suppressions count
   try {
-    const inhib = await J("/api/inhibitions");
+    const inhib = await queryGet("status-inhibitions", "/api/inhibitions", { cancelPrevious: false });
     const n = (inhib || []).length;
     $("#stat-suppr-count").textContent = n;
     setTabBadge("inhibitions", n, n > 0 ? "warn" : "");
   } catch (e) { $("#stat-suppr-count").textContent = "?"; fetchError("status-activity-inhibitions", e); }
   // Dedup pending count (sum across all sources)
   try {
-    const d = await J("/api/dedup-config");
+    const d = await queryGet("status-dedup", "/api/dedup-config", { cancelPrevious: false });
     const pc = d.pending_counts || {};
     const total = Object.values(pc).reduce((a, b) => a + (b || 0), 0);
     $("#stat-dedup-count").textContent = total;
@@ -776,7 +922,7 @@ $("#btn-cascade-toggle").addEventListener("click", async () => {
   try {
     await J("/api/cascade/toggle", { method: "POST", body: "{}" });
     notifySuccess(tr("cascade.runtime_toggled"), { durationMs: 3000 });
-    loadStatus();
+    loadStatus({ force: true });
   } catch (e) {
     notifyError("cascade-toggle", e);
   }
@@ -787,7 +933,7 @@ $("#btn-cascade-toggle").addEventListener("click", async () => {
 async function loadConfigBackups() {
   const ul = $("#cfg-backup-list"); if (!ul) return;
   try {
-    const r = await J("/api/config/backups");
+    const r = await queryGet("config-backups", "/api/config/backups");
     if (r.dir) $("#cfg-backup-dir").textContent = r.dir;
     if (r.keep_max) $("#cfg-backup-keep").textContent = r.keep_max;
     const items = r.backups || [];
@@ -911,7 +1057,7 @@ document.addEventListener("DOMContentLoaded", () => {
 // ---- Inhibitions (active suppressions) ----
 async function loadInhib() {
   try {
-    const rows = await J("/api/inhibitions");
+    const rows = await queryGet("inhibitions", "/api/inhibitions");
     const tb = $("#t-inhib tbody"); tb.innerHTML = "";
     if (!rows.length) {
       tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("inhib.no_active"))}</td></tr>`;
@@ -1002,7 +1148,7 @@ async function testInhibitionRule() {
 async function loadAcks() {
   const tb = $("#t-acks tbody"); if (!tb) return;
   try {
-    const acks = await J("/api/acks");
+    const acks = await queryGet("acks", "/api/acks");
     tb.innerHTML = "";
     if (!acks.length) {
       tb.innerHTML = `<tr><td colspan="3" class="muted">${escapeHtml(tr("inhib.no_acks"))}</td></tr>`;
@@ -1129,7 +1275,7 @@ function _renderSchedRow(s) {
 async function loadSchedules() {
   const tb = $("#t-schedules tbody"); if (!tb) return;
   try {
-    const data = await J("/api/schedules");
+    const data = await queryGet("schedules", "/api/schedules");
     _schedActiveMutes = data.active_mutes || {};
     tb.innerHTML = "";
     for (const s of (data.schedules || [])) tb.appendChild(_renderSchedRow(s));
@@ -1430,7 +1576,7 @@ function _markRowValidity(tr) {
 
 async function loadInhibRules() {
   try {
-    const data = await J("/api/inhibition-rules");
+    const data = await queryGet("inhibition-rules", "/api/inhibition-rules");
     _inhibAvailableSources = data.available_sources || [];
     const tb = $("#t-inhib-rules tbody"); tb.innerHTML = "";
     for (const r of (data.rules || [])) tb.appendChild(_renderInhibRuleRow(r));
@@ -1522,9 +1668,9 @@ function fmtSecs(s) {
 // ---- Deliveries ----
 let _delivCache = [];  // most recent fetch — filter applies client-side without re-fetching
 
-async function loadDeliv() {
+async function loadDeliv(opts = {}) {
   try {
-    _delivCache = await fetchDeliveries(10000);
+    _delivCache = await fetchDeliveries(10000, { scope: "deliveries", force: opts.force });
   } catch (e) {
     fetchError("deliveries", e);
     _delivCache = [];
@@ -1589,8 +1735,16 @@ function _toggleDelivExpand(tr, r) {
 }
 
 // Re-render (client-side, no fetch) when filter changes
+const scheduleDelivRender = debounce(() => renderDeliv({ reset: true }));
 document.addEventListener("DOMContentLoaded", () => {
-  $("#deliv-filter")?.addEventListener("input", () => renderDeliv({ reset: true }));
+  $("#deliv-filter")?.addEventListener("input", e => {
+    if (!String(e.target?.value || "").trim()) {
+      scheduleDelivRender.cancel();
+      renderDeliv({ reset: true });
+      return;
+    }
+    scheduleDelivRender();
+  });
   $("#deliv-show-suppressed")?.addEventListener("change", () => renderDeliv({ reset: true }));
   $("#deliv-export-csv")?.addEventListener("click", exportDeliveriesCsv);
 });
@@ -1665,13 +1819,14 @@ async function loadLogs(opts = {}) {
   params.set("offset", String(Math.max(0, _logsOffset)));
   const requestSeq = ++_logsRequestSeq;
   try {
-    const payload = await J("/api/logs?" + params.toString());
+    const payload = await queryGet("logs", "/api/logs?" + params.toString(), { force: opts.force });
     if (requestSeq !== _logsRequestSeq) return;
     _logsCache = payload;
     _logsOffset = payload.offset || 0;
     fetchOk("logs");
     renderLogs();
   } catch (e) {
+    if (isAbortError(e)) return;
     if (requestSeq !== _logsRequestSeq) return;
     fetchError("logs", e);
     const tb = $("#t-logs tbody");
@@ -1734,7 +1889,12 @@ function updateLogsPager() {
 function scheduleLogsLoad() {
   _logsRequestSeq++;
   clearTimeout(_logsFilterTimer);
-  _logsFilterTimer = setTimeout(() => loadLogs({ reset: true }), 250);
+  const q = ($("#logs-filter")?.value || "").trim();
+  if (!q) {
+    loadLogs({ reset: true });
+    return;
+  }
+  _logsFilterTimer = setTimeout(() => loadLogs({ reset: true }), SEARCH_DEBOUNCE_MS);
 }
 
 function changeLogsPage(direction) {
@@ -1754,13 +1914,13 @@ function updateLogsAutorefresh() {
   _logsAutoTimer = null;
   if ($("#logs-autorefresh")?.checked) {
     _logsAutoTimer = setInterval(() => {
-      if ($("#tab-logs")?.classList.contains("active")) loadLogs();
+      if ($("#tab-logs")?.classList.contains("active")) loadLogs({ force: true });
     }, 5000);
   }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("#logs-refresh")?.addEventListener("click", () => loadLogs());
+  $("#logs-refresh")?.addEventListener("click", () => loadLogs({ force: true }));
   $("#logs-filter")?.addEventListener("input", scheduleLogsLoad);
   $("#logs-level")?.addEventListener("change", () => loadLogs({ reset: true }));
   $("#logs-limit")?.addEventListener("change", () => loadLogs({ reset: true }));
@@ -1806,12 +1966,13 @@ async function loadAudit(opts = {}) {
   params.set("offset", String(Math.max(0, _auditOffset)));
   const requestSeq = ++_auditRequestSeq;
   try {
-    const payload = await J("/api/audit?" + params.toString());
+    const payload = await queryGet("audit", "/api/audit?" + params.toString(), { force: opts.force });
     if (requestSeq !== _auditRequestSeq) return;
     _auditCache = payload;
     _auditOffset = payload.offset || 0;
     renderAudit();
   } catch (e) {
+    if (isAbortError(e)) return;
     if (requestSeq !== _auditRequestSeq) return;
     fetchError("audit", e);
     _auditCache = { entries: [], total: 0, limit: auditPageSize(), offset: 0 };
@@ -1870,7 +2031,12 @@ function updateAuditPager() {
 function scheduleAuditLoad() {
   _auditRequestSeq++;
   clearTimeout(_auditFilterTimer);
-  _auditFilterTimer = setTimeout(() => loadAudit({ reset: true }), 250);
+  const q = ($("#audit-filter")?.value || "").trim();
+  if (!q) {
+    loadAudit({ reset: true });
+    return;
+  }
+  _auditFilterTimer = setTimeout(() => loadAudit({ reset: true }), SEARCH_DEBOUNCE_MS);
 }
 
 function changeAuditPage(direction) {
@@ -1886,7 +2052,7 @@ function changeAuditPage(direction) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("#audit-refresh")?.addEventListener("click", () => loadAudit());
+  $("#audit-refresh")?.addEventListener("click", () => loadAudit({ force: true }));
   $("#audit-filter")?.addEventListener("input", scheduleAuditLoad);
   $("#audit-limit")?.addEventListener("change", () => loadAudit({ reset: true }));
   $("#audit-first")?.addEventListener("click", () => changeAuditPage("first"));
@@ -1896,11 +2062,11 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ---- Setup / diagnostics ----
-async function loadSetup() {
+async function loadSetup(opts = {}) {
   try {
     const [setup, matrix] = await Promise.all([
-      J("/api/setup-status"),
-      J("/api/channel-test-matrix"),
+      queryGet("setup-status", "/api/setup-status", { force: opts.force, cancelPrevious: false }),
+      queryGet("setup-matrix", "/api/channel-test-matrix", { force: opts.force, cancelPrevious: false }),
     ]);
     renderSetupChecklist(setup);
     renderChannelMatrix(matrix);
@@ -1967,7 +2133,7 @@ function renderChannelMatrix(payload) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  $("#setup-refresh")?.addEventListener("click", loadSetup);
+  $("#setup-refresh")?.addEventListener("click", () => loadSetup({ force: true }));
 });
 
 // ---- Policy simulator ----
@@ -2016,7 +2182,7 @@ let rcData = {};
 let rcRuntimeSettings = {};
 async function loadRC() {
   try {
-    const j = await J("/api/render-config");
+    const j = await queryGet("render-config", "/api/render-config");
     $("#gbase").textContent = j.grafana_base;
     rcData = j.component_dashboards;
     rcRuntimeSettings = j.settings || {};
@@ -2298,7 +2464,7 @@ let ntfyTopicsData = { topics: [], known_severities: [], note: "", writeable: fa
 
 async function loadNtfyTopics() {
   try {
-    const j = await J("/api/ntfy-topics");
+    const j = await queryGet("ntfy-topics", "/api/ntfy-topics");
     ntfyTopicsData = j;
     renderNtfyTopicsEditor();
     const sev = (j.known_severities || []).filter(s => s !== "resolved");
@@ -2392,7 +2558,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
 // ---- Routing (channel config) ----
 async function loadRouting() {
   try {
-    const c = await J("/api/channel-config");
+    const c = await queryGet("channel-config", "/api/channel-config");
     $("#r-ntfy-url").value = c.ntfy.url || "";
     // ntfy topics are managed by the rich-view editor below (loadNtfyTopics).
     // The "Save routing" button only persists ntfy URL + telegram + smtp.
@@ -2460,7 +2626,7 @@ $("#btn-routing-save").addEventListener("click", async () => {
 async function loadIngestAuth() {
   const tb = $("#t-ingest-auth tbody"); if (!tb) return;
   try {
-    const data = await J("/api/ingest-auth");
+    const data = await queryGet("ingest-auth", "/api/ingest-auth");
     const srcs = data.sources || {};
     tb.innerHTML = "";
     for (const src of Object.keys(srcs).sort()) {
@@ -2538,7 +2704,7 @@ let casData = { tiers: [], default_enabled_for_webhook: false };
 
 async function loadCascade() {
   try {
-    casData = await J("/api/cascade-config");
+    casData = await queryGet("cascade-config", "/api/cascade-config");
     renderCascadeTable();
     $("#cas-default").checked = !!casData.default_enabled_for_webhook;
   } catch (e) { fetchError("cascade", e); }
@@ -2619,7 +2785,7 @@ let delivData = { default_policy: "cascade", policies: [], rules: [], available_
 
 async function loadDelivery() {
   try {
-    delivData = await J("/api/delivery-config");
+    delivData = await queryGet("delivery-config", "/api/delivery-config");
     renderDeliveryDefault();
     renderPoliciesTable();
     renderRulesTable();
@@ -2772,7 +2938,7 @@ const SOURCE_HELP = {
 
 async function loadDedup() {
   try {
-    const j = await J("/api/dedup-config");
+    const j = await queryGet("dedup-config", "/api/dedup-config");
     dedupData = j;
     renderDedupCards();
   } catch (e) {
@@ -3557,12 +3723,12 @@ async function loadFlow() {
   let cfgs = {}, stats = null;
   try {
     const [channel, cascade, ntfy, dedup, auth, deliveries] = await Promise.all([
-      J("/api/channel-config"),
-      J("/api/cascade-config"),
-      J("/api/ntfy-topics"),
-      J("/api/dedup-config"),
+      queryGet("flow-channel-config", "/api/channel-config", { cancelPrevious: false }),
+      queryGet("flow-cascade-config", "/api/cascade-config", { cancelPrevious: false }),
+      queryGet("flow-ntfy-topics", "/api/ntfy-topics", { cancelPrevious: false }),
+      queryGet("flow-dedup-config", "/api/dedup-config", { cancelPrevious: false }),
       J("/api/auth-config"),
-      fetchDeliveries(10000),
+      fetchDeliveries(10000, { scope: "flow-deliveries" }),
     ]);
     cfgs = { channel, cascade, ntfy, dedup, auth };
     stats = _aggregateDeliveries24h(deliveries);
@@ -3616,7 +3782,7 @@ function _pulseRecentActivityNodes(stats) {
 async function refreshFlowStats() {
   if (!$("#flow-diagram")?.querySelector("svg")) return;  // no diagram yet
   try {
-    const deliveries = await fetchDeliveries(10000);
+    const deliveries = await fetchDeliveries(10000, { scope: "flow-stats", force: true });
     const stats = _aggregateDeliveries24h(deliveries);
     _pulseRecentActivityNodes(stats);
     // Update status timestamp
@@ -3785,7 +3951,7 @@ function notifySuccess(message, opts = {}) {
 }
 
 function notifyError(key, e, opts = {}) {
-  if (isAuthRedirectError(e) || _authRedirectStarted) return;
+  if (isAbortError(e) || isAuthRedirectError(e) || _authRedirectStarted) return;
   console.warn(key + ":", e);
   const msg = errorText(e);
   if (opts.status) {
@@ -3838,7 +4004,7 @@ function notifyValidationError(key, message, statusTarget = null) {
 }
 
 function fetchError(key, e) {
-  if (isAuthRedirectError(e) || _authRedirectStarted) return;
+  if (isAbortError(e) || isAuthRedirectError(e) || _authRedirectStarted) return;
   notifyError(key, e, { dedup: true });
 }
 function fetchOk(key) { _toastErrLast.delete(key); }

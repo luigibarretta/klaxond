@@ -558,6 +558,69 @@ test("backend logs are paginated in the UI and API", async ({ page, request }) =
   await expect(page.locator("#logs-page-info")).toContainText(/Page 1 \/ [2-9]\d*/);
 });
 
+test("backend log search is debounced in the UI", async ({ page }) => {
+  await page.goto("/logs");
+  await expect(page.locator("#logs-count")).toContainText(/log line/);
+
+  const logQueries: string[] = [];
+  await page.route("**/api/logs?**", async route => {
+    logQueries.push(new URL(route.request().url()).searchParams.get("q") || "");
+    await route.continue();
+  });
+
+  await page.fill("#logs-filter", "a");
+  await page.fill("#logs-filter", "auth");
+  await page.fill("#logs-filter", "auth rejected");
+
+  await expect.poll(() => logQueries.filter(Boolean).length, { timeout: 2_000 }).toBe(1);
+  await page.waitForTimeout(450);
+  expect(logQueries.filter(Boolean)).toEqual(["auth rejected"]);
+});
+
+test("frontend query cache reuses status GETs and invalidates after mutations", async ({ page }) => {
+  await page.goto("/status");
+  await expect(page.locator("#ch-ntfy .dot")).toBeVisible();
+
+  let statusCalls = 0;
+  await page.route("**/api/status", async route => {
+    statusCalls += 1;
+    await route.continue();
+  });
+
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      KlaxondQuery: { invalidate: (match?: string) => void };
+      loadStatus: (opts?: { force?: boolean }) => Promise<void>;
+    };
+    w.KlaxondQuery.invalidate("/api/status");
+    await w.loadStatus({ force: true });
+    await w.loadStatus();
+  });
+  expect(statusCalls).toBe(1);
+
+  await page.evaluate(async () => {
+    const w = window as unknown as {
+      apiFetch: (url: string, opts?: RequestInit) => Promise<Response>;
+      loadStatus: (opts?: { force?: boolean }) => Promise<void>;
+    };
+    const res = await w.apiFetch("/api/client-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        level: "info",
+        key: "e2e-query-cache",
+        message: "mutation invalidates frontend query cache",
+        path: location.pathname,
+        stack: "",
+        userAgent: navigator.userAgent,
+      }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    await w.loadStatus();
+  });
+  expect(statusCalls).toBe(2);
+});
+
 test("recent deliveries are paginated", async ({ page, request }) => {
   const real = await request.post("/webhook/warning", {
     headers: { Authorization: "bearer e2e-secret" },
