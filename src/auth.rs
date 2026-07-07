@@ -1079,7 +1079,7 @@ pub fn totp_disable(state: &AppState) -> Response<Body> {
 
 async fn oidc_login_redirect(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
     let cfg = state.cfg().auth.oidc;
-    let issuer = cfg.issuer.trim_end_matches('/').to_string();
+    let issuer = exact_oidc_issuer(&cfg.issuer);
     if issuer.is_empty() || cfg.client_id.is_empty() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1593,7 +1593,7 @@ fn auth_required(location: &str) -> Response<Body> {
 
 fn oidc_client_config(cfg: &crate::config::OidcConfig, redirect_uri: &str) -> OidcClientConfig {
     OidcClientConfig::new(
-        cfg.issuer.trim_end_matches('/').to_string(),
+        exact_oidc_issuer(&cfg.issuer),
         cfg.client_id.clone(),
         Some(cfg.client_secret.clone()),
         redirect_uri.to_string(),
@@ -1604,6 +1604,10 @@ fn oidc_client_config(cfg: &crate::config::OidcConfig, redirect_uri: &str) -> Oi
             .collect(),
     )
     .with_userinfo(true)
+}
+
+fn exact_oidc_issuer(value: &str) -> String {
+    value.trim().to_string()
 }
 
 #[cfg(test)]
@@ -1667,6 +1671,25 @@ mod tests {
         assert_eq!(sanitize_return_to("/api/auth"), "/");
         assert_eq!(sanitize_return_to("/api/auth/callback"), "/");
         assert_eq!(sanitize_return_to(""), "/");
+    }
+
+    #[test]
+    fn oidc_client_config_preserves_exact_issuer_trailing_slash() {
+        let cfg = crate::config::OidcConfig {
+            provider: "authentik".to_string(),
+            issuer: " https://authentik.example/application/o/klaxond/ ".to_string(),
+            client_id: "client".to_string(),
+            client_secret: "secret".to_string(),
+            scopes: "openid email profile".to_string(),
+            required_group: String::new(),
+            redirect_path: "/api/auth/callback".to_string(),
+        };
+
+        let shared = oidc_client_config(&cfg, "https://klaxond.example/api/auth/callback");
+        assert_eq!(
+            shared.issuer_url,
+            "https://authentik.example/application/o/klaxond/"
+        );
     }
 
     #[test]
