@@ -76,22 +76,60 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      # Release automatica (2026-06-12): sui TAG vX.Y.Z la CI lancia il deploy
-      # via Semaphore (template 101 = deploy-klaxond.yml di infra-ansible)
-      # passando il tag come extra-vars -> sovrascrive klaxond_image_tag in
-      # ENTRAMBI i play + compose (immagine templata). Niente piu' bump
-      # manuale per deployare; i default nel playbook restano per i run manuali.
-      - name: Auto-deploy release via Semaphore (tag only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          curl -fsS -X POST \
-            -H "Authorization: Bearer ${{ secrets.SEMAPHORE_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            -d "{\"template_id\": 101, \"environment\": \"{\\\"klaxond_image_tag\\\": \\\"${VERSION}\\\"}\"}" \
-            http://192.168.50.150:4000/api/project/1/tasks
-
       - name: Image summary
         run: |
           echo "Built tags:"
           echo "${{ steps.meta.outputs.tags }}"
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: docker
+    timeout-minutes: 60
+    env:
+      SEMAPHORE_TEMPLATE_ID: "101"
+      SEMAPHORE_TIMEOUT_SECONDS: "3000"
+    steps:
+      - name: Trigger and wait for Semaphore deploy
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME#v}"
+          else
+            tag="main"
+          fi
+          export SEMAPHORE_ENVIRONMENT="{\"klaxond_image_tag\":\"${tag}\"}"
+          payload="$(mktemp)"
+          task="$(mktemp)"
+          python3 - <<'PY' > "$payload"
+          import json, os
+          env = os.environ["SEMAPHORE_ENVIRONMENT"]
+          json.loads(env)
+          print(json.dumps({
+              "template_id": int(os.environ["SEMAPHORE_TEMPLATE_ID"]),
+              "environment": env,
+          }))
+          PY
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.SEMAPHORE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d @"$payload" \
+            http://192.168.50.150:4000/api/project/1/tasks > "$task"
+          task_id="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"])' "$task")"
+          deadline=$(( $(date +%s) + ${SEMAPHORE_TIMEOUT_SECONDS} ))
+          while :; do
+            curl -fsS \
+              -H "Authorization: Bearer ${{ secrets.SEMAPHORE_TOKEN }}" \
+              "http://192.168.50.150:4000/api/project/1/tasks/${task_id}" > "$task"
+            status="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("status",""))' "$task")"
+            echo "Semaphore task ${task_id}: ${status}"
+            case "$status" in
+              success) exit 0 ;;
+              error|failed|stopped) cat "$task"; exit 1 ;;
+            esac
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "Timed out waiting for Semaphore task ${task_id}"
+              exit 1
+            fi
+            sleep 10
+          done
