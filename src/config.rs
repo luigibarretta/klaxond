@@ -1313,6 +1313,9 @@ fn load_auth(paths: &Paths, seed: Option<&toml::Value>) -> Result<AuthConfig> {
         }
         save_auth(paths, &out)?;
     }
+    if normalize_auth_config(&mut out) {
+        save_auth(paths, &out)?;
+    }
     Ok(out)
 }
 
@@ -1332,6 +1335,20 @@ fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {
     base.api_keys = raw.api_keys;
     base.passkeys = raw.passkeys;
     base
+}
+
+fn normalize_auth_config(auth: &mut AuthConfig) -> bool {
+    let mut changed = false;
+    let issuer = auth.oidc.issuer.trim().to_string();
+    if issuer != auth.oidc.issuer {
+        auth.oidc.issuer = issuer;
+        changed = true;
+    }
+    if auth.oidc.redirect_path == "/auth/callback" {
+        auth.oidc.redirect_path = "/api/auth/callback".to_string();
+        changed = true;
+    }
+    changed
 }
 
 fn merge_auth_toml(mut base: AuthConfig, seed: &toml::Value) -> AuthConfig {
@@ -1948,6 +1965,37 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn auth_sidecar_migrates_legacy_oidc_redirect_without_trimming_issuer_slash() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        clear_runtime_env();
+        let tmp = TempDir::new().unwrap();
+        let paths = temp_paths(&tmp);
+        save_auth(
+            &paths,
+            &AuthConfig {
+                oidc: OidcConfig {
+                    issuer: " https://authentik.example/application/o/klaxond/ ".to_string(),
+                    redirect_path: "/auth/callback".to_string(),
+                    ..AuthConfig::default().oidc
+                },
+                ..AuthConfig::default()
+            },
+        )
+        .unwrap();
+
+        let auth = load_auth(&paths, None).unwrap();
+        assert_eq!(
+            auth.oidc.issuer,
+            "https://authentik.example/application/o/klaxond/"
+        );
+        assert_eq!(auth.oidc.redirect_path, "/api/auth/callback");
+
+        let persisted: AuthConfig =
+            serde_json::from_slice(&std::fs::read(&paths.auth_config).unwrap()).unwrap();
+        assert_eq!(persisted.oidc.redirect_path, "/api/auth/callback");
     }
 
     #[test]
