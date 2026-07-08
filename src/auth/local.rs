@@ -1,0 +1,362 @@
+use super::session::sanitize_return_to;
+use super::{
+    AuthOutcome, User, auth_rate_key, auth_rate_limited, body_is_json, clear_auth_failures,
+    issue_session, json_response, login_payload, record_auth_failure, redirect,
+    sudo_window_seconds, verify_password,
+};
+use crate::config::AuthConfig;
+use crate::state::AppState;
+use crate::totp;
+use crate::util::now_epoch_i64;
+use auth_modules::errors;
+use axum::body::{Body, Bytes};
+use axum::http::header::{AUTHORIZATION, SET_COOKIE, WWW_AUTHENTICATE};
+use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
+use axum::response::IntoResponse;
+use ipnet::IpNet;
+use serde_json::json;
+use std::net::{IpAddr, SocketAddr};
+
+pub(super) fn authenticate_basic(
+    state: &AppState,
+    cfg: &AuthConfig,
+    headers: &HeaderMap,
+) -> AuthOutcome {
+    if let Some(auth) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
+        && let Some(raw) = auth.strip_prefix("Basic ")
+        && let Ok(decoded) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw)
+        && let Ok(s) = String::from_utf8(decoded)
+        && let Some((user, pwd)) = s.split_once(':')
+        && cfg.basic.username == user
+        && !cfg.basic.password_hash.is_empty()
+        && verify_password(pwd, &cfg.basic.password_hash)
+        && (!cfg.basic.totp_enabled
+            || headers
+                .get("X-Klaxond-TOTP")
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|code| {
+                    totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64())
+                }))
+    {
+        let mut u = User {
+            sub: user.to_string(),
+            email: String::new(),
+            name: String::new(),
+            groups: vec![],
+            mode: "basic".into(),
+            exp: 0,
+            csrf: String::new(),
+            sudo_until: now_epoch_i64() + sudo_window_seconds(),
+            via_authorization: false,
+        };
+        let cookie = issue_session(state, cfg, &mut u);
+        return AuthOutcome::Authorized(u, Some(cookie));
+    }
+    let mut resp = Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Body::empty())
+        .unwrap();
+    resp.headers_mut().insert(
+        WWW_AUTHENTICATE,
+        HeaderValue::from_str(&format!("Basic realm=\"{}\"", cfg.basic.realm)).unwrap(),
+    );
+    AuthOutcome::Rejected(resp)
+}
+
+pub(super) async fn authenticate_ldap_basic(
+    state: &AppState,
+    cfg: &AuthConfig,
+    headers: &HeaderMap,
+) -> AuthOutcome {
+    let Some((username, password)) = basic_credentials(headers) else {
+        return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
+    };
+    let rate_key = auth_rate_key("ldap", &username);
+    if auth_rate_limited(state, &rate_key) {
+        record_auth_failure(state, &rate_key, "auth.ldap", errors::RATE_LIMITED);
+        return AuthOutcome::Rejected(
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many authentication failures",
+            )
+                .into_response(),
+        );
+    }
+    let identity = match authenticate_ldap_credentials(cfg, &username, &password).await {
+        Ok(identity) => identity,
+        Err(err) => {
+            tracing::warn!(?err, "LDAP Basic authentication failed");
+            record_auth_failure(state, &rate_key, "auth.ldap", "ldap authentication failed");
+            return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
+        }
+    };
+    clear_auth_failures(state, &rate_key);
+    let mut user = ldap_user(identity);
+    user.sudo_until = now_epoch_i64() + sudo_window_seconds();
+    let cookie = issue_session(state, cfg, &mut user);
+    AuthOutcome::Authorized(user, Some(cookie))
+}
+
+fn basic_credentials(headers: &HeaderMap) -> Option<(String, String)> {
+    let auth = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())?;
+    let raw = auth.strip_prefix("Basic ")?;
+    let decoded = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, raw).ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (user, password) = decoded.split_once(':')?;
+    Some((user.to_string(), password.to_string()))
+}
+
+fn basic_challenge(realm: &str) -> Response<Body> {
+    let mut resp = Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .body(Body::empty())
+        .unwrap();
+    resp.headers_mut().insert(
+        WWW_AUTHENTICATE,
+        HeaderValue::from_str(&format!("Basic realm=\"{realm}\"")).unwrap(),
+    );
+    resp
+}
+
+pub(super) fn authenticate_trusted_proxy(
+    cfg: &AuthConfig,
+    headers: &HeaderMap,
+    peer: Option<SocketAddr>,
+) -> AuthOutcome {
+    let peer_ip = peer.map(|p| p.ip()).unwrap_or(IpAddr::from([0, 0, 0, 0]));
+    if !cidr_match(peer_ip, &cfg.trusted_proxy.trusted_cidrs) {
+        return AuthOutcome::Rejected(
+            (StatusCode::FORBIDDEN, "untrusted peer (trusted-proxy mode)").into_response(),
+        );
+    }
+    let uh = &cfg.trusted_proxy.user_header;
+    let Some(user_val) = header_by_name(headers, uh) else {
+        return AuthOutcome::Rejected(
+            (StatusCode::UNAUTHORIZED, format!("missing {uh} header")).into_response(),
+        );
+    };
+    AuthOutcome::Authorized(
+        User {
+            sub: user_val,
+            email: header_by_name(headers, &cfg.trusted_proxy.email_header).unwrap_or_default(),
+            groups: header_by_name(headers, &cfg.trusted_proxy.groups_header)
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.to_string())
+                .collect(),
+            name: String::new(),
+            mode: "trusted-proxy".into(),
+            exp: 0,
+            csrf: String::new(),
+            sudo_until: 0,
+            via_authorization: false,
+        },
+        None,
+    )
+}
+
+pub fn ldap_login_enabled(cfg: &AuthConfig) -> bool {
+    cfg.mode == "ldap" && cfg.ldap.to_auth_modules_config().is_some()
+}
+
+pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
+    let cfg = state.cfg().auth;
+    if !matches!(cfg.mode.as_str(), "basic" | "ldap") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "local login is available only in basic or ldap mode",
+        )
+            .into_response();
+    }
+    let payload = login_payload(&body);
+    let username = payload
+        .get("username")
+        .map(String::as_str)
+        .unwrap_or("")
+        .trim();
+    let password = payload.get("password").map(String::as_str).unwrap_or("");
+    let code = payload.get("totp").map(String::as_str).unwrap_or("");
+    let rate_key = auth_rate_key("login", username);
+    if auth_rate_limited(state, &rate_key) {
+        record_auth_failure(state, &rate_key, "auth.login", errors::RATE_LIMITED);
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many authentication failures",
+        )
+            .into_response();
+    }
+    let return_to = sanitize_return_to(
+        payload
+            .get("return_to")
+            .map(String::as_str)
+            .unwrap_or("/status"),
+    );
+    let mut user = if cfg.mode == "ldap" {
+        match authenticate_ldap_credentials(&cfg, username, password).await {
+            Ok(identity) => ldap_user(identity),
+            Err(err) => {
+                tracing::warn!(?err, "LDAP login failed");
+                record_auth_failure(state, &rate_key, "auth.ldap", "ldap authentication failed");
+                return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
+            }
+        }
+    } else {
+        if username != cfg.basic.username
+            || cfg.basic.password_hash.is_empty()
+            || !verify_password(password, &cfg.basic.password_hash)
+        {
+            record_auth_failure(
+                state,
+                &rate_key,
+                "auth.login",
+                "invalid username or password",
+            );
+            return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
+        }
+        if cfg.basic.totp_enabled
+            && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64())
+        {
+            record_auth_failure(state, &rate_key, "auth.login", "invalid TOTP code");
+            return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
+        }
+        User {
+            sub: username.to_string(),
+            email: String::new(),
+            name: String::new(),
+            groups: vec![],
+            mode: "basic".into(),
+            exp: 0,
+            csrf: String::new(),
+            sudo_until: 0,
+            via_authorization: false,
+        }
+    };
+    clear_auth_failures(state, &rate_key);
+    let cookie = issue_session(state, &cfg, &mut user);
+    let mut resp = if payload
+        .get("fetch")
+        .map(|v| v == "1")
+        .unwrap_or_else(|| body_is_json(&body))
+    {
+        json_response(json!({"ok": true, "return_to": return_to, "csrf": user.csrf}))
+    } else {
+        redirect(&return_to)
+    };
+    resp.headers_mut()
+        .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    resp
+}
+
+pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body> {
+    let Some(user) = user else {
+        return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
+    };
+    if !matches!(user.mode.as_str(), "basic" | "ldap" | "magic_link") {
+        return (
+            StatusCode::BAD_REQUEST,
+            "sudo reauth is available only for local or LDAP login",
+        )
+            .into_response();
+    }
+    let cfg = state.cfg().auth;
+    let payload = login_payload(&body);
+    let password = payload.get("password").map(String::as_str).unwrap_or("");
+    let code = payload.get("totp").map(String::as_str).unwrap_or("");
+    let rate_key = auth_rate_key("sudo", &user.sub);
+    if auth_rate_limited(state, &rate_key) {
+        record_auth_failure(state, &rate_key, "auth.sudo", errors::RATE_LIMITED);
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many authentication failures",
+        )
+            .into_response();
+    }
+    if user.mode == "ldap" {
+        let cfg_for_ldap = cfg.clone();
+        let username = user.sub.clone();
+        let password = password.to_string();
+        let result = tokio::task::block_in_place(|| {
+            cfg_for_ldap
+                .ldap
+                .to_auth_modules_config()
+                .ok_or_else(|| "LDAP is not configured".to_string())?
+                .authenticate(&username, &password)
+                .map_err(|err| err.to_string())
+        });
+        if let Err(err) = result {
+            tracing::warn!(?err, "LDAP sudo reauth failed");
+            record_auth_failure(state, &rate_key, "auth.sudo", "ldap reauth failed");
+            return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
+        }
+    } else {
+        if cfg.basic.password_hash.is_empty()
+            || !verify_password(password, &cfg.basic.password_hash)
+        {
+            record_auth_failure(state, &rate_key, "auth.sudo", "invalid password");
+            return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
+        }
+        if cfg.basic.totp_enabled
+            && !totp::verify_code(&cfg.basic.totp_secret, code, now_epoch_i64())
+        {
+            record_auth_failure(state, &rate_key, "auth.sudo", "invalid TOTP code");
+            return (StatusCode::UNAUTHORIZED, "TOTP code required or invalid").into_response();
+        }
+    }
+    clear_auth_failures(state, &rate_key);
+    let mut refreshed = user.clone();
+    refreshed.sudo_until = now_epoch_i64() + sudo_window_seconds();
+    let cookie = issue_session(state, &cfg, &mut refreshed);
+    let mut resp = json_response(
+        json!({"ok": true, "sudo_until": refreshed.sudo_until, "csrf": refreshed.csrf}),
+    );
+    resp.headers_mut()
+        .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    resp
+}
+
+async fn authenticate_ldap_credentials(
+    cfg: &AuthConfig,
+    username: &str,
+    password: &str,
+) -> Result<auth_modules::ldap::LdapIdentity, String> {
+    let ldap = cfg
+        .ldap
+        .to_auth_modules_config()
+        .ok_or_else(|| "LDAP is not configured".to_string())?;
+    let username = username.to_string();
+    let password = password.to_string();
+    tokio::task::spawn_blocking(move || {
+        ldap.authenticate(&username, &password)
+            .map_err(|err| err.to_string())
+    })
+    .await
+    .map_err(|err| format!("LDAP worker failed: {err}"))?
+}
+
+fn ldap_user(identity: auth_modules::ldap::LdapIdentity) -> User {
+    User {
+        sub: identity.username,
+        email: identity.email.unwrap_or_default(),
+        name: identity.name,
+        groups: identity.groups,
+        mode: "ldap".into(),
+        exp: 0,
+        csrf: String::new(),
+        sudo_until: 0,
+        via_authorization: false,
+    }
+}
+
+fn cidr_match(ip: IpAddr, cidrs: &[String]) -> bool {
+    cidrs
+        .iter()
+        .filter_map(|c| c.parse::<IpNet>().ok())
+        .any(|net| net.contains(&ip))
+}
+
+fn header_by_name(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(ToOwned::to_owned)
+}

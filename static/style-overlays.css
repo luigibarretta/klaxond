@@ -1,0 +1,310 @@
+/* ntfy push mock */
+.ntfy-mock {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 12px;
+  font-family: -apple-system, system-ui, sans-serif;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  max-width: 380px;
+}
+.ntfy-mock-app {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ntfy-mock-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+.ntfy-mock-body {
+  font-size: 13px;
+  color: #cbd5e1;
+  white-space: pre-wrap;
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+.ntfy-mock-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  margin-bottom: 10px;
+}
+.ntfy-mock-tags { color: var(--muted); }
+.ntfy-mock-tags .chip {
+  background: var(--panel-light);
+  padding: 1px 8px;
+  border-radius: 999px;
+  margin-right: 4px;
+  display: inline-block;
+}
+.ntfy-mock-prio { font-weight: 600; padding: 1px 8px; border-radius: 3px; }
+.ntfy-mock-prio.default  { background: #475569; color: #e2e8f0; }
+.ntfy-mock-prio.high     { background: #eab308; color: #1a212b; }
+.ntfy-mock-prio.urgent   { background: var(--red); color: #fff; }
+.ntfy-mock-prio.low      { background: #334155; color: var(--muted); }
+.ntfy-mock-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-top: 1px solid #334155;
+  padding-top: 10px;
+}
+.ntfy-mock-actions a {
+  background: var(--accent);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  text-decoration: none;
+  font-weight: 500;
+}
+.ntfy-mock-actions a:hover { background: #2563eb; text-decoration: none; }
+
+
+/* Generic utility — used by Auth tab radio warnings, Auth subcards, etc. */
+.hidden { display: none !important; }
+
+/* Toast notifications (top-right stack) */
+#toast-container {
+  position: fixed;
+  top: 16px; right: 16px;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.toast {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--gray);
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  pointer-events: auto;
+  animation: toast-slide-in 0.15s ease-out;
+}
+@keyframes toast-slide-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.toast-error { border-left-color: var(--red); }
+.toast-warn  { border-left-color: var(--yellow); }
+.toast-info  { border-left-color: var(--accent); }
+.toast-success { border-left-color: var(--green); }
+.toast-msg { flex: 1 1 auto; font-size: 13px; color: var(--text); word-break: break-word; }
+.toast-close {
+  background: transparent; border: none; color: var(--muted);
+  font-size: 14px; cursor: pointer; padding: 0 4px; line-height: 1;
+}
+.toast-close:hover { color: var(--text); background: transparent; }
+.version-trigger {
+  cursor: pointer;
+  user-select: none;
+}
+.version-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+.version-easter-egg {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 8900;
+  width: min(360px, calc(100vw - 36px));
+}
+.version-egg-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px 16px;
+  background:
+    linear-gradient(135deg, rgba(59, 130, 246, 0.14), rgba(34, 197, 94, 0.08)),
+    var(--panel);
+  box-shadow: 0 14px 38px var(--shadow);
+}
+.version-egg-kicker {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.version-egg-card strong {
+  display: block;
+  padding-right: 28px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.version-egg-card pre {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.version-egg-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+}
+
+.logs-toolbar {
+  display: flex;
+  gap: 0.8em;
+  align-items: end;
+  flex-wrap: wrap;
+  margin-bottom: 0.8em;
+}
+.logs-toolbar label { margin: 0; }
+.logs-toolbar input[type="search"] { min-width: 260px; }
+.inline-check { display: inline-flex; align-items: center; gap: 0.35em; }
+.logs-pager,
+.table-pager {
+  display: flex;
+  gap: 0.45em;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  margin: -0.2em 0 0.8em;
+}
+.table-pager {
+  margin: 0.6em 0 0.8em;
+}
+.table-pager[hidden] {
+  display: none;
+}
+.logs-pager button,
+.table-pager button {
+  min-width: 34px;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.logs-pager button:disabled,
+.table-pager button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+#logs-page-info,
+.table-pager [data-pager-info] {
+  min-width: 110px;
+  text-align: center;
+}
+.table-pager-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0;
+}
+.table-pager-size select {
+  width: auto;
+  min-width: 72px;
+}
+.table-pager [data-pager-range] {
+  min-width: 110px;
+}
+@media (max-width: 640px) {
+  .logs-pager,
+  .table-pager {
+    justify-content: flex-start;
+  }
+  #logs-page-info,
+  .table-pager [data-pager-info],
+  .table-pager [data-pager-range] {
+    min-width: auto;
+  }
+}
+.logs-table td { vertical-align: top; }
+.logs-table .log-time { white-space: nowrap; color: var(--muted); font-size: 12px; }
+.logs-table .log-target { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--muted); }
+.logs-table .log-message { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.log-level {
+  display: inline-block;
+  min-width: 48px;
+  text-align: center;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+}
+.log-level.error { color: var(--red); }
+.log-level.warn { color: var(--yellow); }
+.log-level.info { color: var(--accent); }
+.log-level.debug, .log-level.trace { color: var(--muted); }
+
+/* Keyboard shortcut help overlay (toggled by '?') */
+#shortcut-help {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+#shortcut-help .shortcut-help-inner {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 28px;
+  min-width: 320px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+/* ============================================================================
+ * Flow tab — animated arrows + pulse on recent activity (Mermaid v11)
+ * ============================================================================
+ * Mermaid v11 puts edges under <g class="edges"> with each edge as
+ * <g class="edge ..."><path class="flowchart-link ..."/></g>. Older
+ * versions used .edgePath which no longer exists. We target both for
+ * safety, plus the marker-end attribute (always present on arrows). */
+#flow-diagram.animate svg .edges path,
+#flow-diagram.animate svg .edge path,
+#flow-diagram.animate svg path.flowchart-link,
+#flow-diagram.animate svg path[marker-end] {
+  stroke-dasharray: 8 4;
+  animation: flow-dash 1.5s linear infinite;
+}
+/* Cascade-fallback edges are emitted by Mermaid with -.- syntax → end up
+ * with class containing 'dotted' or attribute stroke-dasharray pre-set.
+ * Distinguish them with a slower, reversed animation. */
+#flow-diagram.animate svg .edges .edge.edge-pattern-dashed path,
+#flow-diagram.animate svg .edges .edge.edge-pattern-dotted path,
+#flow-diagram.animate svg path.flowchart-link[stroke-dasharray] {
+  stroke-dasharray: 5 5;
+  animation: flow-dash 3s linear infinite reverse;
+}
+@keyframes flow-dash {
+  to { stroke-dashoffset: -24; }
+}
+/* Pulse node when recently active. v11 nodes are <g class="node ..."> with
+ * inner <rect> (regular) or <polygon> (rhombus/diamond shapes). */
+#flow-diagram .node.recent-activity rect,
+#flow-diagram .node.recent-activity polygon,
+#flow-diagram .node.recent-activity ellipse,
+#flow-diagram .node.recent-activity circle {
+  animation: flow-pulse 1.5s ease-in-out infinite;
+}
+@keyframes flow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 8px #48bb78); }
+}
+/* Cursor pointer on clickable nodes (mermaid sets cursor:pointer in click; reinforce) */
+#flow-diagram .node[data-clickable] { cursor: pointer; }

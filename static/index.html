@@ -1,12 +1,4 @@
-<!doctype html>
-<html lang="en" data-lang="en" data-theme-mode="system">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="dark light">
-<title>klaxond — notification daemon</title>
-<link rel="icon" type="image/svg+xml" href="/ui/favicon.svg">
-<link rel="stylesheet" href="/ui/style.css">
+<!doctype html> <html lang="en" data-lang="en" data-theme-mode="system"> <head> <meta charset="utf-8"> <meta name="viewport" content="width=device-width,initial-scale=1"> <meta name="color-scheme" content="dark light"> <title>klaxond — notification daemon</title> <link rel="icon" type="image/svg+xml" href="/ui/favicon.svg"> <link rel="stylesheet" href="/ui/style.css">
 <script>
   // Inline preferences bootstrap — runs before deferred scripts to avoid a
   // flash of the wrong theme and expose the preferred language early.
@@ -28,1062 +20,184 @@
     } catch (e) {}
   })();
 </script>
-</head>
-<body>
-<div class="app-shell">
-  <aside class="sidebar" id="sidebar">
-    <div class="sidebar-head">
-      <div class="brand-lockup">
-        <h1>
-          <img class="brand-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
-          <span class="brand-name">klaxond</span>
-        </h1>
-        <small id="footer-tag" data-i18n="app.tagline">klaxond — cascade • inhibition • render</small>
-      </div>
-      <button id="sidebar-toggle" class="icon-btn" data-i18n-title="nav.toggle_sidebar" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button>
-    </div>
-
-    <nav class="tabs" aria-label="Main navigation">
-      <div class="tab-group" data-group="operations">
-        <span class="tab-group-label" data-i18n="nav.operations">Operations</span>
-        <button class="tab active" data-tab="status" data-i18n-title="tab.status" title="Status" aria-label="Status"><span class="tab-icon" aria-hidden="true">●</span><span class="tab-label" data-i18n="tab.status">Status</span></button>
-        <button class="tab" data-tab="flow" data-i18n-title="tab.flow" title="Flow" aria-label="Flow"><span class="tab-icon" aria-hidden="true">↔</span><span class="tab-label" data-i18n="tab.flow">Flow</span></button>
-        <button class="tab" data-tab="inhibitions" data-i18n-title="tab.inhibitions" title="Inhibitions" aria-label="Inhibitions"><span class="tab-icon" aria-hidden="true">⊘</span><span class="tab-label" data-i18n="tab.inhibitions">Inhibitions</span></button>
-        <button class="tab" data-tab="deliveries" data-i18n-title="tab.deliveries" title="Recent deliveries" aria-label="Recent deliveries"><span class="tab-icon" aria-hidden="true">⇢</span><span class="tab-label" data-i18n="tab.deliveries">Recent deliveries</span></button>
-        <button class="tab" data-tab="logs" data-i18n-title="tab.logs" title="Logs" aria-label="Logs"><span class="tab-icon" aria-hidden="true">≡</span><span class="tab-label" data-i18n="tab.logs">Logs</span></button>
-        <button class="tab" data-tab="audit" data-i18n-title="tab.audit" title="Audit" aria-label="Audit"><span class="tab-icon" aria-hidden="true">◇</span><span class="tab-label" data-i18n="tab.audit">Audit</span></button>
-        <button class="tab" data-tab="setup" data-i18n-title="tab.setup" title="Setup" aria-label="Setup"><span class="tab-icon" aria-hidden="true">◎</span><span class="tab-label" data-i18n="tab.setup">Setup</span></button>
-      </div>
-      <div class="tab-group" data-group="settings">
-        <span class="tab-group-label" data-i18n="nav.settings">Settings</span>
-        <button class="tab" data-tab="render" data-i18n-title="tab.render" title="Render config" aria-label="Render config"><span class="tab-icon" aria-hidden="true">▣</span><span class="tab-label" data-i18n="tab.render">Render config</span></button>
-        <button class="tab" data-tab="routing" data-i18n-title="tab.routing" title="Routing" aria-label="Routing"><span class="tab-icon" aria-hidden="true">⎇</span><span class="tab-label" data-i18n="tab.routing">Routing</span></button>
-        <button class="tab" data-tab="cascade" data-i18n-title="tab.cascade" title="Cascade" aria-label="Cascade"><span class="tab-icon" aria-hidden="true">⇣</span><span class="tab-label" data-i18n="tab.cascade">Cascade</span></button>
-        <button class="tab" data-tab="delivery" data-i18n-title="tab.delivery" title="Delivery rules" aria-label="Delivery rules"><span class="tab-icon" aria-hidden="true">▤</span><span class="tab-label" data-i18n="tab.delivery">Delivery rules</span></button>
-        <button class="tab" data-tab="grouping" data-i18n-title="tab.grouping" title="Grouping" aria-label="Grouping"><span class="tab-icon" aria-hidden="true">∑</span><span class="tab-label" data-i18n="tab.grouping">Grouping</span></button>
-        <button class="tab" data-tab="auth" data-i18n-title="tab.auth" title="Authentication" aria-label="Authentication"><span class="tab-icon" aria-hidden="true">⌑</span><span class="tab-label" data-i18n="tab.auth">Authentication</span></button>
-      </div>
-      <div class="tab-group" data-group="tools">
-        <span class="tab-group-label" data-i18n="nav.tools">Tools</span>
-        <button class="tab" data-tab="preview" data-i18n-title="tab.preview" title="Render preview" aria-label="Render preview"><span class="tab-icon" aria-hidden="true">◉</span><span class="tab-label" data-i18n="tab.preview">Render preview</span></button>
-        <button class="tab" data-tab="simulator" data-i18n-title="tab.simulator" title="Policy simulator" aria-label="Policy simulator"><span class="tab-icon" aria-hidden="true">⌁</span><span class="tab-label" data-i18n="tab.simulator">Policy simulator</span></button>
-        <button class="tab" data-tab="test" data-i18n-title="tab.test" title="Send test" aria-label="Send test"><span class="tab-icon" aria-hidden="true">✓</span><span class="tab-label" data-i18n="tab.test">Send test</span></button>
-      </div>
-    </nav>
-
-    <div class="prefs" aria-label="Preferences">
-      <div class="pref-control">
-        <span class="pref-label" data-i18n="prefs.language">Language</span>
-        <div class="segmented-control" role="group" data-i18n-aria-label="prefs.language" aria-label="Language">
-          <button type="button" class="seg-btn" data-language-option="it" aria-pressed="false">IT</button>
-          <button type="button" class="seg-btn" data-language-option="en" aria-pressed="true">EN</button>
-        </div>
-      </div>
-      <div class="pref-control">
-        <span class="pref-label" data-i18n="prefs.theme">Theme</span>
-        <div class="segmented-control theme-segment" role="group" data-i18n-aria-label="prefs.theme" aria-label="Theme">
-          <button type="button" class="seg-btn icon-seg" data-theme-mode-option="system" data-i18n-title="theme.system" title="System" aria-label="System" aria-pressed="true"><span aria-hidden="true">◐</span></button>
-          <button type="button" class="seg-btn icon-seg" data-theme-mode-option="light" data-i18n-title="theme.light" title="Light" aria-label="Light" aria-pressed="false"><span aria-hidden="true">☼</span></button>
-          <button type="button" class="seg-btn icon-seg" data-theme-mode-option="dark" data-i18n-title="theme.dark" title="Dark" aria-label="Dark" aria-pressed="false"><span aria-hidden="true">☾</span></button>
-        </div>
-      </div>
-    </div>
-
-    <div class="sidebar-user" id="sidebar-user-card">
-      <div class="sidebar-avatar" id="sidebar-avatar">?</div>
-      <div class="sidebar-user-meta">
-        <strong id="sidebar-user-name">anonymous</strong>
-        <span id="sidebar-user-mode" class="muted">mode=none</span>
-      </div>
-      <a href="/api/auth/logout" data-auth-logout data-i18n-title="auth.logout" title="Logout" aria-label="Logout">↪</a>
-    </div>
-  </aside>
-
-  <div class="app-main">
-<main>
-<div class="public-legal-bar" id="public-legal-bar" hidden>
-  <a class="public-legal-brand" href="/legal/privacy" aria-label="klaxond">
-    <img class="public-legal-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
-    <span>klaxond</span>
-  </a>
-  <div class="public-legal-controls">
-    <span class="pref-label" data-public-language-control data-i18n="prefs.language">Language</span>
-    <div class="segmented-control public-language-segment" data-public-language-control role="group" data-i18n-aria-label="prefs.language" aria-label="Language">
-      <button type="button" class="seg-btn" data-public-language-option="it" aria-pressed="false">IT</button>
-      <button type="button" class="seg-btn" data-public-language-option="en" aria-pressed="true">EN</button>
-    </div>
-    <a class="btn public-login-link" href="/status" data-i18n="auth.back_to_app">Back to app</a>
-  </div>
-</div>
-
-<section id="tab-status" class="tabpane active">
-  <h2 data-i18n="status.channels">Channels</h2>
-  <div class="grid3">
-    <div class="card" id="ch-ntfy"><div class="ch-name">ntfy <span class="dot"></span></div><small class="ch-url"></small></div>
-    <div class="card" id="ch-telegram"><div class="ch-name">Telegram <span class="dot"></span></div><small class="ch-url"></small></div>
-    <div class="card" id="ch-smtp"><div class="ch-name">SMTP <span class="dot"></span></div><small class="ch-url"></small></div>
-  </div>
-
-  <h2><span data-i18n="status.activity">Activity</span> <small class="muted" data-i18n="status.activity_sub">(last 24h, persisted history)</small></h2>
-  <div class="grid4">
-    <div class="card stat-card">
-      <div class="stat-label" data-i18n="status.deliveries_24h">Deliveries 24h</div>
-      <div class="stat-value" id="stat-deliv-total">—</div>
-      <div class="stat-sub muted" id="stat-deliv-breakdown" data-i18n="status.by_source_empty">by source: —</div>
-    </div>
-    <div class="card stat-card">
-      <div class="stat-label" data-i18n="status.active_suppressions">Active suppressions</div>
-      <div class="stat-value" id="stat-suppr-count">—</div>
-      <div class="stat-sub muted"><a href="/inhibitions" id="stat-suppr-link" data-i18n="status.view_inhibitions">View inhibitions →</a></div>
-    </div>
-    <div class="card stat-card">
-      <div class="stat-label" data-i18n="status.dedup_pending">Dedup pending</div>
-      <div class="stat-value" id="stat-dedup-count">—</div>
-      <div class="stat-sub muted"><a href="/grouping" id="stat-dedup-link" data-i18n="status.view_grouping">View grouping →</a></div>
-    </div>
-    <div class="card stat-card">
-      <div class="stat-label" data-i18n="status.log_buffer">Log buffer</div>
-      <div class="stat-value" id="stat-log-retained">—</div>
-      <div class="stat-sub muted" id="stat-log-severity">WARN/ERROR: —</div>
-      <div class="stat-sub muted"><a href="/logs" id="stat-log-link" data-i18n="status.view_logs">View logs →</a></div>
-    </div>
-  </div>
-
-  <h2 data-i18n="status.cascade">Cascade</h2>
-  <div class="card">
-    <p data-i18n-html="status.cascade_desc">When enabled, on ntfy failure klaxond falls back to Telegram → SMTP.<br>
-       Always on for <code>/beszel/*</code>; gated for <code>/webhook/*</code> (Grafana usually has its own retries).</p>
-    <p><span data-i18n="status.default_env">Default (env):</span> <code id="cas-default">?</code> · <span data-i18n="status.runtime">Runtime:</span> <code id="cas-runtime">?</code></p>
-    <button id="btn-cascade-toggle" data-i18n="status.toggle_cascade">Toggle runtime cascade</button>
-  </div>
-
-  <h2><span data-i18n="status.config_backup">Config backup</span> <small class="muted">(<code>klaxond.toml</code> + bundle)</small></h2>
-  <div class="card">
-    <p class="muted">
-      <span data-i18n="status.config_backup_intro">Download the current config or restore from a previous TOML/full bundle. Klaxond also auto-saves a snapshot under</span>
-      <code id="cfg-backup-dir">/data/backups/</code>
-      <span data-i18n="status.config_backup_mid">before every config write (keeps newest</span>
-      <code id="cfg-backup-keep">10</code><span data-i18n="status.config_backup_end">).</span>
-    </p>
-    <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap;">
-      <a id="cfg-backup-download" class="btn primary" style="text-decoration:none" data-i18n="status.download_config">Download config</a>
-      <a id="cfg-full-export-download" class="btn" style="text-decoration:none" data-i18n="status.download_full_export" data-i18n-title="status.download_full_export_title" title="Download TOML, sidecars, and runtime-derived settings including secrets">Full export</a>
-      <label class="btn" style="margin:0; cursor:pointer">
-        <input type="file" id="cfg-restore-file" accept=".toml,.json,application/toml,application/json,text/plain" style="display:none">
-        <span data-i18n="status.restore_toml">Restore from TOML/bundle…</span>
-      </label>
-      <button id="cfg-import-apply" class="btn primary" hidden data-i18n="config.apply_import">Apply import</button>
-      <button id="cfg-import-clear" class="btn" hidden data-i18n="common.dismiss">Dismiss</button>
-      <span id="cfg-restore-status" class="muted"></span>
-    </div>
-    <div id="cfg-import-preview" class="import-preview hidden" aria-live="polite"></div>
-    <p class="muted" style="margin-top:0.8em"><small data-i18n="status.latest_backups">Latest auto-backups (newest first):</small></p>
-    <ul id="cfg-backup-list" class="muted" style="font-size:12px; padding-left:1.5em; margin:0"><li>—</li></ul>
-  </div>
-</section>
-
-<section id="tab-flow" class="tabpane">
-  <h2 data-i18n="flow.title">Flow — how klaxond routes inbound events</h2>
-  <p class="muted" data-i18n-html="flow.desc">
-    Auto-generated from your current configuration. Click any node to jump to
-    the relevant tab. Stats in parentheses are deliveries over the last 24h
-    from <code>/api/deliveries</code> (klaxond's persisted delivery history).
-  </p>
-  <div class="card">
-    <div class="row" style="gap:1em; flex-wrap:wrap; margin-bottom:0.5em">
-      <button id="flow-refresh" data-i18n="common.refresh">Refresh</button>
-      <label data-i18n-title="flow.animate_title" title="Animated dashes flowing along arrows + pulse on recently active nodes"><input type="checkbox" id="flow-animate" checked> <span data-i18n="flow.animate">Animate</span></label>
-      <label data-i18n-title="flow.autorefresh_title" title="Auto-refresh stats every 30s (no full re-render)"><input type="checkbox" id="flow-autorefresh" checked> <span data-i18n="flow.autorefresh">Auto-refresh stats</span></label>
-      <label><input type="checkbox" id="flow-show-source"> <span data-i18n="flow.show_source">Show Mermaid source</span></label>
-      <button id="flow-download-svg" title="Download rendered diagram as SVG" data-i18n="flow.download_svg" data-i18n-title="flow.download_svg_title">Download SVG</button>
-      <span id="flow-status" class="muted" style="margin-left:auto"></span>
-    </div>
-    <div id="flow-diagram" style="min-height:300px; overflow:auto; padding:1em; background:#0d1117; border-radius:6px"></div>
-    <pre id="flow-source" class="hidden" style="margin-top:1em; padding:1em; background:#0d1117; border-radius:6px; overflow:auto; max-height:400px; font-size:12px"></pre>
-  </div>
-  <div class="card">
-    <h3 style="margin-top:0" data-i18n="flow.legend">Legend</h3>
-    <ul class="muted" style="margin:0; padding-left:1.5em; line-height:1.7">
-      <li data-i18n-html="flow.legend_blue"><b style="color:#5b8def">Blue nodes</b> = emitters (POST /webhook/, /beszel/, /healthchecks/, /wud/, /authentik/, /shelfmark/, /prowlarr/)</li>
-      <li data-i18n-html="flow.legend_purple"><b style="color:#9b6bff">Purple nodes</b> = klaxond internal stages (inhibition, dedup buffer, render, cascade)</li>
-      <li data-i18n-html="flow.legend_green"><b style="color:#48bb78">Green nodes</b> = delivery channels (ntfy, telegram, smtp)</li>
-      <li data-i18n-html="flow.legend_arrows"><b>Solid arrows</b> = primary path · <b>Dashed arrows</b> = fallback on failure</li>
-      <li data-i18n-html="flow.legend_grey"><span style="color:#999">Greyed nodes</span> = configured but currently disabled</li>
-    </ul>
-  </div>
-</section>
-
-<section id="tab-inhibitions" class="tabpane">
-  <h2><span data-i18n="inhib.rules_title">Inhibition rules</span> <small class="muted" data-i18n-html="inhib.persisted">(persisted to <code>klaxond.toml</code>)</small></h2>
-  <p class="muted" data-i18n-html="inhib.rules_desc">
-    Source-agnostic (0.9.6+): rules apply to all 5 emitters by default. Restrict scope by selecting one or more sources under <b>Applies to</b> (empty = all). Match type is exclusive — pick one:
-    <code>match_by</code> (equality on one label vs. source anchor),
-    <code>match_label + regex</code> (regex on one label),
-    or <code>match_all</code> (suppress everything).
-    Saving replaces the in-memory rules and clears any active suppressions — they re-arm naturally on the next source alert.
-  </p>
-  <datalist id="inhib-label-suggestions">
-    <option value="host"><option value="job"><option value="alertname"><option value="instance"><option value="service"><option value="component"><option value="severity">
-  </datalist>
-  <div class="table-scroll">
-    <table id="t-inhib-rules">
-      <thead>
-        <tr>
-          <th><span data-i18n="common.source">Source</span> <small class="muted">(<code>inhibition_source</code> <span data-i18n="common.label">label</span>)</small></th>
-          <th data-i18n="inhib.match_type">Match type</th>
-          <th data-i18n="inhib.match_value">Match value</th>
-          <th data-i18n="common.applies_to">Applies to</th>
-          <th data-i18n="inhib.ttl_sec">TTL (sec)</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <div style="margin: 0.8em 0; display: flex; gap: 0.6em; align-items: center;">
-    <button id="inhib-add" class="btn" data-i18n="inhib.add_rule">+ Add rule</button>
-    <button id="inhib-save" class="btn primary" data-i18n="common.save">Save</button>
-    <span id="inhib-save-status" class="muted"></span>
-  </div>
-
-  <h2 style="margin-top: 2em;"><span data-i18n="inhib.test_title">Test a rule</span> <small class="muted" data-i18n="inhib.dry_run_note">(dry-run — no state modified)</small></h2>
-  <p class="muted" data-i18n-html="inhib.test_desc">
-    Given a source + label set, simulate which inhibition rule (if any) would match and whether the alert would be delivered. Useful when iterating on regexes / <code>match_by</code> labels against a real payload you have in hand.
-  </p>
-  <div class="card">
-    <div class="grid2">
-      <label><span data-i18n="common.source">Source</span>
-        <select id="inhib-test-source">
-          <option value="grafana">grafana</option>
-          <option value="beszel">beszel</option>
-          <option value="healthchecks">healthchecks</option>
-          <option value="wud">wud</option>
-          <option value="authentik">authentik</option>
-          <option value="shelfmark">shelfmark</option>
-          <option value="prowlarr">prowlarr</option>
-        </select>
-      </label>
-      <label><span data-i18n-html="inhib.labels_one_line">Labels (one per line, <code>label=value</code>)</span>
-        <textarea id="inhib-test-labels" rows="5" placeholder="host=svr-01&#10;job=blackbox-https-public&#10;alertname=DiskFull" style="font-family:ui-monospace,monospace;font-size:12px"></textarea>
-      </label>
-    </div>
-    <div style="display:flex; gap:0.6em; align-items:center; margin-top:0.4em">
-      <button id="inhib-test-run" class="btn primary" data-i18n="common.test">Test</button>
-      <span id="inhib-test-status" class="muted"></span>
-    </div>
-    <div id="inhib-test-result" style="margin-top:0.8em"></div>
-  </div>
-
-  <h2 style="margin-top: 2em;"><span data-i18n="inhib.active_suppressions">Active suppressions</span> <small class="muted" data-i18n="inhib.transient_state">(transient in-memory state)</small></h2>
-  <p class="muted" data-i18n-html="inhib.active_desc">Lists currently-armed suppressions and their remaining TTL. The <b>Applies to</b> column shows which sources each suppression is scoped to (<code>*</code> = all). Clears automatically at TTL expiry or when the source alert resolves; use the <code>✕</code> button to force-clear early (suppressions re-arm naturally on the next source alert).</p>
-  <table id="t-inhib">
-    <thead><tr><th data-i18n="common.source">Source</th><th data-i18n="inhib.anchor">Anchor</th><th data-i18n="common.applies_to">Applies to</th><th data-i18n="common.expires_in">Expires in</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div style="margin: 0.6em 0; display: flex; gap: 0.6em; align-items: center;">
-    <button id="inhib-clear-all" class="btn" data-i18n="inhib.clear_all">Clear all suppressions</button>
-    <span id="inhib-clear-status" class="muted"></span>
-  </div>
-
-  <h2 style="margin-top: 2em;"><span data-i18n="inhib.acks_title">Active ack-snoozes</span> <small class="muted" data-i18n="inhib.acks_sub">(from ntfy push button, 0.9.20+)</small></h2>
-  <p class="muted" data-i18n-html="inhib.acks_desc">When you tap the <b>Snooze 1h</b> button on a ntfy notification, klaxond registers a transient suppression keyed on <code>alertname</code> for 1 hour. They auto-expire; force-clear via the ✕ button below.</p>
-  <table id="t-acks">
-    <thead><tr><th>Alertname</th><th data-i18n="common.expires_in">Expires in</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-
-  <h2 style="margin-top: 2em;"><span data-i18n="sched.title">Maintenance windows</span> <small class="muted" data-i18n="sched.sub">(scheduled silences, 0.9.19+)</small></h2>
-  <p class="muted" data-i18n-html="sched.desc">
-    Cron-driven silences. When an alert arrives during a window AND its labels match the rule's <b>match</b> dict (subset-equality), the alert is suppressed with channel <code>scheduled-mute</code> and the schedule name as <code>suppressed_by</code>. Use for backup windows, planned maintenance, recurring noise sources.
-    <br/>Cron is standard 5-field (<code>min hour dom month dow</code>). Duration in minutes from cron-tick. Applies-to empty = all sources.
-  </p>
-  <div class="table-scroll">
-    <table id="t-schedules">
-      <thead>
-        <tr>
-          <th data-i18n="common.name">Name</th>
-          <th data-i18n="sched.cron">Cron (5-field)</th>
-          <th data-i18n="sched.duration">Duration (min)</th>
-          <th data-i18n="sched.match">Match (label=value, one per line)</th>
-          <th data-i18n="common.applies_to">Applies to</th>
-          <th data-i18n="common.status">Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-  <div style="margin: 0.8em 0; display: flex; gap: 0.6em; align-items: center;">
-    <button id="sched-add" class="btn" data-i18n="sched.add">+ Add window</button>
-    <button id="sched-save" class="btn primary" data-i18n="common.save">Save</button>
-    <span id="sched-save-status" class="muted"></span>
-  </div>
-</section>
-
-<section id="tab-deliveries" class="tabpane">
-  <h2><span data-i18n="deliveries.title">Recent deliveries</span> <small class="muted" data-i18n="deliveries.sub">(persisted, newest first)</small></h2>
-  <p class="muted" data-i18n-html="deliveries.desc">
-    Includes both delivered and <span class="ch-suppressed">suppressed</span> events.
-    Suppressed rows show the rule that matched in the Channel column.
-  </p>
-  <div style="display:flex; gap:0.8em; align-items:center; flex-wrap:wrap; margin-bottom:0.6em">
-    <label style="margin:0; flex:1 1 auto; min-width:200px">
-      <input type="search" id="deliv-filter" placeholder="Filter (title, source, severity, channel)…" autocomplete="off" data-i18n-placeholder="deliveries.filter_placeholder">
-    </label>
-    <label style="margin:0"><input type="checkbox" id="deliv-show-suppressed" checked> <span data-i18n="deliveries.show_suppressed">Show suppressed</span></label>
-    <button id="deliv-export-csv" class="btn" title="Download visible rows as CSV" data-i18n="deliveries.export_csv" data-i18n-title="deliveries.export_title">Export CSV</button>
-    <span id="deliv-count" class="muted"></span>
-  </div>
-  <div class="table-scroll">
-    <table id="t-deliv">
-      <thead><tr><th data-i18n="common.time">Time</th><th data-i18n="common.source">Source</th><th data-i18n="common.severity">Severity</th><th data-i18n="common.title">Title</th><th data-i18n="deliveries.channel_or_suppressed">Channel / Suppressed by</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-<section id="tab-logs" class="tabpane">
-  <h2><span data-i18n="logs.title">Backend logs</span> <small class="muted" data-i18n="logs.sub">(in-memory, newest first)</small></h2>
-  <div class="logs-toolbar">
-    <label>
-      <span data-i18n="logs.keyword">Keyword</span>
-      <input type="search" id="logs-filter" placeholder="Search message, target or fields…" autocomplete="off" data-i18n-placeholder="logs.search_placeholder">
-    </label>
-    <label>
-      <span data-i18n="logs.level">Level</span>
-      <select id="logs-level">
-        <option value="all" data-i18n="logs.level_all">All</option>
-        <option value="ERROR">ERROR</option>
-        <option value="WARN">WARN</option>
-        <option value="INFO">INFO</option>
-        <option value="DEBUG">DEBUG</option>
-        <option value="TRACE">TRACE</option>
-      </select>
-    </label>
-    <label>
-      <span data-i18n="logs.page_size">Page size</span>
-      <select id="logs-limit">
-        <option>25</option>
-        <option>50</option>
-        <option selected>100</option>
-        <option>200</option>
-        <option>500</option>
-      </select>
-    </label>
-    <button id="logs-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
-    <button id="logs-frontend-filter" class="btn" data-i18n="logs.frontend_errors">Frontend errors</button>
-    <button id="logs-clear-filter" class="btn" data-i18n="logs.clear_filters">Clear filters</button>
-    <label class="inline-check"><input type="checkbox" id="logs-autorefresh" checked> <span data-i18n="logs.auto_refresh">Auto-refresh</span></label>
-    <span id="logs-count" class="muted"></span>
-  </div>
-  <div class="logs-pager">
-    <button id="logs-first" class="btn" data-i18n-title="logs.first_page" title="First page" aria-label="First page">&lt;&lt;</button>
-    <button id="logs-prev" class="btn" data-i18n-title="logs.previous_page" title="Previous page" aria-label="Previous page">&lt;</button>
-    <span id="logs-page-info" class="muted">—</span>
-    <button id="logs-next" class="btn" data-i18n-title="logs.next_page" title="Next page" aria-label="Next page">&gt;</button>
-    <button id="logs-last" class="btn" data-i18n-title="logs.last_page" title="Last page" aria-label="Last page">&gt;&gt;</button>
-  </div>
-  <div class="table-scroll">
-    <table id="t-logs" class="logs-table">
-      <thead>
-        <tr>
-          <th data-i18n="common.time">Time</th>
-          <th data-i18n="logs.level">Level</th>
-          <th data-i18n="logs.target">Target</th>
-          <th data-i18n="logs.message">Message</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-<section id="tab-audit" class="tabpane">
-  <h2><span data-i18n="audit.title">Audit log</span> <small class="muted" data-i18n="audit.sub">(security and configuration actions)</small></h2>
-  <div class="logs-toolbar">
-    <label>
-      <span data-i18n="logs.keyword">Keyword</span>
-      <input type="search" id="audit-filter" placeholder="Search actor, action or detail…" autocomplete="off" data-i18n-placeholder="audit.search_placeholder">
-    </label>
-    <label>
-      <span data-i18n="logs.page_size">Page size</span>
-      <select id="audit-limit">
-        <option>25</option>
-        <option selected>50</option>
-        <option>100</option>
-        <option>200</option>
-      </select>
-    </label>
-    <button id="audit-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
-    <span id="audit-count" class="muted"></span>
-  </div>
-  <div class="logs-pager">
-    <button id="audit-first" class="btn" data-i18n-title="logs.first_page" title="First page" aria-label="First page">&lt;&lt;</button>
-    <button id="audit-prev" class="btn" data-i18n-title="logs.previous_page" title="Previous page" aria-label="Previous page">&lt;</button>
-    <span id="audit-page-info" class="muted">—</span>
-    <button id="audit-next" class="btn" data-i18n-title="logs.next_page" title="Next page" aria-label="Next page">&gt;</button>
-    <button id="audit-last" class="btn" data-i18n-title="logs.last_page" title="Last page" aria-label="Last page">&gt;&gt;</button>
-  </div>
-  <div class="table-scroll">
-    <table id="t-audit" class="logs-table">
-      <thead><tr><th data-i18n="common.time">Time</th><th data-i18n="audit.actor">Actor</th><th data-i18n="audit.action">Action</th><th data-i18n="audit.outcome">Outcome</th><th data-i18n="audit.detail">Detail</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-<section id="tab-setup" class="tabpane">
-  <h2 data-i18n="setup.title">Setup checklist</h2>
-  <div class="row" style="margin-bottom:0.8em">
-    <button id="setup-refresh" class="btn" data-i18n="common.refresh">Refresh</button>
-    <span id="setup-summary" class="muted"></span>
-  </div>
-  <div id="setup-checklist" class="setup-checklist"></div>
-
-  <h2 style="margin-top:2em" data-i18n="matrix.title">Notification test matrix</h2>
-  <p class="muted" data-i18n="matrix.desc">Connectivity-only dry-run checks. No notification is sent.</p>
-  <div class="table-scroll">
-    <table id="t-channel-matrix">
-      <thead><tr><th data-i18n="common.channel">Channel</th><th data-i18n="common.configured">Configured</th><th data-i18n="channel.reachable">Reachable</th><th>Endpoint</th><th data-i18n="matrix.checks">Checks</th></tr></thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</section>
-
-<section id="tab-simulator" class="tabpane">
-  <h2 data-i18n="sim.title">Policy simulator</h2>
-  <p class="muted" data-i18n="sim.desc">Dry-run inhibition, delivery policy and dedup decisions without sending a notification or changing state.</p>
-  <div class="grid2">
-    <label><span data-i18n="common.source">Source</span>
-      <select id="policy-sim-source">
-        <option value="grafana">grafana</option>
-        <option value="beszel">beszel</option>
-        <option value="healthchecks">healthchecks</option>
-        <option value="wud">wud</option>
-        <option value="authentik">authentik</option>
-        <option value="shelfmark">shelfmark</option>
-        <option value="prowlarr">prowlarr</option>
-        <option value="decypharr">decypharr</option>
-      </select>
-    </label>
-    <label><span data-i18n="common.severity">Severity</span>
-      <select id="policy-sim-severity"><option>info</option><option selected>warning</option><option>critical</option></select>
-    </label>
-  </div>
-  <label><span data-i18n-html="sim.labels">Labels (one per line, <code>label=value</code>)</span>
+</head> <body> <div class="app-shell"> <aside class="sidebar" id="sidebar"> <div class="sidebar-head"> <div class="brand-lockup"> <h1> <img class="brand-logo" src="/ui/favicon.svg" alt="" aria-hidden="true"> <span class="brand-name">klaxond</span> </h1> <small id="footer-tag" data-i18n="app.tagline">klaxond — cascade • inhibition • render</small> </div>
+<button id="sidebar-toggle" class="icon-btn" data-i18n-title="nav.toggle_sidebar" title="Toggle sidebar" aria-label="Toggle sidebar">☰</button> </div> <nav class="tabs" aria-label="Main navigation"> <div class="tab-group" data-group="operations"> <span class="tab-group-label" data-i18n="nav.operations">Operations</span>
+<button class="tab active" data-tab="status" data-i18n-title="tab.status" title="Status" aria-label="Status"><span class="tab-icon" aria-hidden="true">●</span><span class="tab-label" data-i18n="tab.status">Status</span></button>
+<button class="tab" data-tab="flow" data-i18n-title="tab.flow" title="Flow" aria-label="Flow"><span class="tab-icon" aria-hidden="true">↔</span><span class="tab-label" data-i18n="tab.flow">Flow</span></button>
+<button class="tab" data-tab="inhibitions" data-i18n-title="tab.inhibitions" title="Inhibitions" aria-label="Inhibitions"><span class="tab-icon" aria-hidden="true">⊘</span><span class="tab-label" data-i18n="tab.inhibitions">Inhibitions</span></button>
+<button class="tab" data-tab="deliveries" data-i18n-title="tab.deliveries" title="Recent deliveries" aria-label="Recent deliveries"><span class="tab-icon" aria-hidden="true">⇢</span><span class="tab-label" data-i18n="tab.deliveries">Recent deliveries</span></button>
+<button class="tab" data-tab="logs" data-i18n-title="tab.logs" title="Logs" aria-label="Logs"><span class="tab-icon" aria-hidden="true">≡</span><span class="tab-label" data-i18n="tab.logs">Logs</span></button>
+<button class="tab" data-tab="audit" data-i18n-title="tab.audit" title="Audit" aria-label="Audit"><span class="tab-icon" aria-hidden="true">◇</span><span class="tab-label" data-i18n="tab.audit">Audit</span></button>
+<button class="tab" data-tab="setup" data-i18n-title="tab.setup" title="Setup" aria-label="Setup"><span class="tab-icon" aria-hidden="true">◎</span><span class="tab-label" data-i18n="tab.setup">Setup</span></button> </div> <div class="tab-group" data-group="settings"> <span class="tab-group-label" data-i18n="nav.settings">Settings</span>
+<button class="tab" data-tab="render" data-i18n-title="tab.render" title="Render config" aria-label="Render config"><span class="tab-icon" aria-hidden="true">▣</span><span class="tab-label" data-i18n="tab.render">Render config</span></button>
+<button class="tab" data-tab="routing" data-i18n-title="tab.routing" title="Routing" aria-label="Routing"><span class="tab-icon" aria-hidden="true">⎇</span><span class="tab-label" data-i18n="tab.routing">Routing</span></button>
+<button class="tab" data-tab="cascade" data-i18n-title="tab.cascade" title="Cascade" aria-label="Cascade"><span class="tab-icon" aria-hidden="true">⇣</span><span class="tab-label" data-i18n="tab.cascade">Cascade</span></button>
+<button class="tab" data-tab="delivery" data-i18n-title="tab.delivery" title="Delivery rules" aria-label="Delivery rules"><span class="tab-icon" aria-hidden="true">▤</span><span class="tab-label" data-i18n="tab.delivery">Delivery rules</span></button>
+<button class="tab" data-tab="grouping" data-i18n-title="tab.grouping" title="Grouping" aria-label="Grouping"><span class="tab-icon" aria-hidden="true">∑</span><span class="tab-label" data-i18n="tab.grouping">Grouping</span></button>
+<button class="tab" data-tab="auth" data-i18n-title="tab.auth" title="Authentication" aria-label="Authentication"><span class="tab-icon" aria-hidden="true">⌑</span><span class="tab-label" data-i18n="tab.auth">Authentication</span></button> </div> <div class="tab-group" data-group="tools"> <span class="tab-group-label" data-i18n="nav.tools">Tools</span>
+<button class="tab" data-tab="preview" data-i18n-title="tab.preview" title="Render preview" aria-label="Render preview"><span class="tab-icon" aria-hidden="true">◉</span><span class="tab-label" data-i18n="tab.preview">Render preview</span></button>
+<button class="tab" data-tab="simulator" data-i18n-title="tab.simulator" title="Policy simulator" aria-label="Policy simulator"><span class="tab-icon" aria-hidden="true">⌁</span><span class="tab-label" data-i18n="tab.simulator">Policy simulator</span></button>
+<button class="tab" data-tab="test" data-i18n-title="tab.test" title="Send test" aria-label="Send test"><span class="tab-icon" aria-hidden="true">✓</span><span class="tab-label" data-i18n="tab.test">Send test</span></button> </div> </nav> <div class="prefs" aria-label="Preferences"> <div class="pref-control"> <span class="pref-label" data-i18n="prefs.language">Language</span>
+<div class="segmented-control" role="group" data-i18n-aria-label="prefs.language" aria-label="Language"> <button type="button" class="seg-btn" data-language-option="it" aria-pressed="false">IT</button> <button type="button" class="seg-btn" data-language-option="en" aria-pressed="true">EN</button> </div> </div> <div class="pref-control"> <span class="pref-label" data-i18n="prefs.theme">Theme</span>
+<div class="segmented-control theme-segment" role="group" data-i18n-aria-label="prefs.theme" aria-label="Theme"> <button type="button" class="seg-btn icon-seg" data-theme-mode-option="system" data-i18n-title="theme.system" title="System" aria-label="System" aria-pressed="true"><span aria-hidden="true">◐</span></button>
+<button type="button" class="seg-btn icon-seg" data-theme-mode-option="light" data-i18n-title="theme.light" title="Light" aria-label="Light" aria-pressed="false"><span aria-hidden="true">☼</span></button> <button type="button" class="seg-btn icon-seg" data-theme-mode-option="dark" data-i18n-title="theme.dark" title="Dark" aria-label="Dark" aria-pressed="false"><span aria-hidden="true">☾</span></button> </div> </div>
+</div> <div class="sidebar-user" id="sidebar-user-card"> <div class="sidebar-avatar" id="sidebar-avatar">?</div> <div class="sidebar-user-meta"> <strong id="sidebar-user-name">anonymous</strong> <span id="sidebar-user-mode" class="muted">mode=none</span> </div> <a href="/api/auth/logout" data-auth-logout data-i18n-title="auth.logout" title="Logout" aria-label="Logout">↪</a> </div> </aside> <div class="app-main">
+<main> <div class="public-legal-bar" id="public-legal-bar" hidden> <a class="public-legal-brand" href="/legal/privacy" aria-label="klaxond"> <img class="public-legal-logo" src="/ui/favicon.svg" alt="" aria-hidden="true"> <span>klaxond</span> </a> <div class="public-legal-controls"> <span class="pref-label" data-public-language-control data-i18n="prefs.language">Language</span>
+<div class="segmented-control public-language-segment" data-public-language-control role="group" data-i18n-aria-label="prefs.language" aria-label="Language"> <button type="button" class="seg-btn" data-public-language-option="it" aria-pressed="false">IT</button> <button type="button" class="seg-btn" data-public-language-option="en" aria-pressed="true">EN</button> </div>
+<a class="btn public-login-link" href="/status" data-i18n="auth.back_to_app">Back to app</a> </div> </div> <section id="tab-status" class="tabpane active"> <h2 data-i18n="status.channels">Channels</h2> <div class="grid3"> <div class="card" id="ch-ntfy"><div class="ch-name">ntfy <span class="dot"></span></div><small class="ch-url"></small></div>
+<div class="card" id="ch-telegram"><div class="ch-name">Telegram <span class="dot"></span></div><small class="ch-url"></small></div> <div class="card" id="ch-smtp"><div class="ch-name">SMTP <span class="dot"></span></div><small class="ch-url"></small></div> </div> <h2><span data-i18n="status.activity">Activity</span> <small class="muted" data-i18n="status.activity_sub">(last 24h, persisted history)</small></h2>
+<div class="grid4"> <div class="card stat-card"> <div class="stat-label" data-i18n="status.deliveries_24h">Deliveries 24h</div> <div class="stat-value" id="stat-deliv-total">—</div> <div class="stat-sub muted" id="stat-deliv-breakdown" data-i18n="status.by_source_empty">by source: —</div> </div> <div class="card stat-card"> <div class="stat-label" data-i18n="status.active_suppressions">Active suppressions</div>
+<div class="stat-value" id="stat-suppr-count">—</div> <div class="stat-sub muted"><a href="/inhibitions" id="stat-suppr-link" data-i18n="status.view_inhibitions">View inhibitions →</a></div> </div> <div class="card stat-card"> <div class="stat-label" data-i18n="status.dedup_pending">Dedup pending</div> <div class="stat-value" id="stat-dedup-count">—</div>
+<div class="stat-sub muted"><a href="/grouping" id="stat-dedup-link" data-i18n="status.view_grouping">View grouping →</a></div> </div> <div class="card stat-card"> <div class="stat-label" data-i18n="status.log_buffer">Log buffer</div> <div class="stat-value" id="stat-log-retained">—</div> <div class="stat-sub muted" id="stat-log-severity">WARN/ERROR: —</div>
+<div class="stat-sub muted"><a href="/logs" id="stat-log-link" data-i18n="status.view_logs">View logs →</a></div> </div> </div> <h2 data-i18n="status.cascade">Cascade</h2> <div class="card"> <p data-i18n-html="status.cascade_desc">When enabled, on ntfy failure klaxond falls back to Telegram → SMTP.<br> Always on for <code>/beszel/*</code>; gated for <code>/webhook/*</code> (Grafana usually has its own retries).</p>
+<p><span data-i18n="status.default_env">Default (env):</span> <code id="cas-default">?</code> · <span data-i18n="status.runtime">Runtime:</span> <code id="cas-runtime">?</code></p> <button id="btn-cascade-toggle" data-i18n="status.toggle_cascade">Toggle runtime cascade</button> </div> <h2><span data-i18n="status.config_backup">Config backup</span> <small class="muted">(<code>klaxond.toml</code> + bundle)</small></h2>
+<div class="card"> <p class="muted"> <span data-i18n="status.config_backup_intro">Download the current config or restore from a previous TOML/full bundle. Klaxond also auto-saves a snapshot under</span> <code id="cfg-backup-dir">/data/backups/</code> <span data-i18n="status.config_backup_mid">before every config write (keeps newest</span>
+<code id="cfg-backup-keep">10</code><span data-i18n="status.config_backup_end">).</span> </p> <div style="display:flex; gap:0.6em; align-items:center; flex-wrap:wrap;"> <a id="cfg-backup-download" class="btn primary" style="text-decoration:none" data-i18n="status.download_config">Download config</a>
+<a id="cfg-full-export-download" class="btn" style="text-decoration:none" data-i18n="status.download_full_export" data-i18n-title="status.download_full_export_title" title="Download TOML, sidecars, and runtime-derived settings including secrets">Full export</a> <label class="btn" style="margin:0; cursor:pointer">
+<input type="file" id="cfg-restore-file" accept=".toml,.json,application/toml,application/json,text/plain" style="display:none"> <span data-i18n="status.restore_toml">Restore from TOML/bundle…</span> </label> <button id="cfg-import-apply" class="btn primary" hidden data-i18n="config.apply_import">Apply import</button> <button id="cfg-import-clear" class="btn" hidden data-i18n="common.dismiss">Dismiss</button>
+<span id="cfg-restore-status" class="muted"></span> </div> <div id="cfg-import-preview" class="import-preview hidden" aria-live="polite"></div> <p class="muted" style="margin-top:0.8em"><small data-i18n="status.latest_backups">Latest auto-backups (newest first):</small></p> <ul id="cfg-backup-list" class="muted" style="font-size:12px; padding-left:1.5em; margin:0"><li>—</li></ul> </div> </section>
+<section id="tab-flow" class="tabpane"> <h2 data-i18n="flow.title">Flow — how klaxond routes inbound events</h2> <p class="muted" data-i18n-html="flow.desc"> Auto-generated from your current configuration. Click any node to jump to the relevant tab. Stats in parentheses are deliveries over the last 24h from <code>/api/deliveries</code> (klaxond's persisted delivery history). </p> <div class="card">
+<div class="row" style="gap:1em; flex-wrap:wrap; margin-bottom:0.5em"> <button id="flow-refresh" data-i18n="common.refresh">Refresh</button> <label data-i18n-title="flow.animate_title" title="Animated dashes flowing along arrows + pulse on recently active nodes"><input type="checkbox" id="flow-animate" checked> <span data-i18n="flow.animate">Animate</span></label>
+<label data-i18n-title="flow.autorefresh_title" title="Auto-refresh stats every 30s (no full re-render)"><input type="checkbox" id="flow-autorefresh" checked> <span data-i18n="flow.autorefresh">Auto-refresh stats</span></label> <label><input type="checkbox" id="flow-show-source"> <span data-i18n="flow.show_source">Show Mermaid source</span></label>
+<button id="flow-download-svg" title="Download rendered diagram as SVG" data-i18n="flow.download_svg" data-i18n-title="flow.download_svg_title">Download SVG</button> <span id="flow-status" class="muted" style="margin-left:auto"></span> </div> <div id="flow-diagram" style="min-height:300px; overflow:auto; padding:1em; background:#0d1117; border-radius:6px"></div>
+<pre id="flow-source" class="hidden" style="margin-top:1em; padding:1em; background:#0d1117; border-radius:6px; overflow:auto; max-height:400px; font-size:12px"></pre> </div> <div class="card"> <h3 style="margin-top:0" data-i18n="flow.legend">Legend</h3> <ul class="muted" style="margin:0; padding-left:1.5em; line-height:1.7">
+<li data-i18n-html="flow.legend_blue"><b style="color:#5b8def">Blue nodes</b> = emitters (POST /webhook/, /beszel/, /healthchecks/, /wud/, /authentik/, /shelfmark/, /prowlarr/)</li> <li data-i18n-html="flow.legend_purple"><b style="color:#9b6bff">Purple nodes</b> = klaxond internal stages (inhibition, dedup buffer, render, cascade)</li>
+<li data-i18n-html="flow.legend_green"><b style="color:#48bb78">Green nodes</b> = delivery channels (ntfy, telegram, smtp)</li> <li data-i18n-html="flow.legend_arrows"><b>Solid arrows</b> = primary path · <b>Dashed arrows</b> = fallback on failure</li> <li data-i18n-html="flow.legend_grey"><span style="color:#999">Greyed nodes</span> = configured but currently disabled</li> </ul> </div> </section>
+<section id="tab-inhibitions" class="tabpane"> <h2><span data-i18n="inhib.rules_title">Inhibition rules</span> <small class="muted" data-i18n-html="inhib.persisted">(persisted to <code>klaxond.toml</code>)</small></h2> <p class="muted" data-i18n-html="inhib.rules_desc">
+Source-agnostic (0.9.6+): rules apply to all 5 emitters by default. Restrict scope by selecting one or more sources under <b>Applies to</b> (empty = all). Match type is exclusive — pick one: <code>match_by</code> (equality on one label vs. source anchor), <code>match_label + regex</code> (regex on one label), or <code>match_all</code> (suppress everything).
+Saving replaces the in-memory rules and clears any active suppressions — they re-arm naturally on the next source alert. </p> <datalist id="inhib-label-suggestions"> <option value="host"><option value="job"><option value="alertname"><option value="instance"><option value="service"><option value="component"><option value="severity"> </datalist> <div class="table-scroll"> <table id="t-inhib-rules"> <thead> <tr>
+<th><span data-i18n="common.source">Source</span> <small class="muted">(<code>inhibition_source</code> <span data-i18n="common.label">label</span>)</small></th> <th data-i18n="inhib.match_type">Match type</th> <th data-i18n="inhib.match_value">Match value</th> <th data-i18n="common.applies_to">Applies to</th> <th data-i18n="inhib.ttl_sec">TTL (sec)</th> <th></th> </tr> </thead> <tbody></tbody> </table> </div>
+<div style="margin: 0.8em 0; display: flex; gap: 0.6em; align-items: center;"> <button id="inhib-add" class="btn" data-i18n="inhib.add_rule">+ Add rule</button> <button id="inhib-save" class="btn primary" data-i18n="common.save">Save</button> <span id="inhib-save-status" class="muted"></span> </div>
+<h2 style="margin-top: 2em;"><span data-i18n="inhib.test_title">Test a rule</span> <small class="muted" data-i18n="inhib.dry_run_note">(dry-run — no state modified)</small></h2> <p class="muted" data-i18n-html="inhib.test_desc">
+Given a source + label set, simulate which inhibition rule (if any) would match and whether the alert would be delivered. Useful when iterating on regexes / <code>match_by</code> labels against a real payload you have in hand. </p> <div class="card"> <div class="grid2"> <label><span data-i18n="common.source">Source</span> <select id="inhib-test-source"> <option value="grafana">grafana</option>
+<option value="beszel">beszel</option> <option value="healthchecks">healthchecks</option> <option value="wud">wud</option> <option value="authentik">authentik</option> <option value="shelfmark">shelfmark</option> <option value="prowlarr">prowlarr</option> </select> </label> <label><span data-i18n-html="inhib.labels_one_line">Labels (one per line, <code>label=value</code>)</span>
+<textarea id="inhib-test-labels" rows="5" placeholder="host=svr-01&#10;job=blackbox-https-public&#10;alertname=DiskFull" style="font-family:ui-monospace,monospace;font-size:12px"></textarea> </label> </div> <div style="display:flex; gap:0.6em; align-items:center; margin-top:0.4em"> <button id="inhib-test-run" class="btn primary" data-i18n="common.test">Test</button> <span id="inhib-test-status" class="muted"></span>
+</div> <div id="inhib-test-result" style="margin-top:0.8em"></div> </div> <h2 style="margin-top: 2em;"><span data-i18n="inhib.active_suppressions">Active suppressions</span> <small class="muted" data-i18n="inhib.transient_state">(transient in-memory state)</small></h2>
+<p class="muted" data-i18n-html="inhib.active_desc">Lists currently-armed suppressions and their remaining TTL. The <b>Applies to</b> column shows which sources each suppression is scoped to (<code>*</code> = all). Clears automatically at TTL expiry or when the source alert resolves; use the <code>✕</code> button to force-clear early (suppressions re-arm naturally on the next source alert).</p> <table id="t-inhib">
+<thead><tr><th data-i18n="common.source">Source</th><th data-i18n="inhib.anchor">Anchor</th><th data-i18n="common.applies_to">Applies to</th><th data-i18n="common.expires_in">Expires in</th><th></th></tr></thead> <tbody></tbody> </table> <div style="margin: 0.6em 0; display: flex; gap: 0.6em; align-items: center;"> <button id="inhib-clear-all" class="btn" data-i18n="inhib.clear_all">Clear all suppressions</button>
+<span id="inhib-clear-status" class="muted"></span> </div> <h2 style="margin-top: 2em;"><span data-i18n="inhib.acks_title">Active ack-snoozes</span> <small class="muted" data-i18n="inhib.acks_sub">(from ntfy push button, 0.9.20+)</small></h2>
+<p class="muted" data-i18n-html="inhib.acks_desc">When you tap the <b>Snooze 1h</b> button on a ntfy notification, klaxond registers a transient suppression keyed on <code>alertname</code> for 1 hour. They auto-expire; force-clear via the ✕ button below.</p> <table id="t-acks"> <thead><tr><th>Alertname</th><th data-i18n="common.expires_in">Expires in</th><th></th></tr></thead> <tbody></tbody> </table>
+<h2 style="margin-top: 2em;"><span data-i18n="sched.title">Maintenance windows</span> <small class="muted" data-i18n="sched.sub">(scheduled silences, 0.9.19+)</small></h2> <p class="muted" data-i18n-html="sched.desc">
+Cron-driven silences. When an alert arrives during a window AND its labels match the rule's <b>match</b> dict (subset-equality), the alert is suppressed with channel <code>scheduled-mute</code> and the schedule name as <code>suppressed_by</code>. Use for backup windows, planned maintenance, recurring noise sources.
+<br/>Cron is standard 5-field (<code>min hour dom month dow</code>). Duration in minutes from cron-tick. Applies-to empty = all sources. </p> <div class="table-scroll"> <table id="t-schedules"> <thead> <tr> <th data-i18n="common.name">Name</th> <th data-i18n="sched.cron">Cron (5-field)</th> <th data-i18n="sched.duration">Duration (min)</th> <th data-i18n="sched.match">Match (label=value, one per line)</th>
+<th data-i18n="common.applies_to">Applies to</th> <th data-i18n="common.status">Status</th> <th></th> </tr> </thead> <tbody></tbody> </table> </div> <div style="margin: 0.8em 0; display: flex; gap: 0.6em; align-items: center;"> <button id="sched-add" class="btn" data-i18n="sched.add">+ Add window</button> <button id="sched-save" class="btn primary" data-i18n="common.save">Save</button>
+<span id="sched-save-status" class="muted"></span> </div> </section> <section id="tab-deliveries" class="tabpane"> <h2><span data-i18n="deliveries.title">Recent deliveries</span> <small class="muted" data-i18n="deliveries.sub">(persisted, newest first)</small></h2> <p class="muted" data-i18n-html="deliveries.desc"> Includes both delivered and <span class="ch-suppressed">suppressed</span> events.
+Suppressed rows show the rule that matched in the Channel column. </p> <div style="display:flex; gap:0.8em; align-items:center; flex-wrap:wrap; margin-bottom:0.6em"> <label style="margin:0; flex:1 1 auto; min-width:200px"> <input type="search" id="deliv-filter" placeholder="Filter (title, source, severity, channel)…" autocomplete="off" data-i18n-placeholder="deliveries.filter_placeholder"> </label>
+<label style="margin:0"><input type="checkbox" id="deliv-show-suppressed" checked> <span data-i18n="deliveries.show_suppressed">Show suppressed</span></label> <button id="deliv-export-csv" class="btn" title="Download visible rows as CSV" data-i18n="deliveries.export_csv" data-i18n-title="deliveries.export_title">Export CSV</button> <span id="deliv-count" class="muted"></span> </div> <div class="table-scroll">
+<table id="t-deliv"> <thead><tr><th data-i18n="common.time">Time</th><th data-i18n="common.source">Source</th><th data-i18n="common.severity">Severity</th><th data-i18n="common.title">Title</th><th data-i18n="deliveries.channel_or_suppressed">Channel / Suppressed by</th></tr></thead> <tbody></tbody> </table> </div> </section> <section id="tab-logs" class="tabpane">
+<h2><span data-i18n="logs.title">Backend logs</span> <small class="muted" data-i18n="logs.sub">(in-memory, newest first)</small></h2> <div class="logs-toolbar"> <label> <span data-i18n="logs.keyword">Keyword</span> <input type="search" id="logs-filter" placeholder="Search message, target or fields…" autocomplete="off" data-i18n-placeholder="logs.search_placeholder"> </label> <label>
+<span data-i18n="logs.level">Level</span> <select id="logs-level"> <option value="all" data-i18n="logs.level_all">All</option> <option value="ERROR">ERROR</option> <option value="WARN">WARN</option> <option value="INFO">INFO</option> <option value="DEBUG">DEBUG</option> <option value="TRACE">TRACE</option> </select> </label> <label> <span data-i18n="logs.page_size">Page size</span> <select id="logs-limit">
+<option>25</option> <option>50</option> <option selected>100</option> <option>200</option> <option>500</option> </select> </label> <button id="logs-refresh" class="btn" data-i18n="common.refresh">Refresh</button> <button id="logs-frontend-filter" class="btn" data-i18n="logs.frontend_errors">Frontend errors</button> <button id="logs-clear-filter" class="btn" data-i18n="logs.clear_filters">Clear filters</button>
+<label class="inline-check"><input type="checkbox" id="logs-autorefresh" checked> <span data-i18n="logs.auto_refresh">Auto-refresh</span></label> <span id="logs-count" class="muted"></span> </div> <div class="logs-pager"> <button id="logs-first" class="btn" data-i18n-title="logs.first_page" title="First page" aria-label="First page">&lt;&lt;</button>
+<button id="logs-prev" class="btn" data-i18n-title="logs.previous_page" title="Previous page" aria-label="Previous page">&lt;</button> <span id="logs-page-info" class="muted">—</span> <button id="logs-next" class="btn" data-i18n-title="logs.next_page" title="Next page" aria-label="Next page">&gt;</button>
+<button id="logs-last" class="btn" data-i18n-title="logs.last_page" title="Last page" aria-label="Last page">&gt;&gt;</button> </div> <div class="table-scroll"> <table id="t-logs" class="logs-table"> <thead> <tr> <th data-i18n="common.time">Time</th> <th data-i18n="logs.level">Level</th> <th data-i18n="logs.target">Target</th> <th data-i18n="logs.message">Message</th> </tr> </thead> <tbody></tbody> </table> </div>
+</section> <section id="tab-audit" class="tabpane"> <h2><span data-i18n="audit.title">Audit log</span> <small class="muted" data-i18n="audit.sub">(security and configuration actions)</small></h2> <div class="logs-toolbar"> <label> <span data-i18n="logs.keyword">Keyword</span>
+<input type="search" id="audit-filter" placeholder="Search actor, action or detail…" autocomplete="off" data-i18n-placeholder="audit.search_placeholder"> </label> <label> <span data-i18n="logs.page_size">Page size</span> <select id="audit-limit"> <option>25</option> <option selected>50</option> <option>100</option> <option>200</option> </select> </label>
+<button id="audit-refresh" class="btn" data-i18n="common.refresh">Refresh</button> <span id="audit-count" class="muted"></span> </div> <div class="logs-pager"> <button id="audit-first" class="btn" data-i18n-title="logs.first_page" title="First page" aria-label="First page">&lt;&lt;</button>
+<button id="audit-prev" class="btn" data-i18n-title="logs.previous_page" title="Previous page" aria-label="Previous page">&lt;</button> <span id="audit-page-info" class="muted">—</span> <button id="audit-next" class="btn" data-i18n-title="logs.next_page" title="Next page" aria-label="Next page">&gt;</button>
+<button id="audit-last" class="btn" data-i18n-title="logs.last_page" title="Last page" aria-label="Last page">&gt;&gt;</button> </div> <div class="table-scroll"> <table id="t-audit" class="logs-table">
+<thead><tr><th data-i18n="common.time">Time</th><th data-i18n="audit.actor">Actor</th><th data-i18n="audit.action">Action</th><th data-i18n="audit.outcome">Outcome</th><th data-i18n="audit.detail">Detail</th></tr></thead> <tbody></tbody> </table> </div> </section> <section id="tab-setup" class="tabpane"> <h2 data-i18n="setup.title">Setup checklist</h2> <div class="row" style="margin-bottom:0.8em">
+<button id="setup-refresh" class="btn" data-i18n="common.refresh">Refresh</button> <span id="setup-summary" class="muted"></span> </div> <div id="setup-checklist" class="setup-checklist"></div> <h2 style="margin-top:2em" data-i18n="matrix.title">Notification test matrix</h2> <p class="muted" data-i18n="matrix.desc">Connectivity-only dry-run checks. No notification is sent.</p> <div class="table-scroll">
+<table id="t-channel-matrix"> <thead><tr><th data-i18n="common.channel">Channel</th><th data-i18n="common.configured">Configured</th><th data-i18n="channel.reachable">Reachable</th><th>Endpoint</th><th data-i18n="matrix.checks">Checks</th></tr></thead> <tbody></tbody> </table> </div> </section> <section id="tab-simulator" class="tabpane"> <h2 data-i18n="sim.title">Policy simulator</h2>
+<p class="muted" data-i18n="sim.desc">Dry-run inhibition, delivery policy and dedup decisions without sending a notification or changing state.</p> <div class="grid2"> <label><span data-i18n="common.source">Source</span> <select id="policy-sim-source"> <option value="grafana">grafana</option> <option value="beszel">beszel</option> <option value="healthchecks">healthchecks</option> <option value="wud">wud</option>
+<option value="authentik">authentik</option> <option value="shelfmark">shelfmark</option> <option value="prowlarr">prowlarr</option> <option value="decypharr">decypharr</option> </select> </label> <label><span data-i18n="common.severity">Severity</span> <select id="policy-sim-severity"><option>info</option><option selected>warning</option><option>critical</option></select> </label> </div>
+<label><span data-i18n-html="sim.labels">Labels (one per line, <code>label=value</code>)</span>
     <textarea id="policy-sim-labels" rows="7" style="font-family:ui-monospace,monospace;font-size:12px">alertname=HostLoadHigh
 component=host
 host=it1-prd-dev-01</textarea>
-  </label>
-  <div class="row">
-    <button id="policy-sim-run" class="btn primary" data-i18n="common.test">Test</button>
-    <span id="policy-sim-status" class="muted"></span>
-  </div>
-  <pre id="policy-sim-output">—</pre>
-</section>
-
-<section id="tab-render" class="tabpane">
-  <h2 data-i18n="render.title">Component → dashboard mapping</h2>
-  <p class="muted">
-    <span data-i18n-html="render.desc_before_base">When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button "Open &lt;label&gt;" pointing to URL. URLs starting with <code>/</code> are appended to</span>
-    <code id="gbase">https://grafana.example.com</code><span data-i18n="render.desc_after_base">.</span>
-  </p>
-  <div class="card">
-    <h3 data-i18n="render.runtime_settings">Runtime settings</h3>
-    <div class="grid2">
-      <label><span data-i18n="render.grafana_base">Grafana base URL</span> <input type="text" id="rc-grafana-base"></label>
-      <label><span data-i18n="render.public_url">Public klaxond URL</span> <input type="text" id="rc-public-url"></label>
-    </div>
-    <div class="grid2">
-      <label><span data-i18n="render.grafana_render_base">Grafana render base URL</span> <input type="text" id="rc-grafana-render-base"></label>
-      <label><span data-i18n="render.grafana_render_token">Grafana render token</span> <input type="password" id="rc-grafana-render-token" autocomplete="off"></label>
-    </div>
-    <label><input type="checkbox" id="rc-grafana-render-token-clear"> <span data-i18n="render.clear_render_token">Clear Grafana render token</span></label>
-    <div class="grid2">
-      <label><span data-i18n="render.image_ttl">Image TTL seconds</span> <input type="number" id="rc-render-image-ttl" min="1" max="86400"></label>
-      <label><span data-i18n="render.ack_ttl">Ack default TTL seconds</span> <input type="number" id="rc-ack-default-ttl" min="60" max="86400"></label>
-    </div>
-    <div class="muted" id="rc-runtime-status"></div>
-  </div>
-  <table id="t-rc">
-    <thead><tr><th data-i18n="common.component">Component</th><th data-i18n="render.button_label">Button label</th><th>URL</th><th data-i18n="common.actions">Actions</th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="row">
-    <button id="btn-rc-add" data-i18n="render.add_row">+ Add row</button>
-    <button id="btn-rc-save" class="primary" data-i18n="common.save_changes">Save changes</button>
-    <span id="rc-status" class="muted"></span>
-  </div>
-</section>
-
-<section id="tab-preview" class="tabpane">
-  <h2 data-i18n="preview.title">Render preview</h2>
-  <p class="muted" data-i18n-html="preview.desc">Paste a sample payload (Grafana Alertmanager-shape OR Beszel-shape), pick severity, see what would be POSTed to ntfy. <b>Updates live</b> as you type (debounced 500ms). Nothing is delivered.</p>
-  <div class="grid2">
-    <div>
-      <label><span data-i18n="common.severity">Severity</span>
-        <select id="pv-sev"><option>info</option><option selected>warning</option><option>critical</option></select>
-      </label>
-      <label><span data-i18n="preview.payload">Payload (JSON)</span>
-        <textarea id="pv-input" rows="14"></textarea>
-      </label>
-      <button id="btn-preview" class="primary" data-i18n="common.render">Render</button>
-      <button id="btn-load-grafana-sample" data-i18n="preview.load_grafana">Load Grafana sample</button>
-      <button id="btn-load-beszel-sample" data-i18n="preview.load_beszel">Load Beszel sample</button>
-      <button id="btn-load-healthchecks-sample" data-i18n="preview.load_healthchecks">Load Healthchecks sample</button>
-      <button id="btn-load-wud-sample" data-i18n="preview.load_wud">Load WUD sample</button>
-      <button id="btn-load-shelfmark-sample" data-i18n="preview.load_shelfmark">Load Shelfmark sample</button>
-      <button id="btn-load-prowlarr-sample" data-i18n="preview.load_prowlarr">Load Prowlarr sample</button>
-      <button id="btn-load-decypharr-sample" data-i18n="preview.load_decypharr">Load Decypharr sample</button>
-    </div>
-    <div>
-      <label data-i18n="preview.visual">Visual preview</label>
-      <div id="pv-visual" class="ntfy-mock">
-        <div class="ntfy-mock-app">ntfy · push.example.com</div>
-        <div class="ntfy-mock-title" id="pv-vis-title">—</div>
-        <div class="ntfy-mock-body" id="pv-vis-body" data-i18n="preview.mock_empty">paste a payload + Render</div>
-        <div class="ntfy-mock-meta">
-          <span class="ntfy-mock-tags" id="pv-vis-tags"></span>
-          <span class="ntfy-mock-prio" id="pv-vis-prio"></span>
-        </div>
-        <div class="ntfy-mock-actions" id="pv-vis-actions"></div>
-      </div>
-      <label data-i18n="preview.raw">Raw ntfy headers + body</label>
-      <pre id="pv-output">—</pre>
-    </div>
-  </div>
-</section>
-
-<section id="tab-routing" class="tabpane">
-  <h2 data-i18n="routing.title">Channel routing</h2>
-  <p class="muted" data-i18n-html="routing.desc">Routing config is saved to <code>/data/klaxond.toml</code> or sidecars. Compose env vars still take precedence when set.</p>
-
-  <h3 style="margin-top:18px">ntfy</h3>
-  <div class="card">
-    <label><span data-i18n="routing.base_url">Base URL</span> <input type="text" id="r-ntfy-url"></label>
-    <div class="muted" id="r-ntfy-status" style="margin-top:0.4em"></div>
-  </div>
-
-  <h3 data-i18n="routing.ntfy_topics">ntfy topics</h3>
-  <div class="card">
-    <p class="muted"><small data-i18n-html="routing.ntfy_topics_desc">
-      Each topic has a name (ntfy topic id), an optional bearer token, and a list
-      of severities it <i>handles</i>. Same severity in multiple topics → fan-out
-      (notification sent to all matching topics). Severity names can be any
-      non-empty string (e.g. <code>info</code>, <code>warning</code>,
-      <code>critical</code>, or custom like <code>low</code>/<code>page</code>).
-      <br/>Token <code>***SET***</code> = keep existing; empty = clear (env vars
-      repopulate at next reload for legacy info/warning/critical names).
-    </small></p>
-    <div id="ntfy-topics-editor"></div>
-    <p>
-      <button id="ntfy-topic-add" data-i18n="routing.add_topic">+ Add topic</button>
-      <button id="ntfy-topics-save" class="primary" data-i18n="routing.save_topics">Save topics</button>
-      <span id="ntfy-topics-status" class="muted" style="margin-left:1em"></span>
-    </p>
-    <p class="muted" id="ntfy-topics-summary"><small>—</small></p>
-    <p class="muted"><small id="ntfy-topics-note"></small></p>
-  </div>
-
-  <h3>Telegram</h3>
-  <div class="card">
-    <div class="grid2">
-      <label><span data-i18n="routing.chat_id">Chat ID</span> <input type="text" id="r-tg-chat"></label>
-      <label><span data-i18n="routing.api_base">API base URL</span> <input type="text" id="r-tg-api-base"></label>
-    </div>
-    <label><span data-i18n="routing.bot_token_label">Bot token</span> <input type="password" id="r-tg-token" autocomplete="off"></label>
-    <label><input type="checkbox" id="r-tg-token-clear"> <span data-i18n="routing.clear_bot_token">Clear bot token</span></label>
-    <div class="muted" id="r-tg-status"></div>
-  </div>
-
-  <h3>SMTP</h3>
-  <div class="card">
-    <div class="grid2">
-      <label><span data-i18n="routing.host">Host</span> <input type="text" id="r-smtp-host"></label>
-      <label><span data-i18n="routing.port">Port</span> <input type="number" id="r-smtp-port" min="1" max="65535"></label>
-    </div>
-    <div class="grid2">
-      <label><span data-i18n="routing.from_addr">From address</span> <input type="text" id="r-smtp-from"></label>
-      <label><span data-i18n="routing.to_addr">To address</span> <input type="text" id="r-smtp-to"></label>
-    </div>
-    <div class="grid2">
-      <label><span data-i18n="routing.user_label">Username</span> <input type="text" id="r-smtp-user" autocomplete="username"></label>
-      <label><span data-i18n="routing.password_label">Password</span> <input type="password" id="r-smtp-password" autocomplete="new-password"></label>
-    </div>
-    <label><input type="checkbox" id="r-smtp-starttls"> <span data-i18n="routing.starttls">Use STARTTLS</span></label>
-    <label><input type="checkbox" id="r-smtp-password-clear"> <span data-i18n="routing.clear_smtp_password">Clear SMTP password</span></label>
-    <div class="muted" id="r-smtp-status"></div>
-  </div>
-
-  <div class="row" style="margin-top:18px">
-    <button id="btn-routing-save" class="primary" data-i18n="routing.save">Save routing</button>
-    <span id="routing-msg" class="muted"></span>
-  </div>
-
-  <h2 style="margin-top:2em;"><span data-i18n="ingest.title">Inbound webhook auth</span> <small class="muted" data-i18n="ingest.sub">(0.9.18+, per-source shared secret)</small></h2>
-  <div class="card">
-    <p class="muted" data-i18n-html="ingest.desc">
-      Optional shared secret per ingest source. When configured, the emitter MUST present the secret via one of:
-      <br/>1. <code>Authorization: Bearer &lt;secret&gt;</code> header (Grafana Alertmanager, ntfy, custom)
-      <br/>2. <code>X-Klaxond-Token: &lt;secret&gt;</code> header
-      <br/>3. <code>?token=&lt;secret&gt;</code> query parameter
-      <br/>Sources with no configured secret remain in <b>legacy permissive mode</b> (accept all — same as ≤ 0.9.17). Env <code>KLAXOND_INGEST_SECRET_&lt;SOURCE&gt;</code> overrides TOML.
-    </p>
-    <table id="t-ingest-auth">
-      <thead><tr><th data-i18n="common.source">Source</th><th data-i18n="common.status">Status</th><th data-i18n="ingest.secret_source">Source of secret</th><th data-i18n="common.actions">Actions</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <p class="muted" style="margin-top:0.8em"><small data-i18n-html="ingest.note">"Generate" creates a 64-char hex secret server-side; the value is shown <b>once</b> in a toast — copy it into the emitter immediately. "Clear" removes the secret (source returns to permissive mode).</small></p>
-  </div>
-</section>
-
-<section id="tab-cascade" class="tabpane">
-  <h2 data-i18n="cascade.title">Cascade tier chain</h2>
-  <p class="muted" data-i18n-html="cascade.desc">Order matters: first tier is always tried; subsequent tiers are tried only if cascade is enabled (always on for <code>/beszel/*</code>, gated for <code>/webhook/*</code>). Drag rows to reorder, edit timeouts. Persisted to <code>/data/klaxond.toml</code>.</p>
-  <table id="t-cas">
-    <thead><tr><th>#</th><th data-i18n="common.channel">Channel</th><th data-i18n="cascade.timeout">Timeout (s)</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="row">
-    <button id="btn-cas-add" data-i18n="cascade.add_tier">+ Add tier</button>
-    <button id="btn-cas-save" class="primary" data-i18n="common.save">Save</button>
-    <label style="margin-left:auto"><input type="checkbox" id="cas-default"> <span data-i18n="cascade.default_webhook">default-enabled for /webhook/* (Grafana)</span></label>
-    <span id="cas-status" class="muted"></span>
-  </div>
-</section>
-
-<section id="tab-delivery" class="tabpane">
-  <h2 data-i18n="delivery.title">Delivery — policies + rules</h2>
-  <p class="muted" data-i18n-html="delivery.desc">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>cascade</code> is the synthetic policy built from the global <code>[cascade]</code> tier list in <code>klaxond.toml</code> — picked here by name.</p>
-
-  <h3 style="margin-top:18px" data-i18n="delivery.default_policy_title">Default policy (no-match fallback)</h3>
-  <div class="card">
-    <label><span data-i18n="delivery.default_policy">Default policy</span>
-      <select id="d-default-policy"></select>
-    </label>
-  </div>
-
-  <h3 data-i18n="delivery.policies">Policies</h3>
-  <table id="t-pol">
-    <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="common.mode">Mode</th><th data-i18n="delivery.tiers_order">Tiers (in order)</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="row">
-    <button id="btn-pol-add" data-i18n="delivery.add_policy">+ Add policy</button>
-  </div>
-
-  <h3 data-i18n="delivery.rules_title">Rules (first-match wins)</h3>
-  <table id="t-rules">
-    <thead><tr><th>#</th><th data-i18n-html="delivery.match_header">Match (label = value, prefix <code>re:</code> for regex)</th><th data-i18n="delivery.policy">Policy</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="row">
-    <button id="btn-rule-add" data-i18n="delivery.add_rule">+ Add rule</button>
-    <button id="btn-delivery-save" class="primary" data-i18n="delivery.save">Save delivery config</button>
-    <span id="delivery-status" class="muted"></span>
-  </div>
-</section>
-
-<section id="tab-grouping" class="tabpane">
-  <h2 data-i18n="dedup.title">Notification grouping (dedup)</h2>
-  <p class="muted" data-i18n-html="dedup.desc1">
-    When enabled, klaxond buffers inbound events per source for the configured
-    window before delivering a single aggregated notification. Useful when a
-    cluster-wide trigger (e.g. WUD finding the same image update on N hosts)
-    would otherwise produce N pushes.
-  </p>
-  <p class="muted" data-i18n-html="dedup.desc2">
-    Strategy <b>key</b> groups events sharing the same dedup key:
-    WUD → image name, Grafana → alertname, Beszel → container name, HC → check name.
-    <br/>
-    <b>Severity caveat</b>: by default <code>critical</code> events are NOT debounced
-    (delivered immediately, even if buffering is enabled). Use the
-    <i>override critical</i> toggle per source if you want to debounce critical too.
-    Disk-backed pending queue at <code>/data/dedup_pending/</code> survives klaxond
-    restarts — pending events are flushed immediately on next start.
-  </p>
-  <div id="dedup-cards"></div>
-  <p>
-    <button id="dedup-save" class="primary" data-i18n="common.save">Save</button>
-    <span id="dedup-status" class="muted" style="margin-left:1em"></span>
-  </p>
-  <p class="muted"><small data-i18n="dedup.pending_note">Pending counts shown in cards are live (refreshed when this tab is opened).</small></p>
-</section>
-
-<section id="tab-auth" class="tabpane">
-  <h2 data-i18n="auth.title">Authentication</h2>
-  <p class="muted">
-    <span data-i18n-html="auth.desc_before_user">Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user:</span>
-    <code id="auth-current-user">—</code>.
-  </p>
-
-  <h3 data-i18n="common.mode">Mode</h3>
-  <div class="card">
-    <label><input type="radio" name="auth-mode" value="none">
-      <span data-i18n-html="auth.mode_none"><b>None</b> — public (default; suitable when klaxond is on a trusted internal network)</span>
-    </label><br/>
-    <label><input type="radio" name="auth-mode" value="basic">
-      <span data-i18n-html="auth.mode_basic"><b>Basic</b> — single user with Argon2id password (browser native)</span>
-    </label>
-    <br/>
-    <label><input type="radio" name="auth-mode" value="ldap">
-      <span data-i18n-html="auth.mode_ldap"><b>LDAP</b> — directory username/password with direct bind or service-bind search</span>
-    </label>
-    <br/>
-    <label><input type="radio" name="auth-mode" value="oidc">
-      <span data-i18n-html="auth.mode_oidc"><b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)</span>
-    </label>
-    <small id="auth-jwt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em" data-i18n="auth.jwt_warn">JWT verification is unavailable — OIDC will fail</small>
-    <br/>
-    <label><input type="radio" name="auth-mode" value="trusted-proxy">
-      <span data-i18n-html="auth.mode_trusted_proxy"><b>Trusted proxy</b> — read <code>X-Forwarded-User</code> from upstream proxy (Traefik+Authentik forwardAuth, oauth2-proxy, ecc.) — CIDR-gated for safety</span>
-    </label>
-  </div>
-
-  <h3 data-i18n="auth.session">Session</h3>
-  <div class="card">
-    <label><span data-i18n="auth.timeout">Timeout (hours, 1..720)</span>
-      <input type="number" id="auth-session-h" min="1" max="720" value="8" style="width:6em">
-    </label>
-  </div>
-
-  <h3 id="auth-basic-h" data-i18n="auth.basic_config">Basic auth config</h3>
-  <div class="card" id="auth-basic-card">
-    <label><span data-i18n="auth.username">Username</span> <input type="text" id="auth-basic-user" autocomplete="username"></label>
-    <label><span data-i18n="auth.realm">Realm</span> <input type="text" id="auth-basic-realm" value="klaxond"></label>
-    <label><span data-i18n="auth.set_password">Set password (leave blank to keep existing)</span>
-      <input type="password" id="auth-basic-pwd" autocomplete="new-password" placeholder="new password (Argon2id-hashed before storage)" data-i18n-placeholder="auth.password_placeholder">
-    </label>
-    <small id="auth-basic-pwd-policy" class="muted"></small>
-    <p class="muted"><small><span data-i18n="auth.password_hash_status">Password hash status:</span> <code id="auth-basic-status">—</code></small></p>
-    <div class="auth-totp-panel">
-      <p class="muted"><small><span data-i18n="auth.totp_status">TOTP status:</span> <code id="auth-totp-status">—</code></small></p>
-      <div class="row">
-        <button type="button" class="btn" id="totp-start" data-i18n="auth.totp_start">Set up TOTP</button>
-        <button type="button" class="danger" id="totp-disable" data-i18n="auth.totp_disable">Disable TOTP</button>
-        <span id="totp-status" class="muted"></span>
-      </div>
-      <div id="totp-setup" class="notice hidden">
-        <label><span data-i18n="auth.totp_secret">Secret</span>
-          <input type="text" id="totp-secret" readonly autocomplete="off">
-        </label>
-        <label><span data-i18n="auth.totp_uri">Authenticator URI</span>
-          <input type="text" id="totp-uri" readonly autocomplete="off">
-        </label>
-        <div class="row">
-          <label style="margin:0"><span data-i18n="auth.totp_code">6-digit code</span>
-            <input type="text" id="totp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
-          </label>
-          <button type="button" class="btn primary" id="totp-enable" data-i18n="auth.totp_enable">Enable TOTP</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <h3 id="auth-ldap-h" data-i18n="auth.ldap_config">LDAP config</h3>
-  <div class="card" id="auth-ldap-card">
-    <div class="grid2">
-      <label><span data-i18n="auth.ldap_url">LDAP URL</span>
-        <input type="url" id="auth-ldap-url" placeholder="ldaps://directory.example.com:636">
-      </label>
-      <label><span data-i18n="auth.ldap_timeout">Timeout (seconds)</span>
-        <input type="number" id="auth-ldap-timeout" min="1" max="60" value="5">
-      </label>
-    </div>
-    <label><span data-i18n="auth.ldap_bind_template">Bind DN template</span>
-      <input type="text" id="auth-ldap-bind-template" placeholder="uid={username},ou=people,dc=example,dc=com">
-    </label>
-    <div class="grid2">
-      <label><span data-i18n="auth.ldap_service_dn">Service bind DN</span>
-        <input type="text" id="auth-ldap-service-dn" autocomplete="off">
-      </label>
-      <label><span data-i18n="auth.ldap_service_password">Service bind password</span>
-        <input type="password" id="auth-ldap-service-password" autocomplete="off" placeholder="(leave blank to keep existing)" data-i18n-placeholder="auth.keep_existing_placeholder">
-        <small class="muted"><span data-i18n="common.status">Status</span>: <code id="auth-ldap-service-status">—</code></small>
-      </label>
-    </div>
-    <label><span data-i18n="auth.ldap_base_dn">Base DN</span>
-      <input type="text" id="auth-ldap-base-dn" placeholder="ou=people,dc=example,dc=com">
-    </label>
-    <label><span data-i18n="auth.ldap_user_filter">User filter</span>
-      <input type="text" id="auth-ldap-user-filter" placeholder="(|(uid={username})(sAMAccountName={username})(mail={username}))">
-    </label>
-    <div class="grid2">
-      <label><span data-i18n="auth.ldap_scope">Search scope</span>
-        <select id="auth-ldap-scope">
-          <option value="subtree">Subtree</option>
-          <option value="one">One level</option>
-          <option value="base">Base</option>
-        </select>
-      </label>
-      <label><span data-i18n="auth.ldap_username_attr">Username attribute</span>
-        <input type="text" id="auth-ldap-username-attr" value="uid">
-      </label>
-      <label><span data-i18n="auth.ldap_email_attr">Email attribute</span>
-        <input type="text" id="auth-ldap-email-attr" value="mail">
-      </label>
-      <label><span data-i18n="auth.ldap_name_attr">Name attribute</span>
-        <input type="text" id="auth-ldap-name-attr" value="cn">
-      </label>
-      <label><span data-i18n="auth.ldap_groups_attr">Groups attribute</span>
-        <input type="text" id="auth-ldap-groups-attr" value="memberOf">
-      </label>
-    </div>
-  </div>
-
-  <h3 id="auth-oidc-h" data-i18n="auth.oidc_config">OIDC config</h3>
-  <div class="card" id="auth-oidc-card">
-    <label><span data-i18n="auth.provider_preset">Provider preset</span>
-      <select id="auth-oidc-provider">
-        <option value="authentik">Authentik</option>
-        <option value="keycloak">Keycloak</option>
-        <option value="authelia">Authelia</option>
-        <option value="google">Google</option>
-        <option value="other">Other / Generic</option>
-      </select>
-    </label>
-    <label><span data-i18n="auth.issuer_url">Issuer URL</span>
-      <input type="url" id="auth-oidc-issuer" placeholder="https://idp.example.com/application/o/klaxond/">
-      <small class="muted" data-i18n-html="auth.issuer_hint">Authentik: <code>https://&lt;host&gt;/application/o/&lt;slug&gt;/</code> · Keycloak: <code>https://&lt;host&gt;/realms/&lt;realm&gt;</code> · Authelia: <code>https://&lt;host&gt;</code> · Google: <code>https://accounts.google.com</code></small>
-    </label>
-    <label><span data-i18n="auth.client_id">Client ID</span>
-      <input type="text" id="auth-oidc-cid" autocomplete="off">
-    </label>
-    <label><span data-i18n="auth.client_secret">Client Secret</span>
-      <input type="password" id="auth-oidc-csec" autocomplete="off" placeholder="(leave blank to keep existing)" data-i18n-placeholder="auth.keep_existing_placeholder">
-      <small class="muted"><span data-i18n="common.status">Status</span>: <code id="auth-oidc-csec-status">—</code></small>
-    </label>
-    <label><span data-i18n="auth.scopes">Scopes</span>
-      <input type="text" id="auth-oidc-scopes" value="openid profile email">
-    </label>
-    <label><span data-i18n="auth.required_group">Required group (optional, to restrict to a specific group)</span>
-      <input type="text" id="auth-oidc-group" placeholder="e.g. klaxond-admins" data-i18n-placeholder="auth.group_placeholder">
-    </label>
-    <label><span data-i18n="auth.redirect_path">Redirect path</span>
-      <input type="text" id="auth-oidc-redirect" value="/api/auth/callback">
-    </label>
-    <p class="muted"><small><span data-i18n="auth.redirect_uri">Redirect URI used at the IdP:</span> <code id="auth-oidc-full-redirect">https://&lt;host&gt;&lt;redirect_path&gt;</code></small></p>
-  </div>
-
-  <h3 id="auth-tp-h" data-i18n="auth.trusted_proxy_config">Trusted-proxy config</h3>
-  <div class="card" id="auth-tp-card">
-    <label><span data-i18n="auth.user_header">User header</span> <input type="text" id="auth-tp-uheader" value="X-Forwarded-User"></label>
-    <label><span data-i18n="auth.email_header">Email header</span> <input type="text" id="auth-tp-eheader" value="X-Forwarded-Email"></label>
-    <label><span data-i18n="auth.groups_header">Groups header</span> <input type="text" id="auth-tp-gheader" value="X-Forwarded-Groups"></label>
-    <label><span data-i18n="auth.trusted_cidrs">Trusted CIDRs (comma-separated)</span>
-      <textarea id="auth-tp-cidrs" rows="2" placeholder="192.168.0.0/16, 10.0.0.0/8, 127.0.0.1/32"></textarea>
-      <small class="muted" data-i18n="auth.trusted_cidrs_hint">Only requests from these source IPs will have their forwarded-user header honored. Critical to prevent header spoofing.</small>
-    </label>
-  </div>
-
-  <div id="auth-guard" class="notice warn hidden"></div>
-
-  <h3 data-i18n="auth.webauthn_title">WebAuthn / passkeys</h3>
-  <div class="card">
-    <label><input type="checkbox" id="auth-webauthn-enabled" checked> <span data-i18n="auth.webauthn_enabled">Enable passkeys</span></label>
-    <div class="grid2">
-      <label><span data-i18n="auth.webauthn_origin">Origin</span>
-        <input type="url" id="auth-webauthn-origin" placeholder="https://klaxond.example.com">
-      </label>
-      <label><span data-i18n="auth.webauthn_rp_id">Relying party ID</span>
-        <input type="text" id="auth-webauthn-rp-id" placeholder="klaxond.example.com">
-      </label>
-    </div>
-    <p class="muted"><small data-i18n="auth.webauthn_hint">Leave empty to use KLAXOND_PUBLIC_URL. RP ID must match the browser origin domain.</small></p>
-    <div class="row">
-      <label style="margin:0"><span data-i18n="auth.passkey_name">Passkey name</span> <input type="text" id="passkey-name" placeholder="MacBook Touch ID"></label>
-      <button id="passkey-register" class="btn" data-i18n="auth.passkey_register">Register passkey</button>
-      <a class="btn" href="/api/auth/passkey/login" data-i18n="auth.passkey_login_link">Passkey login page</a>
-      <span id="passkey-status" class="muted"></span>
-    </div>
-    <div class="table-scroll">
-      <table id="t-passkeys">
-        <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.user">User</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.actions">Actions</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </div>
-
-  <h3 data-i18n="auth.tokens_title">Access tokens</h3>
-  <div class="card">
-    <div class="token-kind-header">
-      <div class="segmented-control token-kind-segment" role="tablist" data-i18n-aria-label="auth.token_kind" aria-label="Token kind">
-        <button type="button" class="seg-btn active" data-token-kind-option="api-key" aria-pressed="true" role="tab" data-i18n="auth.api_keys">API Keys</button>
-        <button type="button" class="seg-btn" data-token-kind-option="pat" aria-pressed="false" role="tab" data-i18n="auth.pats">PATs</button>
-      </div>
-      <span id="token-kind-summary" class="muted"></span>
-    </div>
-    <input type="hidden" id="token-kind" value="api-key">
-    <div class="grid2">
-      <label><span data-i18n="common.name">Name</span> <input type="text" id="token-name" placeholder="grafana-admin-script"></label>
-      <label><span data-i18n="auth.expires_days">Expires in days</span> <input type="number" id="token-expires-days" min="1" max="3650" placeholder="never"></label>
-    </div>
-    <div id="token-scopes" class="scope-grid"></div>
-    <div class="row">
-      <button id="token-create" class="btn primary" data-i18n="auth.token_create">Create token</button>
-      <span id="token-status" class="muted"></span>
-    </div>
-    <pre id="token-once" class="hidden"></pre>
-    <div class="token-table-heading">
-      <h4 id="token-table-title" data-i18n="auth.api_keys">API Keys</h4>
-      <span id="token-table-count" class="muted"></span>
-    </div>
-    <div class="table-scroll">
-      <table id="t-tokens">
-        <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.scopes">Scopes</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.status">Status</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </div>
-
-  <p>
-    <button id="auth-save" class="primary" data-i18n="common.save">Save</button>
-    <span id="auth-status" class="muted" style="margin-left:1em"></span>
-    <span style="float:right">
-      <a href="/api/auth/logout" data-auth-logout data-i18n="auth.logout">Logout</a>
-    </span>
-  </p>
-</section>
-
-<section id="tab-test" class="tabpane">
-  <h2 data-i18n="test.title">Send synthetic alert</h2>
-  <p class="muted" data-i18n="test.desc">Fires a real alert through the cascade (ntfy → Telegram → SMTP) with the runtime cascade flag. Counts toward "Recent deliveries".</p>
-  <div class="grid2">
-    <label><span data-i18n="common.severity">Severity</span>
-      <select id="t-sev"><option>info</option><option selected>warning</option><option>critical</option></select>
-    </label>
-    <label><span data-i18n="test.component">Component (action button preview)</span>
-      <select id="t-component"><option value="" data-i18n="render.none_freeform">(none — freeform, no button)</option></select>
-    </label>
-  </div>
-  <div class="grid2">
-    <label><span data-i18n="test.host_label">Host label</span>
-      <input id="t-host" value="" placeholder="(optional — appended to title)" data-i18n-placeholder="test.host_placeholder">
-    </label>
-    <label><span data-i18n="common.title">Title</span>
-      <input id="t-title" value="klaxond synthetic test">
-    </label>
-  </div>
-  <label><span data-i18n="test.body">Body</span> <textarea id="t-body" rows="3">Manual smoke test from the admin UI.</textarea></label>
-  <div style="display:flex; gap:0.8em; align-items:center; margin: 0.4em 0;">
-    <button id="btn-test-fire" class="primary" data-i18n="test.fire">Fire test alert</button>
-    <label style="margin:0">
-      <input type="checkbox" id="t-dry-run">
-      <span data-i18n="test.dry_run">Dry-run</span> <small class="muted" data-i18n="test.dry_run_desc">(simulate pipeline, no actual notification — uses /webhook/&lt;sev&gt;?dry_run=1)</small>
-    </label>
-  </div>
-  <p class="muted" data-i18n-html="test.note">When a component is selected, the alert is built as a Grafana-shape payload with <code>commonLabels.component=&lt;chosen&gt;</code>. The render pipeline picks up the matching dashboard URL and adds the action button — exactly like a real alert would. Use this to verify your render config end-to-end without waiting for a real trigger.</p>
-  <pre id="t-result">—</pre>
-</section>
-
-<section id="tab-privacy" class="tabpane legal-page">
-  <h2 data-i18n="legal.privacy.title">Privacy notice</h2>
-  <div class="legal-copy" data-i18n-html="legal.privacy.body">
-    <p><strong>Controller:</strong> the person or organization operating this self-hosted klaxond installation.</p>
-    <p>klaxond processes only the data needed to operate the alerting console: authentication identifiers, session state, audit and backend logs, configuration records, alert payload metadata and delivery history.</p>
-    <h3>Purposes and legal basis</h3>
-    <ul>
-      <li>Operate the service, route alerts, and protect administrative access.</li>
-      <li>Keep security and audit evidence for troubleshooting and abuse prevention.</li>
-      <li>Store user preferences such as language, theme and sidebar state.</li>
-    </ul>
-    <p>The normal legal bases are legitimate interest in operating and securing the service, contract or pre-contract steps where the service is provided to a user, and legal obligation where records must be retained.</p>
-    <h3>Retention and sharing</h3>
-    <p>Runtime logs and recent deliveries are retained for the configured operational window. Configuration backups are retained according to the server policy. Data is not sold and is shared only with infrastructure, identity, notification or hosting providers needed to run the service.</p>
-    <h3>Your rights</h3>
-    <p>Where GDPR applies, you may request access, correction, deletion, restriction, portability or objection. Use the contact details in the legal notice. You may also contact your local data protection authority.</p>
-  </div>
-</section>
-
-<section id="tab-accessibility" class="tabpane legal-page">
-  <h2 data-i18n="legal.accessibility.title">Accessibility statement</h2>
-  <div class="legal-copy" data-i18n-html="legal.accessibility.body">
-    <p>klaxond aims to meet WCAG 2.2 AA principles: perceivable, operable, understandable and robust. The interface supports keyboard navigation, visible focus, text labels next to status colors, dark/light/system themes and responsive layouts.</p>
-    <h3>Current status</h3>
-    <p>This admin console is continuously tested with automated UI checks, but it has not yet been certified by an external accessibility auditor.</p>
-    <h3>Known limitations</h3>
-    <ul>
-      <li>The flow diagram is visual-first; the surrounding text and tables provide the operational data in standard HTML.</li>
-      <li>Large administrative tables may require horizontal scrolling on small screens.</li>
-    </ul>
-    <h3>Feedback</h3>
-    <p>If you encounter an accessibility barrier, use the contacts in the legal notice and include the page URL, browser, assistive technology and a short description of the problem.</p>
-  </div>
-</section>
-
-<section id="tab-terms" class="tabpane legal-page">
-  <h2 data-i18n="legal.terms.title">Terms of use</h2>
-  <div class="legal-copy" data-i18n-html="legal.terms.body">
-    <p>klaxond is an operational notification and alert-management tool. Access is limited to authorized users and integrations.</p>
-    <h3>Acceptable use</h3>
-    <ul>
-      <li>Do not attempt to bypass authentication, authorization, rate limits or audit controls.</li>
-      <li>Do not submit unlawful, abusive, malicious or unrelated payloads.</li>
-      <li>Protect API keys, PATs, passkeys and SSO credentials.</li>
-    </ul>
-    <h3>Service operation</h3>
-    <p>The service may change, restart or be unavailable during maintenance. Alert delivery depends on configured downstream providers such as ntfy, Telegram and SMTP.</p>
-    <h3>Liability</h3>
-    <p>To the maximum extent allowed by law, klaxond is provided for operational use without warranties beyond those expressly agreed in writing.</p>
-  </div>
-</section>
-
-<section id="tab-cookies" class="tabpane legal-page">
-  <h2 data-i18n="legal.cookies.title">Cookie notice</h2>
-  <div class="legal-copy" data-i18n-html="legal.cookies.body">
-    <p>klaxond uses only strictly necessary local storage and authentication state. It does not use advertising, profiling or cross-site tracking cookies.</p>
-    <h3>What is stored</h3>
-    <ul>
-      <li><code>klaxond_session</code>: secure session cookie used to keep authorized users logged in.</li>
-      <li><code>klaxond.lang</code>, <code>klaxond.themeMode</code> and UI state values: browser-local preferences for language, theme and layout.</li>
-    </ul>
-    <p>Because these items are necessary for security or explicitly requested UI preferences, no marketing cookie banner is shown.</p>
-  </div>
-</section>
-
-<section id="tab-legal" class="tabpane legal-page">
-  <h2 data-i18n="legal.notice.title">Legal notice and contacts</h2>
-  <div class="legal-copy" data-i18n-html="legal.notice.body">
-    <p><strong>Application:</strong> klaxond</p>
-    <p><strong>Author:</strong></p>
-    <p><strong>Instance operator:</strong> the person or organization running this self-hosted deployment.</p>
-    <p>klaxond is an open-source administrative console for alert routing and notification delivery. It is not intended to be a public website, marketplace, social network, advertising platform or user-generated content hosting service.</p>
-    <p>For privacy, accessibility, security or legal requests, use the operational contact configured by the instance operator and include enough detail to identify the affected account, URL, request ID or timestamp.</p>
-  </div>
-</section>
-
-    </main>
-
-    <footer class="app-footer">
-      <div class="footer-meta">
-        <strong>klaxond</strong>
-        <span id="footer-version" class="muted version-trigger">v...</span>
-        <span data-i18n-html="footer.byline">by</span>
-      </div>
-      <nav class="footer-links" data-i18n-aria-label="footer.legal_links" aria-label="Legal links">
-        <a href="/legal/privacy" data-i18n="footer.privacy">Privacy</a>
-        <a href="/legal/accessibility" data-i18n="footer.accessibility">Accessibility</a>
-        <a href="/legal/terms" data-i18n="footer.terms">Terms</a>
-        <a href="/legal/cookies" data-i18n="footer.cookies">Cookies</a>
-        <a href="/legal/notice" data-i18n="footer.legal">Legal notice</a>
-      </nav>
-    </footer>
-    <div id="version-easter-egg" class="version-easter-egg hidden" role="dialog" aria-modal="false" aria-live="polite" aria-labelledby="version-egg-title">
-      <div class="version-egg-card">
-        <button id="version-egg-close" class="toast-close version-egg-close" title="Dismiss" aria-label="Dismiss">✕</button>
-        <div id="version-egg-major" class="version-egg-kicker"></div>
-        <strong id="version-egg-title"></strong>
-        <pre id="version-egg-body"></pre>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!--
-  Mermaid remains a large UMD dependency. The Klaxond UI itself now uses one
-  native ESM entrypoint with explicit imports and no global script-order chain.
--->
-<script src="/ui/mermaid.min.js" defer></script>
-<script type="module" src="/ui/app-main.js"></script>
-</body>
-</html>
+</label> <div class="row"> <button id="policy-sim-run" class="btn primary" data-i18n="common.test">Test</button> <span id="policy-sim-status" class="muted"></span> </div> <pre id="policy-sim-output">—</pre> </section> <section id="tab-render" class="tabpane"> <h2 data-i18n="render.title">Component → dashboard mapping</h2> <p class="muted">
+<span data-i18n-html="render.desc_before_base">When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button "Open &lt;label&gt;" pointing to URL. URLs starting with <code>/</code> are appended to</span> <code id="gbase">https://grafana.example.com</code><span data-i18n="render.desc_after_base">.</span> </p> <div class="card">
+<h3 data-i18n="render.runtime_settings">Runtime settings</h3> <div class="grid2"> <label><span data-i18n="render.grafana_base">Grafana base URL</span> <input type="text" id="rc-grafana-base"></label> <label><span data-i18n="render.public_url">Public klaxond URL</span> <input type="text" id="rc-public-url"></label> </div> <div class="grid2">
+<label><span data-i18n="render.grafana_render_base">Grafana render base URL</span> <input type="text" id="rc-grafana-render-base"></label> <label><span data-i18n="render.grafana_render_token">Grafana render token</span> <input type="password" id="rc-grafana-render-token" autocomplete="off"></label> </div>
+<label><input type="checkbox" id="rc-grafana-render-token-clear"> <span data-i18n="render.clear_render_token">Clear Grafana render token</span></label> <div class="grid2"> <label><span data-i18n="render.image_ttl">Image TTL seconds</span> <input type="number" id="rc-render-image-ttl" min="1" max="86400"></label>
+<label><span data-i18n="render.ack_ttl">Ack default TTL seconds</span> <input type="number" id="rc-ack-default-ttl" min="60" max="86400"></label> </div> <div class="muted" id="rc-runtime-status"></div> </div> <table id="t-rc"> <thead><tr><th data-i18n="common.component">Component</th><th data-i18n="render.button_label">Button label</th><th>URL</th><th data-i18n="common.actions">Actions</th></tr></thead>
+<tbody></tbody> </table> <div class="row"> <button id="btn-rc-add" data-i18n="render.add_row">+ Add row</button> <button id="btn-rc-save" class="primary" data-i18n="common.save_changes">Save changes</button> <span id="rc-status" class="muted"></span> </div> </section> <section id="tab-preview" class="tabpane"> <h2 data-i18n="preview.title">Render preview</h2>
+<p class="muted" data-i18n-html="preview.desc">Paste a sample payload (Grafana Alertmanager-shape OR Beszel-shape), pick severity, see what would be POSTed to ntfy. <b>Updates live</b> as you type (debounced 500ms). Nothing is delivered.</p> <div class="grid2"> <div> <label><span data-i18n="common.severity">Severity</span>
+<select id="pv-sev"><option>info</option><option selected>warning</option><option>critical</option></select> </label> <label><span data-i18n="preview.payload">Payload (JSON)</span> <textarea id="pv-input" rows="14"></textarea> </label> <button id="btn-preview" class="primary" data-i18n="common.render">Render</button> <button id="btn-load-grafana-sample" data-i18n="preview.load_grafana">Load Grafana sample</button>
+<button id="btn-load-beszel-sample" data-i18n="preview.load_beszel">Load Beszel sample</button> <button id="btn-load-healthchecks-sample" data-i18n="preview.load_healthchecks">Load Healthchecks sample</button> <button id="btn-load-wud-sample" data-i18n="preview.load_wud">Load WUD sample</button> <button id="btn-load-shelfmark-sample" data-i18n="preview.load_shelfmark">Load Shelfmark sample</button>
+<button id="btn-load-prowlarr-sample" data-i18n="preview.load_prowlarr">Load Prowlarr sample</button> <button id="btn-load-decypharr-sample" data-i18n="preview.load_decypharr">Load Decypharr sample</button> </div> <div> <label data-i18n="preview.visual">Visual preview</label> <div id="pv-visual" class="ntfy-mock"> <div class="ntfy-mock-app">ntfy · push.example.com</div>
+<div class="ntfy-mock-title" id="pv-vis-title">—</div> <div class="ntfy-mock-body" id="pv-vis-body" data-i18n="preview.mock_empty">paste a payload + Render</div> <div class="ntfy-mock-meta"> <span class="ntfy-mock-tags" id="pv-vis-tags"></span> <span class="ntfy-mock-prio" id="pv-vis-prio"></span> </div> <div class="ntfy-mock-actions" id="pv-vis-actions"></div> </div>
+<label data-i18n="preview.raw">Raw ntfy headers + body</label> <pre id="pv-output">—</pre> </div> </div> </section> <section id="tab-routing" class="tabpane"> <h2 data-i18n="routing.title">Channel routing</h2> <p class="muted" data-i18n-html="routing.desc">Routing config is saved to <code>/data/klaxond.toml</code> or sidecars. Compose env vars still take precedence when set.</p> <h3 style="margin-top:18px">ntfy</h3>
+<div class="card"> <label><span data-i18n="routing.base_url">Base URL</span> <input type="text" id="r-ntfy-url"></label> <div class="muted" id="r-ntfy-status" style="margin-top:0.4em"></div> </div> <h3 data-i18n="routing.ntfy_topics">ntfy topics</h3> <div class="card"> <p class="muted"><small data-i18n-html="routing.ntfy_topics_desc"> Each topic has a name (ntfy topic id), an optional bearer token, and a list
+of severities it <i>handles</i>. Same severity in multiple topics → fan-out (notification sent to all matching topics). Severity names can be any non-empty string (e.g. <code>info</code>, <code>warning</code>, <code>critical</code>, or custom like <code>low</code>/<code>page</code>). <br/>Token <code>***SET***</code> = keep existing; empty = clear (env vars
+repopulate at next reload for legacy info/warning/critical names). </small></p> <div id="ntfy-topics-editor"></div> <p> <button id="ntfy-topic-add" data-i18n="routing.add_topic">+ Add topic</button> <button id="ntfy-topics-save" class="primary" data-i18n="routing.save_topics">Save topics</button> <span id="ntfy-topics-status" class="muted" style="margin-left:1em"></span> </p>
+<p class="muted" id="ntfy-topics-summary"><small>—</small></p> <p class="muted"><small id="ntfy-topics-note"></small></p> </div> <h3>Telegram</h3> <div class="card"> <div class="grid2"> <label><span data-i18n="routing.chat_id">Chat ID</span> <input type="text" id="r-tg-chat"></label> <label><span data-i18n="routing.api_base">API base URL</span> <input type="text" id="r-tg-api-base"></label> </div>
+<label><span data-i18n="routing.bot_token_label">Bot token</span> <input type="password" id="r-tg-token" autocomplete="off"></label> <label><input type="checkbox" id="r-tg-token-clear"> <span data-i18n="routing.clear_bot_token">Clear bot token</span></label> <div class="muted" id="r-tg-status"></div> </div> <h3>SMTP</h3> <div class="card"> <div class="grid2">
+<label><span data-i18n="routing.host">Host</span> <input type="text" id="r-smtp-host"></label> <label><span data-i18n="routing.port">Port</span> <input type="number" id="r-smtp-port" min="1" max="65535"></label> </div> <div class="grid2"> <label><span data-i18n="routing.from_addr">From address</span> <input type="text" id="r-smtp-from"></label>
+<label><span data-i18n="routing.to_addr">To address</span> <input type="text" id="r-smtp-to"></label> </div> <div class="grid2"> <label><span data-i18n="routing.user_label">Username</span> <input type="text" id="r-smtp-user" autocomplete="username"></label> <label><span data-i18n="routing.password_label">Password</span> <input type="password" id="r-smtp-password" autocomplete="new-password"></label> </div>
+<label><input type="checkbox" id="r-smtp-starttls"> <span data-i18n="routing.starttls">Use STARTTLS</span></label> <label><input type="checkbox" id="r-smtp-password-clear"> <span data-i18n="routing.clear_smtp_password">Clear SMTP password</span></label> <div class="muted" id="r-smtp-status"></div> </div> <div class="row" style="margin-top:18px">
+<button id="btn-routing-save" class="primary" data-i18n="routing.save">Save routing</button> <span id="routing-msg" class="muted"></span> </div> <h2 style="margin-top:2em;"><span data-i18n="ingest.title">Inbound webhook auth</span> <small class="muted" data-i18n="ingest.sub">(0.9.18+, per-source shared secret)</small></h2> <div class="card"> <p class="muted" data-i18n-html="ingest.desc">
+Optional shared secret per ingest source. When configured, the emitter MUST present the secret via one of: <br/>1. <code>Authorization: Bearer &lt;secret&gt;</code> header (Grafana Alertmanager, ntfy, custom) <br/>2. <code>X-Klaxond-Token: &lt;secret&gt;</code> header <br/>3. <code>?token=&lt;secret&gt;</code> query parameter
+<br/>Sources with no configured secret remain in <b>legacy permissive mode</b> (accept all — same as ≤ 0.9.17). Env <code>KLAXOND_INGEST_SECRET_&lt;SOURCE&gt;</code> overrides TOML. </p> <table id="t-ingest-auth">
+<thead><tr><th data-i18n="common.source">Source</th><th data-i18n="common.status">Status</th><th data-i18n="ingest.secret_source">Source of secret</th><th data-i18n="common.actions">Actions</th></tr></thead> <tbody></tbody> </table>
+<p class="muted" style="margin-top:0.8em"><small data-i18n-html="ingest.note">"Generate" creates a 64-char hex secret server-side; the value is shown <b>once</b> in a toast — copy it into the emitter immediately. "Clear" removes the secret (source returns to permissive mode).</small></p> </div> </section> <section id="tab-cascade" class="tabpane"> <h2 data-i18n="cascade.title">Cascade tier chain</h2>
+<p class="muted" data-i18n-html="cascade.desc">Order matters: first tier is always tried; subsequent tiers are tried only if cascade is enabled (always on for <code>/beszel/*</code>, gated for <code>/webhook/*</code>). Drag rows to reorder, edit timeouts. Persisted to <code>/data/klaxond.toml</code>.</p> <table id="t-cas">
+<thead><tr><th>#</th><th data-i18n="common.channel">Channel</th><th data-i18n="cascade.timeout">Timeout (s)</th><th></th></tr></thead> <tbody></tbody> </table> <div class="row"> <button id="btn-cas-add" data-i18n="cascade.add_tier">+ Add tier</button> <button id="btn-cas-save" class="primary" data-i18n="common.save">Save</button>
+<label style="margin-left:auto"><input type="checkbox" id="cas-default"> <span data-i18n="cascade.default_webhook">default-enabled for /webhook/* (Grafana)</span></label> <span id="cas-status" class="muted"></span> </div> </section> <section id="tab-delivery" class="tabpane"> <h2 data-i18n="delivery.title">Delivery — policies + rules</h2>
+<p class="muted" data-i18n-html="delivery.desc">Policies define <em>how</em> klaxond delivers an alert (cascade = stop at first OK; broadcast = fire all tiers in parallel). Rules pick a policy based on the alert's labels (first-match wins, regex with <code>re:</code> prefix). When no rule matches the <strong>default policy</strong> applies. <code>cascade</code> is the synthetic policy built from the global <code>[cascade]</code> tier list in <code>klaxond.toml</code> — picked here by name.</p>
+<h3 style="margin-top:18px" data-i18n="delivery.default_policy_title">Default policy (no-match fallback)</h3> <div class="card"> <label><span data-i18n="delivery.default_policy">Default policy</span> <select id="d-default-policy"></select> </label> </div> <h3 data-i18n="delivery.policies">Policies</h3> <table id="t-pol">
+<thead><tr><th data-i18n="common.name">Name</th><th data-i18n="common.mode">Mode</th><th data-i18n="delivery.tiers_order">Tiers (in order)</th><th></th></tr></thead> <tbody></tbody> </table> <div class="row"> <button id="btn-pol-add" data-i18n="delivery.add_policy">+ Add policy</button> </div> <h3 data-i18n="delivery.rules_title">Rules (first-match wins)</h3> <table id="t-rules">
+<thead><tr><th>#</th><th data-i18n-html="delivery.match_header">Match (label = value, prefix <code>re:</code> for regex)</th><th data-i18n="delivery.policy">Policy</th><th></th></tr></thead> <tbody></tbody> </table> <div class="row"> <button id="btn-rule-add" data-i18n="delivery.add_rule">+ Add rule</button> <button id="btn-delivery-save" class="primary" data-i18n="delivery.save">Save delivery config</button>
+<span id="delivery-status" class="muted"></span> </div> </section> <section id="tab-grouping" class="tabpane"> <h2 data-i18n="dedup.title">Notification grouping (dedup)</h2> <p class="muted" data-i18n-html="dedup.desc1"> When enabled, klaxond buffers inbound events per source for the configured window before delivering a single aggregated notification. Useful when a
+cluster-wide trigger (e.g. WUD finding the same image update on N hosts) would otherwise produce N pushes. </p> <p class="muted" data-i18n-html="dedup.desc2"> Strategy <b>key</b> groups events sharing the same dedup key: WUD → image name, Grafana → alertname, Beszel → container name, HC → check name. <br/> <b>Severity caveat</b>: by default <code>critical</code> events are NOT debounced
+(delivered immediately, even if buffering is enabled). Use the <i>override critical</i> toggle per source if you want to debounce critical too. Disk-backed pending queue at <code>/data/dedup_pending/</code> survives klaxond restarts — pending events are flushed immediately on next start. </p> <div id="dedup-cards"></div> <p> <button id="dedup-save" class="primary" data-i18n="common.save">Save</button>
+<span id="dedup-status" class="muted" style="margin-left:1em"></span> </p> <p class="muted"><small data-i18n="dedup.pending_note">Pending counts shown in cards are live (refreshed when this tab is opened).</small></p> </section> <section id="tab-auth" class="tabpane"> <h2 data-i18n="auth.title">Authentication</h2> <p class="muted">
+<span data-i18n-html="auth.desc_before_user">Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user:</span> <code id="auth-current-user">—</code>. </p> <h3 data-i18n="common.mode">Mode</h3> <div class="card">
+<label><input type="radio" name="auth-mode" value="none"> <span data-i18n-html="auth.mode_none"><b>None</b> — public (default; suitable when klaxond is on a trusted internal network)</span> </label><br/> <label><input type="radio" name="auth-mode" value="basic"> <span data-i18n-html="auth.mode_basic"><b>Basic</b> — single user with Argon2id password (browser native)</span> </label> <br/>
+<label><input type="radio" name="auth-mode" value="ldap"> <span data-i18n-html="auth.mode_ldap"><b>LDAP</b> — directory username/password with direct bind or service-bind search</span> </label> <br/> <label><input type="radio" name="auth-mode" value="oidc"> <span data-i18n-html="auth.mode_oidc"><b>OIDC</b> — Authentik, Keycloak, Authelia, Google, generic (issuer discovery)</span> </label>
+<small id="auth-jwt-warn" class="muted hidden" style="color:#c44; display:block; margin-left:1.5em" data-i18n="auth.jwt_warn">JWT verification is unavailable — OIDC will fail</small> <br/> <label><input type="radio" name="auth-mode" value="trusted-proxy">
+<span data-i18n-html="auth.mode_trusted_proxy"><b>Trusted proxy</b> — read <code>X-Forwarded-User</code> from upstream proxy (Traefik+Authentik forwardAuth, oauth2-proxy, ecc.) — CIDR-gated for safety</span> </label> </div> <h3 data-i18n="auth.session">Session</h3> <div class="card"> <label><span data-i18n="auth.timeout">Timeout (hours, 1..720)</span>
+<input type="number" id="auth-session-h" min="1" max="720" value="8" style="width:6em"> </label> </div> <h3 id="auth-basic-h" data-i18n="auth.basic_config">Basic auth config</h3> <div class="card" id="auth-basic-card"> <label><span data-i18n="auth.username">Username</span> <input type="text" id="auth-basic-user" autocomplete="username"></label>
+<label><span data-i18n="auth.realm">Realm</span> <input type="text" id="auth-basic-realm" value="klaxond"></label> <label><span data-i18n="auth.set_password">Set password (leave blank to keep existing)</span> <input type="password" id="auth-basic-pwd" autocomplete="new-password" placeholder="new password (Argon2id-hashed before storage)" data-i18n-placeholder="auth.password_placeholder"> </label>
+<small id="auth-basic-pwd-policy" class="muted"></small> <p class="muted"><small><span data-i18n="auth.password_hash_status">Password hash status:</span> <code id="auth-basic-status">—</code></small></p> <div class="auth-totp-panel"> <p class="muted"><small><span data-i18n="auth.totp_status">TOTP status:</span> <code id="auth-totp-status">—</code></small></p> <div class="row">
+<button type="button" class="btn" id="totp-start" data-i18n="auth.totp_start">Set up TOTP</button> <button type="button" class="danger" id="totp-disable" data-i18n="auth.totp_disable">Disable TOTP</button> <span id="totp-status" class="muted"></span> </div> <div id="totp-setup" class="notice hidden"> <label><span data-i18n="auth.totp_secret">Secret</span>
+<input type="text" id="totp-secret" readonly autocomplete="off"> </label> <label><span data-i18n="auth.totp_uri">Authenticator URI</span> <input type="text" id="totp-uri" readonly autocomplete="off"> </label> <div class="row"> <label style="margin:0"><span data-i18n="auth.totp_code">6-digit code</span>
+<input type="text" id="totp-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000"> </label> <button type="button" class="btn primary" id="totp-enable" data-i18n="auth.totp_enable">Enable TOTP</button> </div> </div> </div> </div> <h3 id="auth-ldap-h" data-i18n="auth.ldap_config">LDAP config</h3> <div class="card" id="auth-ldap-card"> <div class="grid2">
+<label><span data-i18n="auth.ldap_url">LDAP URL</span> <input type="url" id="auth-ldap-url" placeholder="ldaps://directory.example.com:636"> </label> <label><span data-i18n="auth.ldap_timeout">Timeout (seconds)</span> <input type="number" id="auth-ldap-timeout" min="1" max="60" value="5"> </label> </div> <label><span data-i18n="auth.ldap_bind_template">Bind DN template</span>
+<input type="text" id="auth-ldap-bind-template" placeholder="uid={username},ou=people,dc=example,dc=com"> </label> <div class="grid2"> <label><span data-i18n="auth.ldap_service_dn">Service bind DN</span> <input type="text" id="auth-ldap-service-dn" autocomplete="off"> </label> <label><span data-i18n="auth.ldap_service_password">Service bind password</span>
+<input type="password" id="auth-ldap-service-password" autocomplete="off" placeholder="(leave blank to keep existing)" data-i18n-placeholder="auth.keep_existing_placeholder"> <small class="muted"><span data-i18n="common.status">Status</span>: <code id="auth-ldap-service-status">—</code></small> </label> </div> <label><span data-i18n="auth.ldap_base_dn">Base DN</span>
+<input type="text" id="auth-ldap-base-dn" placeholder="ou=people,dc=example,dc=com"> </label> <label><span data-i18n="auth.ldap_user_filter">User filter</span> <input type="text" id="auth-ldap-user-filter" placeholder="(|(uid={username})(sAMAccountName={username})(mail={username}))"> </label> <div class="grid2"> <label><span data-i18n="auth.ldap_scope">Search scope</span> <select id="auth-ldap-scope">
+<option value="subtree">Subtree</option> <option value="one">One level</option> <option value="base">Base</option> </select> </label> <label><span data-i18n="auth.ldap_username_attr">Username attribute</span> <input type="text" id="auth-ldap-username-attr" value="uid"> </label> <label><span data-i18n="auth.ldap_email_attr">Email attribute</span> <input type="text" id="auth-ldap-email-attr" value="mail"> </label>
+<label><span data-i18n="auth.ldap_name_attr">Name attribute</span> <input type="text" id="auth-ldap-name-attr" value="cn"> </label> <label><span data-i18n="auth.ldap_groups_attr">Groups attribute</span> <input type="text" id="auth-ldap-groups-attr" value="memberOf"> </label> </div> </div> <h3 id="auth-oidc-h" data-i18n="auth.oidc_config">OIDC config</h3> <div class="card" id="auth-oidc-card">
+<label><span data-i18n="auth.provider_preset">Provider preset</span> <select id="auth-oidc-provider"> <option value="authentik">Authentik</option> <option value="keycloak">Keycloak</option> <option value="authelia">Authelia</option> <option value="google">Google</option> <option value="other">Other / Generic</option> </select> </label> <label><span data-i18n="auth.issuer_url">Issuer URL</span>
+<input type="url" id="auth-oidc-issuer" placeholder="https://idp.example.com/application/o/klaxond/"> <small class="muted" data-i18n-html="auth.issuer_hint">Authentik: <code>https://&lt;host&gt;/application/o/&lt;slug&gt;/</code> · Keycloak: <code>https://&lt;host&gt;/realms/&lt;realm&gt;</code> · Authelia: <code>https://&lt;host&gt;</code> · Google: <code>https://accounts.google.com</code></small> </label>
+<label><span data-i18n="auth.client_id">Client ID</span> <input type="text" id="auth-oidc-cid" autocomplete="off"> </label> <label><span data-i18n="auth.client_secret">Client Secret</span> <input type="password" id="auth-oidc-csec" autocomplete="off" placeholder="(leave blank to keep existing)" data-i18n-placeholder="auth.keep_existing_placeholder">
+<small class="muted"><span data-i18n="common.status">Status</span>: <code id="auth-oidc-csec-status">—</code></small> </label> <label><span data-i18n="auth.scopes">Scopes</span> <input type="text" id="auth-oidc-scopes" value="openid profile email"> </label> <label><span data-i18n="auth.required_group">Required group (optional, to restrict to a specific group)</span>
+<input type="text" id="auth-oidc-group" placeholder="e.g. klaxond-admins" data-i18n-placeholder="auth.group_placeholder"> </label> <label><span data-i18n="auth.redirect_path">Redirect path</span> <input type="text" id="auth-oidc-redirect" value="/api/auth/callback"> </label>
+<p class="muted"><small><span data-i18n="auth.redirect_uri">Redirect URI used at the IdP:</span> <code id="auth-oidc-full-redirect">https://&lt;host&gt;&lt;redirect_path&gt;</code></small></p> </div> <h3 id="auth-tp-h" data-i18n="auth.trusted_proxy_config">Trusted-proxy config</h3> <div class="card" id="auth-tp-card">
+<label><span data-i18n="auth.user_header">User header</span> <input type="text" id="auth-tp-uheader" value="X-Forwarded-User"></label> <label><span data-i18n="auth.email_header">Email header</span> <input type="text" id="auth-tp-eheader" value="X-Forwarded-Email"></label> <label><span data-i18n="auth.groups_header">Groups header</span> <input type="text" id="auth-tp-gheader" value="X-Forwarded-Groups"></label>
+<label><span data-i18n="auth.trusted_cidrs">Trusted CIDRs (comma-separated)</span> <textarea id="auth-tp-cidrs" rows="2" placeholder="192.168.0.0/16, 10.0.0.0/8, 127.0.0.1/32"></textarea> <small class="muted" data-i18n="auth.trusted_cidrs_hint">Only requests from these source IPs will have their forwarded-user header honored. Critical to prevent header spoofing.</small> </label> </div>
+<div id="auth-guard" class="notice warn hidden"></div> <h3 data-i18n="auth.webauthn_title">WebAuthn / passkeys</h3> <div class="card"> <label><input type="checkbox" id="auth-webauthn-enabled" checked> <span data-i18n="auth.webauthn_enabled">Enable passkeys</span></label> <div class="grid2"> <label><span data-i18n="auth.webauthn_origin">Origin</span>
+<input type="url" id="auth-webauthn-origin" placeholder="https://klaxond.example.com"> </label> <label><span data-i18n="auth.webauthn_rp_id">Relying party ID</span> <input type="text" id="auth-webauthn-rp-id" placeholder="klaxond.example.com"> </label> </div> <p class="muted"><small data-i18n="auth.webauthn_hint">Leave empty to use KLAXOND_PUBLIC_URL. RP ID must match the browser origin domain.</small></p>
+<div class="row"> <label style="margin:0"><span data-i18n="auth.passkey_name">Passkey name</span> <input type="text" id="passkey-name" placeholder="MacBook Touch ID"></label> <button id="passkey-register" class="btn" data-i18n="auth.passkey_register">Register passkey</button> <a class="btn" href="/api/auth/passkey/login" data-i18n="auth.passkey_login_link">Passkey login page</a>
+<span id="passkey-status" class="muted"></span> </div> <div class="table-scroll"> <table id="t-passkeys"> <thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.user">User</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.actions">Actions</th></tr></thead> <tbody></tbody> </table> </div> </div>
+<h3 data-i18n="auth.tokens_title">Access tokens</h3> <div class="card"> <div class="token-kind-header"> <div class="segmented-control token-kind-segment" role="tablist" data-i18n-aria-label="auth.token_kind" aria-label="Token kind"> <button type="button" class="seg-btn active" data-token-kind-option="api-key" aria-pressed="true" role="tab" data-i18n="auth.api_keys">API Keys</button>
+<button type="button" class="seg-btn" data-token-kind-option="pat" aria-pressed="false" role="tab" data-i18n="auth.pats">PATs</button> </div> <span id="token-kind-summary" class="muted"></span> </div> <input type="hidden" id="token-kind" value="api-key"> <div class="grid2"> <label><span data-i18n="common.name">Name</span> <input type="text" id="token-name" placeholder="grafana-admin-script"></label>
+<label><span data-i18n="auth.expires_days">Expires in days</span> <input type="number" id="token-expires-days" min="1" max="3650" placeholder="never"></label> </div> <div id="token-scopes" class="scope-grid"></div> <div class="row"> <button id="token-create" class="btn primary" data-i18n="auth.token_create">Create token</button> <span id="token-status" class="muted"></span> </div>
+<pre id="token-once" class="hidden"></pre> <div class="token-table-heading"> <h4 id="token-table-title" data-i18n="auth.api_keys">API Keys</h4> <span id="token-table-count" class="muted"></span> </div> <div class="table-scroll"> <table id="t-tokens">
+<thead><tr><th data-i18n="common.name">Name</th><th data-i18n="auth.scopes">Scopes</th><th data-i18n="auth.created">Created</th><th data-i18n="auth.last_used">Last used</th><th data-i18n="common.status">Status</th><th></th></tr></thead> <tbody></tbody> </table> </div> </div> <p> <button id="auth-save" class="primary" data-i18n="common.save">Save</button>
+<span id="auth-status" class="muted" style="margin-left:1em"></span> <span style="float:right"> <a href="/api/auth/logout" data-auth-logout data-i18n="auth.logout">Logout</a> </span> </p> </section> <section id="tab-test" class="tabpane"> <h2 data-i18n="test.title">Send synthetic alert</h2>
+<p class="muted" data-i18n="test.desc">Fires a real alert through the cascade (ntfy → Telegram → SMTP) with the runtime cascade flag. Counts toward "Recent deliveries".</p> <div class="grid2"> <label><span data-i18n="common.severity">Severity</span> <select id="t-sev"><option>info</option><option selected>warning</option><option>critical</option></select> </label>
+<label><span data-i18n="test.component">Component (action button preview)</span> <select id="t-component"><option value="" data-i18n="render.none_freeform">(none — freeform, no button)</option></select> </label> </div> <div class="grid2"> <label><span data-i18n="test.host_label">Host label</span> <input id="t-host" value="" placeholder="(optional — appended to title)" data-i18n-placeholder="test.host_placeholder">
+</label> <label><span data-i18n="common.title">Title</span> <input id="t-title" value="klaxond synthetic test"> </label> </div> <label><span data-i18n="test.body">Body</span> <textarea id="t-body" rows="3">Manual smoke test from the admin UI.</textarea></label> <div style="display:flex; gap:0.8em; align-items:center; margin: 0.4em 0;">
+<button id="btn-test-fire" class="primary" data-i18n="test.fire">Fire test alert</button> <label style="margin:0"> <input type="checkbox" id="t-dry-run"> <span data-i18n="test.dry_run">Dry-run</span> <small class="muted" data-i18n="test.dry_run_desc">(simulate pipeline, no actual notification — uses /webhook/&lt;sev&gt;?dry_run=1)</small> </label> </div>
+<p class="muted" data-i18n-html="test.note">When a component is selected, the alert is built as a Grafana-shape payload with <code>commonLabels.component=&lt;chosen&gt;</code>. The render pipeline picks up the matching dashboard URL and adds the action button — exactly like a real alert would. Use this to verify your render config end-to-end without waiting for a real trigger.</p> <pre id="t-result">—</pre>
+</section> <section id="tab-privacy" class="tabpane legal-page"> <h2 data-i18n="legal.privacy.title">Privacy notice</h2> <div class="legal-copy" data-i18n-html="legal.privacy.body"> <p><strong>Controller:</strong> the person or organization operating this self-hosted klaxond installation.</p>
+<p>klaxond processes only the data needed to operate the alerting console: authentication identifiers, session state, audit and backend logs, configuration records, alert payload metadata and delivery history.</p> <h3>Purposes and legal basis</h3> <ul> <li>Operate the service, route alerts, and protect administrative access.</li> <li>Keep security and audit evidence for troubleshooting and abuse prevention.</li>
+<li>Store user preferences such as language, theme and sidebar state.</li> </ul> <p>The normal legal bases are legitimate interest in operating and securing the service, contract or pre-contract steps where the service is provided to a user, and legal obligation where records must be retained.</p> <h3>Retention and sharing</h3>
+<p>Runtime logs and recent deliveries are retained for the configured operational window. Configuration backups are retained according to the server policy. Data is not sold and is shared only with infrastructure, identity, notification or hosting providers needed to run the service.</p> <h3>Your rights</h3>
+<p>Where GDPR applies, you may request access, correction, deletion, restriction, portability or objection. Use the contact details in the legal notice. You may also contact your local data protection authority.</p> </div> </section> <section id="tab-accessibility" class="tabpane legal-page"> <h2 data-i18n="legal.accessibility.title">Accessibility statement</h2>
+<div class="legal-copy" data-i18n-html="legal.accessibility.body"> <p>klaxond aims to meet WCAG 2.2 AA principles: perceivable, operable, understandable and robust. The interface supports keyboard navigation, visible focus, text labels next to status colors, dark/light/system themes and responsive layouts.</p> <h3>Current status</h3>
+<p>This admin console is continuously tested with automated UI checks, but it has not yet been certified by an external accessibility auditor.</p> <h3>Known limitations</h3> <ul> <li>The flow diagram is visual-first; the surrounding text and tables provide the operational data in standard HTML.</li> <li>Large administrative tables may require horizontal scrolling on small screens.</li> </ul> <h3>Feedback</h3>
+<p>If you encounter an accessibility barrier, use the contacts in the legal notice and include the page URL, browser, assistive technology and a short description of the problem.</p> </div> </section> <section id="tab-terms" class="tabpane legal-page"> <h2 data-i18n="legal.terms.title">Terms of use</h2> <div class="legal-copy" data-i18n-html="legal.terms.body">
+<p>klaxond is an operational notification and alert-management tool. Access is limited to authorized users and integrations.</p> <h3>Acceptable use</h3> <ul> <li>Do not attempt to bypass authentication, authorization, rate limits or audit controls.</li> <li>Do not submit unlawful, abusive, malicious or unrelated payloads.</li> <li>Protect API keys, PATs, passkeys and SSO credentials.</li> </ul>
+<h3>Service operation</h3> <p>The service may change, restart or be unavailable during maintenance. Alert delivery depends on configured downstream providers such as ntfy, Telegram and SMTP.</p> <h3>Liability</h3> <p>To the maximum extent allowed by law, klaxond is provided for operational use without warranties beyond those expressly agreed in writing.</p> </div> </section>
+<section id="tab-cookies" class="tabpane legal-page"> <h2 data-i18n="legal.cookies.title">Cookie notice</h2> <div class="legal-copy" data-i18n-html="legal.cookies.body"> <p>klaxond uses only strictly necessary local storage and authentication state. It does not use advertising, profiling or cross-site tracking cookies.</p> <h3>What is stored</h3> <ul>
+<li><code>klaxond_session</code>: secure session cookie used to keep authorized users logged in.</li> <li><code>klaxond.lang</code>, <code>klaxond.themeMode</code> and UI state values: browser-local preferences for language, theme and layout.</li> </ul> <p>Because these items are necessary for security or explicitly requested UI preferences, no marketing cookie banner is shown.</p> </div> </section>
+<section id="tab-legal" class="tabpane legal-page"> <h2 data-i18n="legal.notice.title">Legal notice and contacts</h2> <div class="legal-copy" data-i18n-html="legal.notice.body"> <p><strong>Application:</strong> klaxond</p> <p><strong>Author:</strong></p> <p><strong>Instance operator:</strong> the person or organization running this self-hosted deployment.</p>
+<p>klaxond is an open-source administrative console for alert routing and notification delivery. It is not intended to be a public website, marketplace, social network, advertising platform or user-generated content hosting service.</p>
+<p>For privacy, accessibility, security or legal requests, use the operational contact configured by the instance operator and include enough detail to identify the affected account, URL, request ID or timestamp.</p> </div> </section> </main> <footer class="app-footer"> <div class="footer-meta"> <strong>klaxond</strong> <span id="footer-version" class="muted version-trigger">v...</span>
+<span data-i18n-html="footer.byline">by</span> </div> <nav class="footer-links" data-i18n-aria-label="footer.legal_links" aria-label="Legal links"> <a href="/legal/privacy" data-i18n="footer.privacy">Privacy</a> <a href="/legal/accessibility" data-i18n="footer.accessibility">Accessibility</a> <a href="/legal/terms" data-i18n="footer.terms">Terms</a> <a href="/legal/cookies" data-i18n="footer.cookies">Cookies</a>
+<a href="/legal/notice" data-i18n="footer.legal">Legal notice</a> </nav> </footer> <div id="version-easter-egg" class="version-easter-egg hidden" role="dialog" aria-modal="false" aria-live="polite" aria-labelledby="version-egg-title"> <div class="version-egg-card"> <button id="version-egg-close" class="toast-close version-egg-close" title="Dismiss" aria-label="Dismiss">✕</button>
+<div id="version-egg-major" class="version-egg-kicker"></div> <strong id="version-egg-title"></strong> <pre id="version-egg-body"></pre> </div> </div> </div> </div> <!-- Mermaid remains a large UMD dependency. The Klaxond UI itself now uses one native ESM entrypoint with explicit imports and no global script-order chain. --> <script src="/ui/mermaid.min.js" defer></script>
+<script type="module" src="/ui/app-main.js"></script> </body> </html>

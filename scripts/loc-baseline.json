@@ -23,54 +23,5 @@
       "reason": "Vendored minified Mermaid bundle; update from upstream instead of hand-editing."
     }
   },
-  "allow": {
-    "src/auth.rs": {
-      "linesAtBaseline": 1872,
-      "reason": "Auth runtime remains broad because it coordinates sessions, OIDC, tokens, CSRF, sudo, passkeys and local login; split before extending auth flows."
-    },
-    "tests/e2e/klaxond.spec.ts": {
-      "linesAtBaseline": 1664,
-      "reason": "End-to-end coverage is consolidated around one server fixture; split by feature area before adding more UI scenarios."
-    },
-    "src/parsers.rs": {
-      "linesAtBaseline": 1363,
-      "reason": "Notification parser parity is consolidated for migration safety; split by source only with golden parity coverage."
-    },
-    "static/i18n.js": {
-      "linesAtBaseline": 1334,
-      "reason": "Translation catalog is centralized for the current vanilla UI; split by locale or feature before adding large copy blocks."
-    },
-    "static/style.css": {
-      "linesAtBaseline": 1208,
-      "reason": "Single stylesheet owns the full admin UI theme; split into layout/view/theme layers before adding substantial UI styling."
-    },
-    "static/index.html": {
-      "linesAtBaseline": 1089,
-      "reason": "Single-page UI markup is still static HTML; split templates/components before adding new full-page surfaces."
-    },
-    "src/delivery.rs": {
-      "linesAtBaseline": 917,
-      "reason": "Historical Rust module above the 500 LOC guard; split handlers, domain logic, or adapters before extending behavior."
-    },
-    "src/config/tests.rs": {
-      "linesAtBaseline": 743,
-      "reason": "Historical Rust module above the 500 LOC guard; split handlers, domain logic, or adapters before extending behavior."
-    },
-    "src/history.rs": {
-      "linesAtBaseline": 728,
-      "reason": "Historical Rust module above the 500 LOC guard; split handlers, domain logic, or adapters before extending behavior."
-    },
-    "src/endpoints.rs": {
-      "linesAtBaseline": 683,
-      "reason": "Historical Rust module above the 500 LOC guard; split handlers, domain logic, or adapters before extending behavior."
-    },
-    "static/app-inhibitions.js": {
-      "linesAtBaseline": 619,
-      "reason": "Historical source file above the 500 LOC guard; split by feature namespace before extending behavior."
-    },
-    "static/app-auth-view.js": {
-      "linesAtBaseline": 563,
-      "reason": "Historical source file above the 500 LOC guard; split by feature namespace before extending behavior."
-    }
-  }
+  "allow": {}
 }
