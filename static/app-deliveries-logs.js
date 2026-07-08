@@ -1,7 +1,16 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { fetchDeliveries } from "./app-status.js";
+
 // ---- Deliveries ----
 let _delivCache = [];  // most recent fetch — filter applies client-side without re-fetching
 
-async function loadDeliv(opts = {}) {
+export async function loadDeliv(opts = {}) {
   try {
     _delivCache = await fetchDeliveries(10000, { scope: "deliveries", force: opts.force });
   } catch (e) {
@@ -11,7 +20,7 @@ async function loadDeliv(opts = {}) {
   renderDeliv();
 }
 
-function renderDeliv(opts = {}) {
+export function renderDeliv(opts = {}) {
   const tb = $("#t-deliv tbody"); if (!tb) return;
   tb.innerHTML = "";
   const total = (_delivCache || []).length;
@@ -69,7 +78,7 @@ function _toggleDelivExpand(tr, r) {
 
 // Re-render (client-side, no fetch) when filter changes
 const scheduleDelivRender = debounce(() => renderDeliv({ reset: true }));
-document.addEventListener("DOMContentLoaded", () => {
+onReady(() => {
   $("#deliv-filter")?.addEventListener("input", e => {
     if (!String(e.target?.value || "").trim()) {
       scheduleDelivRender.cancel();
@@ -138,7 +147,7 @@ function logsPageSize() {
   return Math.max(1, Math.min(raw, 500));
 }
 
-async function loadLogs(opts = {}) {
+export async function loadLogs(opts = {}) {
   clearTimeout(_logsFilterTimer);
   _logsFilterTimer = null;
   if (opts.reset) _logsOffset = 0;
@@ -252,8 +261,13 @@ function updateLogsAutorefresh() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  $("#logs-refresh")?.addEventListener("click", () => loadLogs({ force: true }));
+document.addEventListener("click", e => {
+  if (!e.target.closest?.("#logs-refresh")) return;
+  e.preventDefault();
+  loadLogs({ force: true });
+});
+
+onReady(() => {
   $("#logs-filter")?.addEventListener("input", scheduleLogsLoad);
   $("#logs-level")?.addEventListener("change", () => loadLogs({ reset: true }));
   $("#logs-limit")?.addEventListener("change", () => loadLogs({ reset: true }));
@@ -287,7 +301,7 @@ function auditPageSize() {
   return Math.max(1, Math.min(raw, 500));
 }
 
-async function loadAudit(opts = {}) {
+export async function loadAudit(opts = {}) {
   clearTimeout(_auditFilterTimer);
   _auditFilterTimer = null;
   if (opts.reset) _auditOffset = 0;
@@ -384,7 +398,7 @@ function changeAuditPage(direction) {
   loadAudit();
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+onReady(() => {
   $("#audit-refresh")?.addEventListener("click", () => loadAudit({ force: true }));
   $("#audit-filter")?.addEventListener("input", scheduleAuditLoad);
   $("#audit-limit")?.addEventListener("change", () => loadAudit({ reset: true }));
@@ -393,4 +407,3 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#audit-next")?.addEventListener("click", () => changeAuditPage("next"));
   $("#audit-last")?.addEventListener("click", () => changeAuditPage("last"));
 });
-

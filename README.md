@@ -543,11 +543,14 @@ This single push **bypasses klaxond** by design — it's the one alert that has 
 klaxond/
 ├── Cargo.toml / Cargo.lock backend crate and locked Rust dependencies
 ├── src/                    Rust backend modules
+│   └── handlers/           HTTP router, ingest, config, auth and observability handlers
 ├── static/
 │   ├── index.html          admin UI (single page)
 │   ├── style.css           dark theme, ~6KB
 │   ├── table-pager.js      shared finite-table pagination helper
-│   └── app.js              vanilla JS, fetch + DOM
+│   ├── app-main.js         native ESM entrypoint
+│   ├── app.js              shared fetch/auth/router/toast helpers
+│   └── app-*.js            feature modules for status, auth, logs, routing and editors
 ├── tests/
 │   ├── parity.rs           parser/inhibition parity tests
 │   └── e2e/                Playwright smoke tests

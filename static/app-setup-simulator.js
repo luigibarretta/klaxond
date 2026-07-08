@@ -1,5 +1,13 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+
 // ---- Setup / diagnostics ----
-async function loadSetup(opts = {}) {
+export async function loadSetup(opts = {}) {
   try {
     const [setup, matrix] = await Promise.all([
       queryGet("setup-status", "/api/setup-status", { force: opts.force, cancelPrevious: false }),
@@ -69,7 +77,7 @@ function renderChannelMatrix(payload) {
   applyTablePager("t-channel-matrix", { reset: true });
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+onReady(() => {
   $("#setup-refresh")?.addEventListener("click", () => loadSetup({ force: true }));
 });
 
@@ -86,7 +94,7 @@ function parseLabelLines(raw) {
   return labels;
 }
 
-async function runPolicySimulation(opts = {}) {
+export async function runPolicySimulation(opts = {}) {
   const status = $("#policy-sim-status");
   if (!opts.silent) setInlineStatus(status, tr("status.testing"));
   try {
@@ -108,7 +116,7 @@ async function runPolicySimulation(opts = {}) {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+onReady(() => {
   $("#policy-sim-run")?.addEventListener("click", () => runPolicySimulation());
 });
 

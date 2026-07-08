@@ -1,5 +1,14 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setCurrentUser, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+  updateTabAccessibleLabel,
+} from "./app.js";
+
 // ---- Status ----
-async function loadStatus(opts = {}) {
+export async function loadStatus(opts = {}) {
   try {
     const s = await queryGet("status", "/api/status", { force: opts.force });
     const setCh = (id, up, url) => {
@@ -150,11 +159,11 @@ function setupVersionEasterEgg() {
   });
 }
 
-document.addEventListener("DOMContentLoaded", setupVersionEasterEgg);
+onReady(setupVersionEasterEgg);
 
 // Update the small count chip next to a tab label.
 // kind: '' (neutral) | 'warn' (yellow) | 'crit' (red). count=0 hides the badge.
-function setTabBadge(tabId, count, kind = "") {
+export function setTabBadge(tabId, count, kind = "") {
   const tab = document.querySelector(`.tab[data-tab="${tabId}"]`);
   if (!tab) return;
   let badge = tab.querySelector(".tab-badge");
@@ -186,7 +195,7 @@ function isReadOnlyViewer(user = {}) {
   return false;
 }
 
-function applyReadOnlyViewerMode(user = {}) {
+export function applyReadOnlyViewerMode(user = {}) {
   const readOnly = isReadOnlyViewer(user);
   document.body.classList.toggle("viewer-readonly", readOnly);
   document.body.setAttribute("data-viewer-readonly-label", tr("auth.viewer_readonly"));
@@ -206,10 +215,8 @@ function applyReadOnlyViewerMode(user = {}) {
 }
 window.applyReadOnlyViewerMode = applyReadOnlyViewerMode;
 
-function updateCurrentUserUI(user = {}) {
-  _currentUser = user || { sub: "anonymous", mode: "none", groups: [] };
-  window.klaxondCurrentUser = _currentUser;
-  if (user.csrf) _csrfToken = user.csrf;
+export function updateCurrentUserUI(user = {}) {
+  const current = setCurrentUser(user || { sub: "anonymous", mode: "none", groups: [] });
   const name = displayUserName(user);
   const mode = user.mode || "none";
   const readOnly = isReadOnlyViewer(user);
@@ -231,7 +238,7 @@ function updateCurrentUserUI(user = {}) {
   applyReadOnlyViewerMode(user);
 }
 
-async function loadCurrentUser() {
+export async function loadCurrentUser() {
   try {
     updateCurrentUserUI(await J("/api/auth/me"));
   } catch (e) {
@@ -248,7 +255,7 @@ async function loadCurrentUser() {
     return window.matchMedia?.("(max-width: 760px)")?.matches || false;
   })();
   document.body.classList.toggle("sidebar-collapsed", collapsed);
-  document.addEventListener("DOMContentLoaded", () => {
+  onReady(() => {
     $("#sidebar-toggle")?.addEventListener("click", () => {
       const next = !document.body.classList.contains("sidebar-collapsed");
       document.body.classList.toggle("sidebar-collapsed", next);
@@ -257,17 +264,13 @@ async function loadCurrentUser() {
   });
 })();
 
-const applyTablePager = (...args) => window.KlaxondTablePager?.applyTablePager(...args);
-const refreshTablePagers = (...args) => window.KlaxondTablePager?.refreshTablePagers(...args);
-const showTableRowPage = (...args) => window.KlaxondTablePager?.showTableRowPage(...args);
-
 function normalizeDeliveries(payload) {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.entries)) return payload.entries;
   return [];
 }
 
-async function fetchDeliveries(limit = 0, opts = {}) {
+export async function fetchDeliveries(limit = 0, opts = {}) {
   const suffix = limit ? `?limit=${encodeURIComponent(limit)}` : "";
   return normalizeDeliveries(await queryGet(opts.scope || `deliveries:${limit || "all"}`, `/api/deliveries${suffix}`, {
     cancelPrevious: false,
@@ -282,7 +285,7 @@ function deliveryTsSeconds(item) {
 
 // Aggregate 24h activity from persisted delivery history.
 // Also updates the tab badges (deliveries24h / suppressions / dedup-pending).
-async function loadStatusActivity() {
+export async function loadStatusActivity() {
   // Deliveries: fetch persisted history + count last 24h
   try {
     const items = await fetchDeliveries(10000);
@@ -321,7 +324,7 @@ async function loadStatusActivity() {
     setTabBadge("grouping", total, total > 0 ? "warn" : "");
   } catch (e) { $("#stat-dedup-count").textContent = "?"; fetchError("status-activity-dedup", e); }
   // Refresh config backup list (also belongs to the Status pane)
-  if (typeof loadConfigBackups === "function") loadConfigBackups();
+  loadConfigBackups();
 }
 
 $("#btn-cascade-toggle").addEventListener("click", async () => {
@@ -336,7 +339,7 @@ $("#btn-cascade-toggle").addEventListener("click", async () => {
 
 
 // ---- Config backup / restore ----
-async function loadConfigBackups() {
+export async function loadConfigBackups() {
   const ul = $("#cfg-backup-list"); if (!ul) return;
   try {
     const r = await queryGet("config-backups", "/api/config/backups");
@@ -439,7 +442,7 @@ async function applyConfigImport() {
 }
 
 // Download is a plain anchor href — the browser handles content-disposition.
-document.addEventListener("DOMContentLoaded", () => {
+onReady(() => {
   const dl = document.getElementById("cfg-backup-download");
   if (dl) dl.href = "/api/config/backup";
   const full = document.getElementById("cfg-full-export-download");
@@ -459,4 +462,3 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 });
-

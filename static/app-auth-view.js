@@ -1,6 +1,16 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { updateCurrentUserUI } from "./app-status.js";
+import { loadNtfyTopics } from "./app-routing.js";
+
 // ---- Authentication tab ----
 let authData = { settings: {}, current_user: {} };
-let _authTokens = [];
+export let authTokens = [];
 let _activeTokenKind = "api-key";
 let _pendingTotpSecret = "";
 
@@ -26,7 +36,7 @@ function tokenKindLabel(kind) {
 
 function updateTokenKindUI() {
   const kind = normalizeTokenKind(_activeTokenKind);
-  const counts = _authTokens.reduce((acc, token) => {
+  const counts = authTokens.reduce((acc, token) => {
     const tokenKind = normalizeTokenKind(token.kind);
     acc[tokenKind] = (acc[tokenKind] || 0) + 1;
     return acc;
@@ -56,7 +66,7 @@ function updateTokenKindUI() {
 function setTokenKind(kind) {
   _activeTokenKind = normalizeTokenKind(kind);
   updateTokenKindUI();
-  renderTokens(_authTokens, { preserveSource: true });
+  renderTokens(authTokens, { preserveSource: true });
 }
 
 function renderAuthGuard(settings) {
@@ -96,9 +106,9 @@ function selectedTokenScopes() {
   return Array.from(document.querySelectorAll("#token-scopes input:checked")).map(cb => cb.value);
 }
 
-function renderTokens(tokens = [], opts = {}) {
-  if (!opts.preserveSource) _authTokens = Array.isArray(tokens) ? tokens : [];
-  const filtered = _authTokens.filter(token => normalizeTokenKind(token.kind) === _activeTokenKind);
+export function renderTokens(tokens = [], opts = {}) {
+  if (!opts.preserveSource) authTokens = Array.isArray(tokens) ? tokens : [];
+  const filtered = authTokens.filter(token => normalizeTokenKind(token.kind) === _activeTokenKind);
   const readOnly = document.body.classList.contains("viewer-readonly");
   updateTokenKindUI();
   const tb = $("#t-tokens tbody"); if (!tb) return;
@@ -149,7 +159,7 @@ function renderPasskeys(passkeys = []) {
 
 function renderTotp(basic = {}) {
   const enabled = !!basic.totp_enabled;
-  _localTotpEnabled = enabled;
+  setLocalTotpEnabled(enabled);
   const status = $("#auth-totp-status");
   if (status) status.textContent = enabled ? tr("auth.totp_enabled") : tr("auth.totp_disabled");
   $("#totp-disable")?.toggleAttribute("disabled", !enabled || document.body.classList.contains("viewer-readonly"));
@@ -272,12 +282,12 @@ async function loadAuthPasswordPolicy() {
     const policy = await J("/api/auth/password-policy");
     const min = Number(policy?.min_length);
     const max = Number(policy?.max_length);
-    _authPasswordPolicy = {
+    setAuthPasswordPolicy({
       min_length: Number.isFinite(min) && min > 0 ? min : 12,
       max_length: Number.isFinite(max) && max >= min ? max : 1024,
-    };
+    });
   } catch (e) {
-    _authPasswordPolicy = { min_length: 12, max_length: 1024 };
+    setAuthPasswordPolicy({ min_length: 12, max_length: 1024 });
   }
   applyAuthPasswordPolicy();
 }
@@ -285,10 +295,11 @@ async function loadAuthPasswordPolicy() {
 function applyAuthPasswordPolicy() {
   const input = $("#auth-basic-pwd");
   if (!input) return;
-  input.minLength = _authPasswordPolicy.min_length;
-  input.maxLength = _authPasswordPolicy.max_length;
+  const policy = getAuthPasswordPolicy();
+  input.minLength = policy.min_length;
+  input.maxLength = policy.max_length;
   const hint = $("#auth-basic-pwd-policy");
-  if (hint) hint.textContent = tr("auth.password_min_hint", { min: _authPasswordPolicy.min_length });
+  if (hint) hint.textContent = tr("auth.password_min_hint", { min: policy.min_length });
 }
 
 function _showSubcard(mode) {
@@ -307,7 +318,7 @@ function _showSubcard(mode) {
   }
 }
 
-async function loadAuth() {
+export async function loadAuth() {
   try {
     await loadAuthPasswordPolicy();
     const j = await J("/api/auth/config");
@@ -387,10 +398,11 @@ document.querySelectorAll("[data-token-kind-option]").forEach(btn => {
 $("#auth-save")?.addEventListener("click", async () => {
   const mode = document.querySelector('input[name="auth-mode"]:checked')?.value || "none";
   const basicPassword = $("#auth-basic-pwd").value;
-  if (basicPassword && basicPassword.length < _authPasswordPolicy.min_length) {
+  const passwordPolicy = getAuthPasswordPolicy();
+  if (basicPassword && basicPassword.length < passwordPolicy.min_length) {
     notifyError(
       "auth-save",
-      new Error(tr("auth.password_min_hint", { min: _authPasswordPolicy.min_length })),
+      new Error(tr("auth.password_min_hint", { min: passwordPolicy.min_length })),
       { status: "#auth-status" },
     );
     return;
@@ -447,7 +459,7 @@ $("#auth-save")?.addEventListener("click", async () => {
     });
     if (r.ok) {
       notifySuccess(tr("auth.saved", { mode: r.settings.mode }), { status: "#auth-status" });
-      _markTabDirty("auth", false);
+      markTabDirty("auth", false);
       authData.settings = r.settings;
       _showSubcard(r.settings.mode);
       renderAuthGuard(r.settings);
@@ -549,4 +561,3 @@ document.querySelectorAll('[data-tab="routing"]').forEach(btn => {
 // ---- Flow tab ----
 // Dynamic Mermaid diagram from all configs. Click nodes → switch tab.
 // Stats overlay reads /api/deliveries (24h window).
-

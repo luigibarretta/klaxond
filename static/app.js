@@ -1,7 +1,7 @@
 // klaxond admin UI — vanilla JS, no framework.
 
-const $ = sel => document.querySelector(sel);
-const $$ = sel => document.querySelectorAll(sel);
+export const $ = sel => document.querySelector(sel);
+export const $$ = sel => document.querySelectorAll(sel);
 
 let _authRedirectStarted = false;
 let _currentUser = { sub: "anonymous", mode: "none", groups: [] };
@@ -11,7 +11,48 @@ let _localTotpEnabled = null;
 let _publicLegalSessionValid = false;
 let _authPasswordPolicy = { min_length: 12, max_length: 1024 };
 
-class AuthRedirectError extends Error {
+export function getCurrentUser() {
+  return _currentUser;
+}
+
+export function setCurrentUser(user = {}) {
+  _currentUser = user || { sub: "anonymous", mode: "none", groups: [] };
+  window.klaxondCurrentUser = _currentUser;
+  if (_currentUser.csrf) _csrfToken = _currentUser.csrf;
+  return _currentUser;
+}
+
+export function setLocalTotpEnabled(enabled) {
+  _localTotpEnabled = enabled;
+}
+
+export function getAuthPasswordPolicy() {
+  return _authPasswordPolicy;
+}
+
+export function setAuthPasswordPolicy(policy = {}) {
+  _authPasswordPolicy = {
+    min_length: Number(policy.min_length || 12),
+    max_length: Number(policy.max_length || 1024),
+  };
+  return _authPasswordPolicy;
+}
+
+export const dirtyTabs = new Set();
+
+export const applyTablePager = (...args) => window.KlaxondTablePager?.applyTablePager(...args);
+export const refreshTablePagers = (...args) => window.KlaxondTablePager?.refreshTablePagers(...args);
+export const showTableRowPage = (...args) => window.KlaxondTablePager?.showTableRowPage(...args);
+
+export function onReady(fn) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", fn, { once: true });
+  } else {
+    fn();
+  }
+}
+
+export class AuthRedirectError extends Error {
   constructor() {
     super("auth redirect");
     this.name = "AuthRedirectError";
@@ -19,11 +60,11 @@ class AuthRedirectError extends Error {
   }
 }
 
-function isAuthRedirectError(e) {
+export function isAuthRedirectError(e) {
   return e?.silent === true || e?.name === "AuthRedirectError";
 }
 
-function currentReturnToPath() {
+export function currentReturnToPath() {
   const path = `${location.pathname || "/"}${location.search || ""}`;
   if (
     !path
@@ -34,14 +75,14 @@ function currentReturnToPath() {
   return path;
 }
 
-function loginStartUrl(returnTo = "/status") {
+export function loginStartUrl(returnTo = "/status") {
   const url = new URL("/api/auth/login", location.origin);
   url.searchParams.set("start", "1");
   url.searchParams.set("return_to", returnTo);
   return url.pathname + url.search;
 }
 
-function updatePublicLoginLinksText() {
+export function updatePublicLoginLinksText() {
   const key = _publicLegalSessionValid ? "auth.back_to_app" : "auth.sign_in";
   const href = _publicLegalSessionValid ? "/status" : loginStartUrl("/status");
   document.querySelectorAll(".public-login-link").forEach(link => {
@@ -51,7 +92,7 @@ function updatePublicLoginLinksText() {
   });
 }
 
-function setupPublicLoginLinks() {
+export function setupPublicLoginLinks() {
   const target = "/status";
   const fallback = loginStartUrl(target);
   const links = Array.from(document.querySelectorAll(".public-login-link"));
@@ -71,7 +112,7 @@ function setupPublicLoginLinks() {
     link.addEventListener("click", async e => {
       e.preventDefault();
       try {
-          const res = await fetch("/api/auth/me", {
+        const res = await fetch("/api/auth/me", {
           headers: { "X-Klaxond-Request": "fetch" },
           redirect: "manual",
         });
@@ -87,7 +128,7 @@ function setupPublicLoginLinks() {
   });
 }
 
-function setupLogoutLinks() {
+export function setupLogoutLinks() {
   document.querySelectorAll("[data-auth-logout]").forEach(link => {
     link.addEventListener("click", async e => {
       e.preventDefault();
@@ -99,12 +140,12 @@ function setupLogoutLinks() {
           redirect: "manual",
         });
       } catch (err) {}
-          location.assign("/api/auth/login?logged_out=1");
+      location.assign("/api/auth/login?logged_out=1");
     });
   });
 }
 
-function loginUrlForCurrentPage(loginHint = "") {
+export function loginUrlForCurrentPage(loginHint = "") {
   const fallback = new URL("/api/auth/login", location.origin);
   fallback.searchParams.set("return_to", currentReturnToPath());
   if (!loginHint) return fallback.pathname + fallback.search;
@@ -120,7 +161,7 @@ function loginUrlForCurrentPage(loginHint = "") {
   }
 }
 
-function beginAuthRedirect(loginHint = "") {
+export function beginAuthRedirect(loginHint = "") {
   if (_authRedirectStarted) return;
   _authRedirectStarted = true;
   try { showToast(tr("auth.session_expired"), "warn", 2500); } catch (e) {}
@@ -129,7 +170,7 @@ function beginAuthRedirect(loginHint = "") {
   }, 0);
 }
 
-function shouldApiFetch(url) {
+export function shouldApiFetch(url) {
   try {
     const u = new URL(url, location.origin);
     return u.origin === location.origin;
@@ -138,7 +179,7 @@ function shouldApiFetch(url) {
   }
 }
 
-async function apiFetch(url, opts = {}) {
+export async function apiFetch(url, opts = {}) {
   if (!shouldApiFetch(url)) return fetch(url, opts);
   const headers = new Headers(opts.headers || {});
   const method = String(opts.method || "GET").toUpperCase();
@@ -161,7 +202,7 @@ async function apiFetch(url, opts = {}) {
   return res;
 }
 
-async function requestSudoReauth() {
+export async function requestSudoReauth() {
   if (_reauthInFlight) return _reauthInFlight;
   _reauthInFlight = (async () => {
     if ((_currentUser?.mode || "") === "passkey") {
@@ -190,7 +231,45 @@ async function requestSudoReauth() {
   return _reauthInFlight;
 }
 
-async function requestPasskeyReauth() {
+function b64urlToBuffer(s) {
+  const b64 = String(s).replace(/-/g, "+").replace(/_/g, "/") + "===".slice((String(s).length + 3) % 4);
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+
+function bufferToB64url(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let bin = "";
+  bytes.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function webauthnGetOptions(publicKey) {
+  const opts = { ...publicKey };
+  opts.challenge = b64urlToBuffer(opts.challenge);
+  if (opts.allowCredentials) {
+    opts.allowCredentials = opts.allowCredentials.map(c => ({ ...c, id: b64urlToBuffer(c.id) }));
+  }
+  return opts;
+}
+
+function webauthnGetPayload(credential) {
+  return {
+    id: credential.id,
+    rawId: bufferToB64url(credential.rawId),
+    type: credential.type,
+    response: {
+      authenticatorData: bufferToB64url(credential.response.authenticatorData),
+      clientDataJSON: bufferToB64url(credential.response.clientDataJSON),
+      signature: bufferToB64url(credential.response.signature),
+      userHandle: credential.response.userHandle ? bufferToB64url(credential.response.userHandle) : null,
+    },
+  };
+}
+
+export async function requestPasskeyReauth() {
   if (!window.PublicKeyCredential || !navigator.credentials?.get) {
     notifyError("auth-reauth", new Error(tr("auth.passkey_unsupported")));
     return false;
@@ -219,21 +298,21 @@ async function requestPasskeyReauth() {
     return false;
   }
   const body = await finish.json().catch(() => ({}));
-  if (body.user) updateCurrentUserUI(body.user);
+  if (body.user) setCurrentUser(body.user);
   notifySuccess(tr("auth.reauth_ok"));
   return true;
 }
 
-const J = async (url, opts) => {
+export const J = async (url, opts) => {
   const r = await apiFetch(url, opts);
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
   const ct = r.headers.get("content-type") || "";
   return ct.includes("json") ? r.json() : r.text();
 };
-const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key, vars) : key;
-const APP_META = window.KLAXOND_META || {};
+export const tr = (key, vars = {}) => window.klaxondI18n?.t ? window.klaxondI18n.t(key, vars) : key;
+export const APP_META = window.KLAXOND_META || {};
 
-const SEARCH_DEBOUNCE_MS = 300;
+export const SEARCH_DEBOUNCE_MS = 300;
 const QUERY_TTL_RULES = [
   ["/api/status", 3000],
   ["/api/logs", 5000],
@@ -265,7 +344,7 @@ const _queryCache = new Map();
 const _queryInflight = new Map();
 const _queryPendingByKey = new Map();
 
-function isAbortError(e) {
+export function isAbortError(e) {
   return e?.name === "AbortError" || (typeof DOMException !== "undefined" && e?.code === DOMException.ABORT_ERR);
 }
 
@@ -305,7 +384,7 @@ function shouldInvalidateQueryCache(method, url, opts = {}) {
   return !QUERY_CACHE_MUTATION_BYPASS_PATHS.has(urlPath(url));
 }
 
-function invalidateQueryCache(match = null) {
+export function invalidateQueryCache(match = null) {
   if (!match) {
     _queryCache.clear();
     return;
@@ -316,7 +395,7 @@ function invalidateQueryCache(match = null) {
   }
 }
 
-function debounce(fn, delayMs = SEARCH_DEBOUNCE_MS) {
+export function debounce(fn, delayMs = SEARCH_DEBOUNCE_MS) {
   let timer = null;
   const wrapped = (...args) => {
     clearTimeout(timer);
@@ -332,7 +411,7 @@ function debounce(fn, delayMs = SEARCH_DEBOUNCE_MS) {
   return wrapped;
 }
 
-async function queryGet(scope, url, opts = {}) {
+export async function queryGet(scope, url, opts = {}) {
   const ttlMs = opts.ttlMs ?? queryTtlFor(url);
   const key = queryCacheKey(url);
   const now = Date.now();
@@ -408,11 +487,11 @@ const UI_ROUTE_TO_TAB = new Map([
 const UI_TAB_TO_ROUTE = new Map(Array.from(UI_ROUTE_TO_TAB, ([route, tab]) => [tab, route]));
 const DEFAULT_TAB = "status";
 
-function isKnownTab(tabId) {
+export function isKnownTab(tabId) {
   return UI_PAGES.has(tabId);
 }
 
-function isPublicInfoPage(tabId = tabFromLocation().tabId) {
+export function isPublicInfoPage(tabId = tabFromLocation().tabId) {
   return PUBLIC_INFO_PAGES.has(tabId);
 }
 
@@ -424,17 +503,17 @@ function legalContextSearch(search = location.search) {
   }
 }
 
-function isLegalFromLogin() {
+export function isLegalFromLogin() {
   return legalContextSearch() === "?from=login";
 }
 
-function canonicalUrl(tabId, { search = location.search } = {}) {
+export function canonicalUrl(tabId, { search = location.search } = {}) {
   const path = canonicalPath(tabId);
   if (!PUBLIC_INFO_PAGES.has(tabId)) return path;
   return path + legalContextSearch(search);
 }
 
-function updatePublicLegalContextLinks() {
+export function updatePublicLegalContextLinks() {
   const fromLogin = isLegalFromLogin();
   document.querySelectorAll("[data-public-language-control]").forEach(el => {
     el.hidden = !fromLogin;
@@ -449,7 +528,7 @@ function updatePublicLegalContextLinks() {
   });
 }
 
-function updatePublicChrome(tabId) {
+export function updatePublicChrome(tabId) {
   const isPublic = PUBLIC_INFO_PAGES.has(tabId);
   document.body.classList.toggle("public-info-route", isPublic);
   const publicBar = $("#public-legal-bar");
@@ -457,13 +536,22 @@ function updatePublicChrome(tabId) {
   if (isPublic) updatePublicLegalContextLinks();
 }
 
-function canonicalPath(tabId) {
+export function canonicalPath(tabId) {
   const safeTab = isKnownTab(tabId) ? tabId : DEFAULT_TAB;
   if (PUBLIC_INFO_PAGES.has(safeTab)) return `/legal/${LEGAL_TAB_TO_ROUTE.get(safeTab) || safeTab}`;
   return `/${UI_TAB_TO_ROUTE.get(safeTab) || safeTab}`;
 }
 
-function activateTab(tabId) {
+const _tabActivationHandlers = new Map();
+
+export function setTabActivationHandlers(handlers = {}) {
+  _tabActivationHandlers.clear();
+  for (const [tabId, handler] of Object.entries(handlers)) {
+    if (typeof handler === "function") _tabActivationHandlers.set(tabId, handler);
+  }
+}
+
+export function activateTab(tabId) {
   $$(".tab").forEach(x => x.classList.remove("active"));
   $$(".tabpane").forEach(x => x.classList.remove("active"));
   const btn = document.querySelector(`.tab[data-tab="${tabId}"]`);
@@ -481,24 +569,13 @@ function activateTab(tabId) {
 // Per-tab initializer hook — called on EVERY activation (click OR path route).
 // Loaders are idempotent (re-fetching is cheap). Add `case` here for new tabs.
 function _onTabActivated(tabId) {
+  const handler = _tabActivationHandlers.get(tabId);
+  if (!handler) return;
   try {
-    switch (tabId) {
-      case "flow":        if (typeof loadFlow === "function")       { loadFlow(); if (typeof _setupFlowAutorefresh === "function") _setupFlowAutorefresh(); } break;
-      case "status":      if (typeof loadStatus === "function")     loadStatus(); break;
-      case "auth":        if (typeof loadAuth === "function")        loadAuth(); break;
-      case "deliveries":  if (typeof loadDeliv === "function")       loadDeliv(); break;
-      case "routing":     if (typeof loadNtfyTopics === "function") loadNtfyTopics(); if (typeof loadIngestAuth === "function") loadIngestAuth(); break;
-      case "render":      if (typeof loadRC === "function")          loadRC(); break;
-      case "cascade":     if (typeof loadCascade === "function")     loadCascade(); break;
-      case "delivery":    if (typeof loadDelivery === "function")    loadDelivery(); break;
-      case "grouping":    if (typeof loadDedup === "function")       loadDedup(); break;
-      case "inhibitions": if (typeof loadInhibRules === "function") loadInhibRules(); if (typeof loadSchedules === "function") loadSchedules(); if (typeof loadAcks === "function") loadAcks(); break;
-      case "logs":        if (typeof loadLogs === "function")        loadLogs(); break;
-      case "audit":       if (typeof loadAudit === "function")       loadAudit({ reset: true }); break;
-      case "setup":       if (typeof loadSetup === "function")       loadSetup(); break;
-      case "simulator":   if (typeof runPolicySimulation === "function") runPolicySimulation({ silent: true }); break;
-    }
-  } catch (e) { setTimeout(() => notifyError(`tab-${tabId}`, e), 0); }
+    handler();
+  } catch (e) {
+    setTimeout(() => notifyError(`tab-${tabId}`, e), 0);
+  }
 }
 
 function tabBaseLabel(tab) {
@@ -507,7 +584,7 @@ function tabBaseLabel(tab) {
   return tab?.querySelector(".tab-label")?.textContent?.trim() || tab?.textContent?.trim() || "";
 }
 
-function updateTabAccessibleLabel(tab) {
+export function updateTabAccessibleLabel(tab) {
   if (!tab) return;
   const parts = [tabBaseLabel(tab)];
   const badge = tab.querySelector(".tab-badge");
@@ -518,11 +595,27 @@ function updateTabAccessibleLabel(tab) {
   tab.setAttribute("aria-label", parts.filter(Boolean).join(", "));
 }
 
-function updateAllTabAccessibleLabels() {
+export function markTabDirty(tabId, dirty = true) {
+  if (dirty) dirtyTabs.add(tabId); else dirtyTabs.delete(tabId);
+  const tab = document.querySelector(`.tab[data-tab="${tabId}"]`);
+  if (!tab) return;
+  let dot = tab.querySelector(".tab-dirty");
+  if (dirty && !dot) {
+    dot = document.createElement("span");
+    dot.className = "tab-dirty";
+    dot.title = tr("shortcut.unsaved");
+    tab.appendChild(dot);
+  } else if (!dirty && dot) {
+    dot.remove();
+  }
+  updateTabAccessibleLabel(tab);
+}
+
+export function updateAllTabAccessibleLabels() {
   document.querySelectorAll(".tab").forEach(updateTabAccessibleLabel);
 }
 
-function tabFromLocation() {
+export function tabFromLocation() {
   const legacyHash = (location.hash || "").replace(/^#/, "");
   if (isKnownTab(legacyHash)) return { tabId: legacyHash, canonicalize: true };
 
@@ -554,7 +647,7 @@ function tabFromLocation() {
   return { tabId: DEFAULT_TAB, canonicalize: true };
 }
 
-function syncTabFromPath({ replace = false } = {}) {
+export function syncTabFromPath({ replace = false } = {}) {
   const { tabId, canonicalize } = tabFromLocation();
   const ok = (window.activateTab || activateTab)(tabId);
   if (!ok) {
@@ -569,7 +662,7 @@ function syncTabFromPath({ replace = false } = {}) {
   return ok;
 }
 
-function navigateToTab(tabId, { replace = false, search = "" } = {}) {
+export function navigateToTab(tabId, { replace = false, search = "" } = {}) {
   if (!isKnownTab(tabId)) return false;
   if (!(window.activateTab || activateTab)(tabId)) return false;
   const url = canonicalUrl(tabId, { search });
@@ -607,6 +700,7 @@ document.addEventListener("click", e => {
   navigateToTab(tabId, { search: legalMatch ? url.search : "" });
 });
 
+window.activateTab = activateTab;
 window.addEventListener("popstate", () => syncTabFromPath());
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", updateAllTabAccessibleLabels);
@@ -618,7 +712,7 @@ setupLogoutLinks();
 
 
 // Shared HTML escaping helper used by feature scripts.
-function escapeHtml(s) {
+export function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({
     "&": "&amp;",
     "<": "&lt;",
@@ -631,7 +725,7 @@ function escapeHtml(s) {
 // ---- Toast notifications (non-blocking error / info banner) ----
 // Replaces the silent console.warn pattern in load* functions. Toasts stack
 // in the top-right and auto-dismiss after 10s; click X to dismiss manually.
-function showToast(msg, kind = "error", durationMs = 10000) {
+export function showToast(msg, kind = "error", durationMs = 10000) {
   let container = document.getElementById("toast-container");
   if (!container) {
     container = document.createElement("div");
@@ -653,17 +747,17 @@ function showToast(msg, kind = "error", durationMs = 10000) {
 // same key within DEDUP_MS are silent (logged to console only).
 const _TOAST_DEDUP_MS = 60000;
 const _toastErrLast = new Map();
-function errorText(e) {
+export function errorText(e) {
   if (!e) return "unknown";
   if (typeof e === "string") return e;
   return e.message || String(e);
 }
 
-function statusElement(target) {
+export function statusElement(target) {
   return typeof target === "string" ? $(target) : target;
 }
 
-function setInlineStatus(target, text, opts = {}) {
+export function setInlineStatus(target, text, opts = {}) {
   const el = statusElement(target);
   if (!el) return;
   const options = typeof opts === "string" ? { kind: opts } : opts;
@@ -680,7 +774,7 @@ function setInlineStatus(target, text, opts = {}) {
   }
 }
 
-function notifySuccess(message, opts = {}) {
+export function notifySuccess(message, opts = {}) {
   const text = message || tr("status.saved");
   if (opts.status) {
     setInlineStatus(opts.status, opts.inlineText || text, {
@@ -692,7 +786,7 @@ function notifySuccess(message, opts = {}) {
   showToast(text, "success", opts.durationMs || 4000);
 }
 
-function notifyError(key, e, opts = {}) {
+export function notifyError(key, e, opts = {}) {
   if (isAbortError(e) || isAuthRedirectError(e) || _authRedirectStarted) return;
   console.warn(key + ":", e);
   const msg = errorText(e);
@@ -712,7 +806,7 @@ function notifyError(key, e, opts = {}) {
   showToast(`${key}: ${msg}`, "error");
 }
 
-function reportClientError(key, e, level = "error") {
+export function reportClientError(key, e, level = "error") {
   const payload = {
     level,
     key: String(key || "ui"),
@@ -735,18 +829,18 @@ function reportClientError(key, e, level = "error") {
   } catch (err) {}
 }
 
-function notifyResponseError(key, res, bodyText = "", statusTarget = null) {
+export function notifyResponseError(key, res, bodyText = "", statusTarget = null) {
   const body = (bodyText || "").trim();
   const msg = `${res.status} ${body || res.statusText}`;
   notifyError(key, new Error(msg), { status: statusTarget });
 }
 
-function notifyValidationError(key, message, statusTarget = null) {
+export function notifyValidationError(key, message, statusTarget = null) {
   notifyError(key, new Error(message), { status: statusTarget, inlineText: "❌ " + message });
 }
 
-function fetchError(key, e) {
+export function fetchError(key, e) {
   if (isAbortError(e) || isAuthRedirectError(e) || _authRedirectStarted) return;
   notifyError(key, e, { dedup: true });
 }
-function fetchOk(key) { _toastErrLast.delete(key); }
+export function fetchOk(key) { _toastErrLast.delete(key); }

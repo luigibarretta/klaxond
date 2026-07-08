@@ -1,7 +1,16 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { applyReadOnlyViewerMode, loadStatus } from "./app-status.js";
+
 // ---- ntfy topics (0.7.1+ editor) ----
 let ntfyTopicsData = { topics: [], known_severities: [], note: "", writeable: false };
 
-async function loadNtfyTopics() {
+export async function loadNtfyTopics() {
   try {
     const j = await queryGet("ntfy-topics", "/api/ntfy-topics");
     ntfyTopicsData = j;
@@ -35,7 +44,7 @@ function _renderTopicRow(t, idx) {
     </div>`;
 }
 
-function renderNtfyTopicsEditor() {
+export function renderNtfyTopicsEditor() {
   const c = $("#ntfy-topics-editor");
   if (!c) return;
   const topics = ntfyTopicsData.topics || [];
@@ -84,7 +93,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
       count: j.topics.length,
       severities: (j.known_severities || []).filter(s => s !== "resolved").join(", ")
     }), { status: "#ntfy-topics-status" });
-    _markTabDirty("routing", false);
+    markTabDirty("routing", false);
     // Reload to refresh badges
     setTimeout(() => loadNtfyTopics(), 500);
   } catch (e) {
@@ -95,7 +104,7 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
 
 
 // ---- Routing (channel config) ----
-async function loadRouting() {
+export async function loadRouting() {
   try {
     const c = await queryGet("channel-config", "/api/channel-config");
     $("#r-ntfy-url").value = c.ntfy.url || "";
@@ -155,14 +164,14 @@ $("#btn-routing-save").addEventListener("click", async () => {
   try {
     await J("/api/channel-config", { method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" } });
     notifySuccess(tr("routing.saved"), { status: "#routing-msg", clearMs: 4000 });
-    _markTabDirty("routing", false);
+    markTabDirty("routing", false);
     loadStatus();
   } catch (e) { notifyError("routing-save", e, { status: "#routing-msg" }); }
 });
 
 
 // ---- Ingest auth (per-source webhook secret, 0.9.18+) ----
-async function loadIngestAuth() {
+export async function loadIngestAuth() {
   const tb = $("#t-ingest-auth tbody"); if (!tb) return;
   try {
     const data = await queryGet("ingest-auth", "/api/ingest-auth");
@@ -193,7 +202,7 @@ async function loadIngestAuth() {
     tb.querySelectorAll("button[data-act]").forEach(btn => {
       btn.addEventListener("click", () => _ingestAuthAction(btn.dataset.src, btn.dataset.act));
     });
-    if (document.body.classList.contains("viewer-readonly")) applyReadOnlyViewerMode(_currentUser);
+    if (document.body.classList.contains("viewer-readonly")) applyReadOnlyViewerMode(getCurrentUser());
   } catch (e) { fetchError("ingest-auth", e); }
 }
 

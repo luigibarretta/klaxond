@@ -1,8 +1,17 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { loadStatus } from "./app-status.js";
+
 // ---- Cascade tiers ----
 const TIER_OPTS = ["ntfy", "telegram", "smtp"];
 let casData = { tiers: [], default_enabled_for_webhook: false };
 
-async function loadCascade() {
+export async function loadCascade() {
   try {
     casData = await queryGet("cascade-config", "/api/cascade-config");
     renderCascadeTable();
@@ -10,7 +19,7 @@ async function loadCascade() {
   } catch (e) { fetchError("cascade", e); }
 }
 
-function renderCascadeTable() {
+export function renderCascadeTable() {
   const tb = $("#t-cas tbody"); tb.innerHTML = "";
   casData.tiers.forEach((t, i) => addCasRow(t.name, t.timeout_seconds, i, { deferPager: true }));
   applyTablePager("t-cas", { reset: true });
@@ -70,7 +79,7 @@ $("#btn-cas-save").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" }
     });
     notifySuccess(tr("cascade.saved", { count: tiers.length }), { status: "#cas-status", clearMs: 3000 });
-    _markTabDirty("cascade", false);
+    markTabDirty("cascade", false);
     loadStatus();
   } catch (e) { notifyError("cascade-save", e, { status: "#cas-status" }); }
 });
@@ -83,7 +92,7 @@ $("#btn-cas-save").addEventListener("click", async () => {
 // The UI matches that for consistency: no "legacy-cascade" string anywhere.
 let delivData = { default_policy: "cascade", policies: [], rules: [], available_tiers: [], legacy_cascade_tiers: [] };
 
-async function loadDelivery() {
+export async function loadDelivery() {
   try {
     delivData = await queryGet("delivery-config", "/api/delivery-config");
     renderDeliveryDefault();
@@ -96,14 +105,14 @@ function policyNames() {
   return ["cascade", ...delivData.policies.map(p => p.name)];
 }
 
-function renderDeliveryDefault() {
+export function renderDeliveryDefault() {
   const sel = $("#d-default-policy");
   if (!sel) return;
   const cur = delivData.default_policy;
   sel.innerHTML = policyNames().map(n => `<option ${n === cur ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
 }
 
-function renderPoliciesTable() {
+export function renderPoliciesTable() {
   const tb = $("#t-pol tbody"); tb.innerHTML = "";
   delivData.policies.forEach((p, i) => addPolicyRow(p.name, p.mode, p.tiers, i, { deferPager: true }));
   applyTablePager("t-pol", { reset: true });
@@ -147,7 +156,7 @@ function collectPoliciesFromTable() {
   return policies;
 }
 
-function renderRulesTable() {
+export function renderRulesTable() {
   const tb = $("#t-rules tbody"); tb.innerHTML = "";
   delivData.rules.forEach((r, i) => addRuleRow(r.match || {}, r.policy, i, { deferPager: true }));
   applyTablePager("t-rules", { reset: true });
@@ -211,7 +220,7 @@ $("#btn-delivery-save").addEventListener("click", async () => {
       status: "#delivery-status",
       clearMs: 4000,
     });
-    _markTabDirty("delivery", false);
+    markTabDirty("delivery", false);
   } catch (e) { notifyError("delivery-save", e, { status: "#delivery-status" }); }
 });
 
@@ -236,7 +245,7 @@ const SOURCE_HELP = {
   decypharr:    "dedup.source_decypharr",
 };
 
-async function loadDedup() {
+export async function loadDedup() {
   try {
     const j = await queryGet("dedup-config", "/api/dedup-config");
     dedupData = j;
@@ -248,7 +257,7 @@ async function loadDedup() {
   }
 }
 
-function renderDedupCards() {
+export function renderDedupCards() {
   const c = $("#dedup-cards");
   if (!c) return;
   const sources = dedupData.sources || ["grafana", "beszel", "healthchecks", "wud", "authentik", "shelfmark", "prowlarr", "decypharr"];
@@ -307,7 +316,7 @@ $("#dedup-save")?.addEventListener("click", async () => {
     if (r.ok) {
       dedupData.settings = r.settings;
       notifySuccess(tr("dedup.saved"), { status: "#dedup-status", clearMs: 3000 });
-      _markTabDirty("grouping", false);
+      markTabDirty("grouping", false);
     } else {
       notifyError("dedup-save", new Error(r.error || "unknown"), { status: "#dedup-status" });
     }

@@ -1080,25 +1080,10 @@ host=it1-prd-dev-01</textarea>
 </div>
 
 <!--
-  Mermaid is 3.3MB minified — load deferred so it doesn't block page parse.
-  Feature scripts are split by UI area but still loaded as classic deferred
-  scripts. `defer` preserves order: shared core first, feature handlers next,
-  bootstrap last.
+  Mermaid remains a large UMD dependency. The Klaxond UI itself now uses one
+  native ESM entrypoint with explicit imports and no global script-order chain.
 -->
 <script src="/ui/mermaid.min.js" defer></script>
-<script src="/ui/meta.js" defer></script>
-<script src="/ui/i18n.js" defer></script>
-<script src="/ui/table-pager.js" defer></script>
-<script src="/ui/app.js" defer></script>
-<script src="/ui/app-status.js" defer></script>
-<script src="/ui/app-inhibitions.js" defer></script>
-<script src="/ui/app-deliveries-logs.js" defer></script>
-<script src="/ui/app-setup-simulator.js" defer></script>
-<script src="/ui/app-render-preview.js" defer></script>
-<script src="/ui/app-routing.js" defer></script>
-<script src="/ui/app-delivery-grouping.js" defer></script>
-<script src="/ui/app-auth-view.js" defer></script>
-<script src="/ui/app-flow.js" defer></script>
-<script src="/ui/app-bootstrap.js" defer></script>
+<script type="module" src="/ui/app-main.js"></script>
 </body>
 </html>

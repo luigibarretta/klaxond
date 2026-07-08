@@ -1,3 +1,12 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { fetchDeliveries } from "./app-status.js";
+
 // Make tab-switcher callable from outside (mermaid click handlers).
 // Use the SPA router so the path stays in sync with the active pane.
 function switchToTab(name) {
@@ -192,7 +201,7 @@ async function _waitForMermaid(timeoutMs = 15000) {
   return true;
 }
 
-async function loadFlow() {
+export async function loadFlow() {
   if (!await _waitForMermaid()) {
     $("#flow-status").textContent = tr("flow.mermaid_timeout");
     return;
@@ -276,7 +285,7 @@ async function refreshFlowStats() {
 }
 
 let _flowAutorefreshTimer = null;
-function _setupFlowAutorefresh() {
+export function setupFlowAutorefresh() {
   if (_flowAutorefreshTimer) { clearInterval(_flowAutorefreshTimer); _flowAutorefreshTimer = null; }
   if ($("#flow-autorefresh")?.checked) {
     _flowAutorefreshTimer = setInterval(refreshFlowStats, 30000);
@@ -287,7 +296,7 @@ $("#flow-refresh")?.addEventListener("click", () => loadFlow());
 $("#flow-animate")?.addEventListener("change", e => {
   $("#flow-diagram")?.classList.toggle("animate", e.target.checked);
 });
-$("#flow-autorefresh")?.addEventListener("change", _setupFlowAutorefresh);
+$("#flow-autorefresh")?.addEventListener("change", setupFlowAutorefresh);
 $("#flow-show-source")?.addEventListener("change", e => {
   $("#flow-source")?.classList.toggle("hidden", !e.target.checked);
 });
@@ -303,7 +312,7 @@ $("#flow-download-svg")?.addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 document.querySelectorAll('[data-tab="flow"]').forEach(btn => {
-  btn.addEventListener("click", () => { loadFlow(); _setupFlowAutorefresh(); });
+  btn.addEventListener("click", () => { loadFlow(); setupFlowAutorefresh(); });
 });
 // Stop autorefresh when leaving the tab (any tab click)
 document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
@@ -311,5 +320,4 @@ document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
     if (_flowAutorefreshTimer) { clearInterval(_flowAutorefreshTimer); _flowAutorefreshTimer = null; }
   });
 });
-
 

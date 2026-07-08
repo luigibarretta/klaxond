@@ -1,4 +1,4 @@
-use super::ingest_secret_for;
+use super::ingest::ingest_secret_for;
 use super::{json_response, parse_query, text};
 use crate::audit;
 use crate::auth::User;

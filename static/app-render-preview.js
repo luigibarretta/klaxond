@@ -1,7 +1,16 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { loadDeliv } from "./app-deliveries-logs.js";
+
 // ---- Render config ----
 let rcData = {};
 let rcRuntimeSettings = {};
-async function loadRC() {
+export async function loadRC() {
   try {
     const j = await queryGet("render-config", "/api/render-config");
     $("#gbase").textContent = j.grafana_base;
@@ -23,7 +32,7 @@ async function loadRC() {
   } catch (e) { fetchError("render-config", e); }
 }
 
-function populateTestComponentSelect() {
+export function populateTestComponentSelect() {
   const sel = $("#t-component");
   if (!sel) return;
   const cur = sel.value;
@@ -32,7 +41,7 @@ function populateTestComponentSelect() {
   if (cur && rcData[cur]) sel.value = cur;
 }
 
-function renderRCTable() {
+export function renderRCTable() {
   const tb = $("#t-rc tbody"); tb.innerHTML = "";
   for (const [k, v] of Object.entries(rcData)) addRCRow(k, v[0], v[1], { deferPager: true });
   applyTablePager("t-rc", { reset: true });
@@ -85,7 +94,7 @@ $("#btn-rc-save").addEventListener("click", async () => {
   try {
     const r = await J("/api/render-config", { method: "POST", body: JSON.stringify({component_dashboards: out, settings}), headers: {"Content-Type": "application/json"} });
     notifySuccess(tr("render.saved_mappings", { count: r.count }), { status: "#rc-status", clearMs: 3000 });
-    _markTabDirty("render", false);
+    markTabDirty("render", false);
     rcData = out;
     await loadRC();
     populateTestComponentSelect();

@@ -1,5 +1,14 @@
+import {
+  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
+  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { loadStatusActivity } from "./app-status.js";
+
 // ---- Inhibitions (active suppressions) ----
-async function loadInhib() {
+export async function loadInhib() {
   try {
     const rows = await queryGet("inhibitions", "/api/inhibitions");
     const tb = $("#t-inhib tbody"); tb.innerHTML = "";
@@ -34,7 +43,7 @@ async function clearSuppression(source, anchor) {
     const r = await res.json();
     notifySuccess(tr("inhib.cleared_for_source", { count: r.cleared, source }), { status, clearMs: 3000 });
     await loadInhib();
-    if (typeof loadStatusActivity === "function") loadStatusActivity();
+    loadStatusActivity();
   } catch (e) {
     notifyError("inhibition-clear", e, { status, inlineText: "❌ " + errorText(e) });
   }
@@ -89,7 +98,7 @@ async function testInhibitionRule() {
 }
 
 // ---- Ack-snoozes (active, 0.9.20+) ----
-async function loadAcks() {
+export async function loadAcks() {
   const tb = $("#t-acks tbody"); if (!tb) return;
   try {
     const acks = await queryGet("acks", "/api/acks");
@@ -216,7 +225,7 @@ function _renderSchedRow(s) {
   return row;
 }
 
-async function loadSchedules() {
+export async function loadSchedules() {
   const tb = $("#t-schedules tbody"); if (!tb) return;
   try {
     const data = await queryGet("schedules", "/api/schedules");
@@ -278,7 +287,7 @@ async function saveSchedules() {
     }
     const r = await res.json();
     const savedMessage = tr("sched.saved", { count: r.count });
-    _markTabDirty("inhibitions", false);
+    markTabDirty("inhibitions", false);
     await loadSchedules();
     notifySuccess(savedMessage, { status });
   } catch (e) {
@@ -286,7 +295,7 @@ async function saveSchedules() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+onReady(() => {
   const add = document.getElementById("sched-add");
   const save = document.getElementById("sched-save");
   if (add) add.addEventListener("click", () => {
@@ -315,7 +324,7 @@ async function clearAllSuppressions() {
     const r = await res.json();
     notifySuccess(tr("inhib.cleared_all", { count: r.cleared }), { status, clearMs: 3000 });
     await loadInhib();
-    if (typeof loadStatusActivity === "function") loadStatusActivity();
+    loadStatusActivity();
   } catch (e) {
     notifyError("inhibitions-clear-all", e, { status, inlineText: "❌ " + errorText(e) });
   }
@@ -518,7 +527,7 @@ function _markRowValidity(tr) {
   tr.style.outline = err ? "1px solid var(--red)" : "";
 }
 
-async function loadInhibRules() {
+export async function loadInhibRules() {
   try {
     const data = await queryGet("inhibition-rules", "/api/inhibition-rules");
     _inhibAvailableSources = data.available_sources || [];
@@ -579,7 +588,7 @@ async function saveInhibRules() {
     }
     const r = await res.json();
     const savedMessage = tr("inhib.rules_saved", { count: r.count, cleared: r.cleared_suppressions });
-    _markTabDirty("inhibitions", false);
+    markTabDirty("inhibitions", false);
     await loadInhibRules();
     await loadInhib();
     notifySuccess(savedMessage, { status });
@@ -588,7 +597,7 @@ async function saveInhibRules() {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+onReady(() => {
   const add = document.getElementById("inhib-add");
   const save = document.getElementById("inhib-save");
   const clearAll = document.getElementById("inhib-clear-all");

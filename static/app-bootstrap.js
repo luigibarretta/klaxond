@@ -1,16 +1,24 @@
+import {
+  $, $$, activateTab, dirtyTabs, escapeHtml, isPublicInfoPage, markTabDirty, refreshTablePagers,
+  syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+} from "./app.js";
+import { loadAuth, renderTokens, authTokens } from "./app-auth-view.js";
+import { loadDeliv, loadLogs, renderDeliv } from "./app-deliveries-logs.js";
+import {
+  loadCascade, loadDedup, loadDelivery, renderCascadeTable, renderDedupCards,
+  renderDeliveryDefault, renderPoliciesTable, renderRulesTable,
+} from "./app-delivery-grouping.js";
+import { loadFlow } from "./app-flow.js";
+import { loadAcks, loadInhib, loadInhibRules, loadSchedules } from "./app-inhibitions.js";
+import { populateTestComponentSelect, renderRCTable, loadRC } from "./app-render-preview.js";
+import { loadIngestAuth, loadNtfyTopics, loadRouting, renderNtfyTopicsEditor } from "./app-routing.js";
+import { loadCurrentUser, loadConfigBackups, loadStatus } from "./app-status.js";
+
 // ---- Polling ----
-async function refreshAll() {
+export async function refreshAll() {
   if (isPublicInfoPage()) return;
   await Promise.all([loadStatus(), loadCurrentUser(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules(), loadAcks()]);
 }
-refreshAll();
-setInterval(() => {
-  if (isPublicInfoPage()) return;
-  loadStatus();
-  loadInhib();
-  loadDeliv();
-}, 10000);
-
 document.addEventListener("klaxond:languagechange", () => {
   updateAllTabAccessibleLabels();
   updatePublicLoginLinksText();
@@ -18,14 +26,14 @@ document.addEventListener("klaxond:languagechange", () => {
   loadStatus();
   loadConfigBackups();
   renderDeliv();
-  if (!_dirtyTabs.has("inhibitions")) { loadInhib(); loadInhibRules(); loadSchedules(); loadAcks(); }
-  if (!_dirtyTabs.has("render")) { renderRCTable(); populateTestComponentSelect(); }
-  if (!_dirtyTabs.has("routing")) { renderNtfyTopicsEditor(); loadRouting(); loadIngestAuth(); }
-  if (!_dirtyTabs.has("cascade")) renderCascadeTable();
-  if (!_dirtyTabs.has("delivery")) { renderDeliveryDefault(); renderPoliciesTable(); renderRulesTable(); }
-  if (!_dirtyTabs.has("grouping")) renderDedupCards();
-  if (!_dirtyTabs.has("auth")) loadAuth();
-  else renderTokens(_authTokens, { preserveSource: true });
+  if (!dirtyTabs.has("inhibitions")) { loadInhib(); loadInhibRules(); loadSchedules(); loadAcks(); }
+  if (!dirtyTabs.has("render")) { renderRCTable(); populateTestComponentSelect(); }
+  if (!dirtyTabs.has("routing")) { renderNtfyTopicsEditor(); loadRouting(); loadIngestAuth(); }
+  if (!dirtyTabs.has("cascade")) renderCascadeTable();
+  if (!dirtyTabs.has("delivery")) { renderDeliveryDefault(); renderPoliciesTable(); renderRulesTable(); }
+  if (!dirtyTabs.has("grouping")) renderDedupCards();
+  if (!dirtyTabs.has("auth")) loadAuth();
+  else renderTokens(authTokens, { preserveSource: true });
   refreshTablePagers();
   if (document.querySelector("#tab-flow.active")) loadFlow();
   if (document.querySelector("#tab-logs.active")) loadLogs();
@@ -54,26 +62,6 @@ document.addEventListener("klaxond:languagechange", () => {
 })();
 
 // ---- Dirty-state tracking (unsaved changes warning) ----
-// Track which tab panes have unsaved edits. A pane becomes dirty when any
-// input/select/textarea inside it changes; cleared when load*/save* runs.
-const _dirtyTabs = new Set();
-
-function _markTabDirty(tabId, dirty = true) {
-  if (dirty) _dirtyTabs.add(tabId); else _dirtyTabs.delete(tabId);
-  const tab = document.querySelector(`.tab[data-tab="${tabId}"]`);
-  if (!tab) return;
-  let dot = tab.querySelector(".tab-dirty");
-  if (dirty && !dot) {
-    dot = document.createElement("span");
-    dot.className = "tab-dirty";
-    dot.title = tr("shortcut.unsaved");
-    tab.appendChild(dot);
-  } else if (!dirty && dot) {
-    dot.remove();
-  }
-  updateTabAccessibleLabel(tab);
-}
-
 // Bind change/input listeners to every form field inside each tabpane so
 // edits flip the dirty flag. Excludes search/filter inputs (they're not
 // "edits" the user expects to persist).
@@ -88,21 +76,21 @@ function _wireDirtyTracking() {
       if (t.closest(".table-pager")) return;
       // Skip search/filter fields — those aren't edits
       if (t.type === "search" || t.id === "deliv-filter" || t.id === "inhib-test-labels") return;
-      _markTabDirty(tabId, true);
+      markTabDirty(tabId, true);
     });
     pane.addEventListener("change", e => {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
       if (t.closest(".table-pager")) return;
       if (t.id === "deliv-show-suppressed" || t.id === "inhib-test-source") return;
-      _markTabDirty(tabId, true);
+      markTabDirty(tabId, true);
     });
   });
 }
 
 // Warn on page unload if any tab is dirty
 window.addEventListener("beforeunload", e => {
-  if (_dirtyTabs.size === 0) return;
+  if (dirtyTabs.size === 0) return;
   e.preventDefault();
   e.returnValue = "";
   return "";
@@ -111,20 +99,18 @@ window.addEventListener("beforeunload", e => {
 // Wrap activateTab so we warn on tab switch when the current tab is dirty.
 // The user gets a chance to abort or proceed; proceed clears dirty for the
 // active tab (since we assume they're abandoning the edit).
-const _origActivateTab = window.activateTab || activateTab;
+const _origActivateTab = activateTab;
 function activateTabWithDirtyGuard(tabId) {
   const active = document.querySelector(".tabpane.active");
   const activeId = active ? active.id.replace(/^tab-/, "") : null;
-  if (activeId && _dirtyTabs.has(activeId) && activeId !== tabId) {
+  if (activeId && dirtyTabs.has(activeId) && activeId !== tabId) {
     if (!confirm(tr("shortcut.discard_confirm", { from: activeId, to: tabId }))) return false;
-    _markTabDirty(activeId, false);
+    markTabDirty(activeId, false);
   }
   return _origActivateTab(tabId);
 }
 window.activateTab = activateTabWithDirtyGuard;
-syncTabFromPath({ replace: true });
 
-document.addEventListener("DOMContentLoaded", _wireDirtyTracking);
 
 // ---- Keyboard shortcuts ----
 // Cmd/Ctrl+S → click primary save button on the active tab
@@ -200,3 +186,16 @@ document.addEventListener("keydown", e => {
     if (tabs[idx]) tabs[idx].click();
   }
 });
+
+export function startApp() {
+  window.activateTab = activateTabWithDirtyGuard;
+  syncTabFromPath({ replace: true });
+  _wireDirtyTracking();
+  refreshAll();
+  setInterval(() => {
+    if (isPublicInfoPage()) return;
+    loadStatus();
+    loadInhib();
+    loadDeliv();
+  }, 10000);
+}
