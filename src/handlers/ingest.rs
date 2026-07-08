@@ -1,12 +1,9 @@
-use super::config_admin::persist_reload;
 use super::{html, json_body, json_response, parse_query, text};
-use crate::config::DEDUP_SOURCES;
 use crate::dedup;
 use crate::delivery::deliver;
 use crate::inhibition;
 use crate::parsers::{Parts, normalize_labels, parse_grafana_payload, parse_source};
 use crate::state::AppState;
-use crate::util::{env_string, random_hex, toml_table_mut};
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
@@ -14,6 +11,11 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
+
+mod auth;
+
+use self::auth::verify_ingest_auth;
+pub(super) use self::auth::{ingest_auth_payload, ingest_secret_for, update_ingest_auth};
 
 pub(super) async fn ingest(
     state: &AppState,
@@ -283,164 +285,6 @@ pub(super) async fn api_test(state: &AppState, path: &str, body: Bytes) -> Respo
     )
     .await;
     json_response(json!({"ok": ok, "channel": channel, "title": parts.title}))
-}
-
-pub(super) fn update_ingest_auth(state: &AppState, body: Bytes) -> Response<Body> {
-    let Ok(payload) = json_body(&body) else {
-        return text(StatusCode::BAD_REQUEST, "bad json");
-    };
-    let src = payload
-        .get("source")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    let action = payload
-        .get("action")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    if !DEDUP_SOURCES.contains(&src.as_str()) {
-        return text(
-            StatusCode::BAD_REQUEST,
-            &format!("source must be one of {:?}", DEDUP_SOURCES),
-        );
-    }
-    if !matches!(action.as_str(), "set" | "generate" | "clear") {
-        return text(
-            StatusCode::BAD_REQUEST,
-            "action must be one of: set, generate, clear",
-        );
-    }
-    if action == "set" {
-        let sec = payload
-            .get("secret")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        if sec.len() < 16 {
-            return text(
-                StatusCode::BAD_REQUEST,
-                "secret missing or shorter than 16 chars",
-            );
-        }
-    }
-    let new_secret = match state.with_config_write_lock(|| {
-        let mut cfg = state.cfg();
-        let secrets = toml_table_mut(&mut cfg.toml, &["ingest", "secrets"]);
-        let mut new_secret = None;
-        match action.as_str() {
-            "clear" => {
-                secrets.remove(&src);
-            }
-            "generate" => {
-                let sec = random_hex(32);
-                secrets.insert(src.clone(), toml::Value::String(sec.clone()));
-                new_secret = Some(sec);
-            }
-            _ => {
-                let sec = payload
-                    .get("secret")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
-                secrets.insert(src.clone(), toml::Value::String(sec.into()));
-            }
-        }
-        persist_reload(state, cfg.toml).map(|_| new_secret)
-    }) {
-        Ok(Ok(new_secret)) => new_secret,
-        Ok(Err(err)) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
-        Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
-    };
-    let mut resp = json!({"ok": true, "source": src, "action": action});
-    if let Some(sec) = new_secret {
-        resp["secret"] = json!(sec);
-    }
-    json_response(resp)
-}
-
-fn verify_ingest_auth(
-    state: &AppState,
-    source: &str,
-    headers: &HeaderMap,
-    qs: &HashMap<String, String>,
-) -> (bool, String) {
-    let secret = ingest_secret_for(state, source);
-    if secret.is_empty() {
-        return (true, "no-secret".into());
-    }
-    if let Some(auth) = headers.get("Authorization").and_then(|v| v.to_str().ok())
-        && let Some((scheme, tok)) = auth.split_once(char::is_whitespace)
-        && scheme.eq_ignore_ascii_case("bearer")
-        && constant_time_eq::constant_time_eq(tok.trim().as_bytes(), secret.as_bytes())
-    {
-        return (true, "bearer".into());
-    }
-    if let Some(tok) = headers.get("X-Klaxond-Token").and_then(|v| v.to_str().ok())
-        && constant_time_eq::constant_time_eq(tok.trim().as_bytes(), secret.as_bytes())
-    {
-        return (true, "x-klaxond-token".into());
-    }
-    if let Some(tok) = qs.get("token")
-        && constant_time_eq::constant_time_eq(tok.as_bytes(), secret.as_bytes())
-    {
-        return (true, "query".into());
-    }
-    (false, "secret-required-but-missing-or-mismatch".into())
-}
-
-pub(super) fn ingest_secret_for(state: &AppState, source: &str) -> String {
-    let env_key = format!("KLAXOND_INGEST_SECRET_{}", source.to_ascii_uppercase());
-    let env_val = env_string(&env_key);
-    if !env_val.trim().is_empty() {
-        return env_val.trim().into();
-    }
-    state
-        .cfg()
-        .toml
-        .get("ingest")
-        .and_then(|v| v.get("secrets"))
-        .and_then(|v| v.get(source))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string()
-}
-
-pub(super) fn ingest_auth_payload(state: &AppState) -> Value {
-    let mut sources = serde_json::Map::new();
-    for src in DEDUP_SOURCES {
-        let env_val = env_string(&format!(
-            "KLAXOND_INGEST_SECRET_{}",
-            src.to_ascii_uppercase()
-        ));
-        let toml_val = state
-            .cfg()
-            .toml
-            .get("ingest")
-            .and_then(|v| v.get("secrets"))
-            .and_then(|v| v.get(*src))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        sources.insert(
-            (*src).into(),
-            if !env_val.trim().is_empty() {
-                json!({"configured": true, "from": "env"})
-            } else if !toml_val.trim().is_empty() {
-                json!({"configured": true, "from": "toml"})
-            } else {
-                json!({"configured": false, "from": ""})
-            },
-        );
-    }
-    json!({
-        "sources": sources,
-        "auth_methods_accepted": ["Authorization: Bearer <secret>", "X-Klaxond-Token: <secret>", "?token=<secret> query param"],
-        "note": "Legacy permissive mode (no auth required) is in effect when a source has no secret configured.",
-    })
 }
 
 pub(super) fn ack_response(state: &AppState, path: &str) -> Response<Body> {

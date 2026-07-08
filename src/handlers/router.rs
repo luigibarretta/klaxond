@@ -25,10 +25,8 @@ use super::rules::{
     update_schedules,
 };
 use super::{json_response, redirect, text};
-use crate::audit;
 use crate::auth::{self, AuthOutcome, User};
 use crate::config::{DEDUP_SOURCES, default_dedup, default_tiers};
-use crate::endpoints;
 use crate::inhibition;
 use crate::openapi;
 use crate::state::AppState;
@@ -36,13 +34,21 @@ use crate::static_files;
 use crate::util::env_string;
 use axum::body::{Body, Bytes};
 use axum::extract::{ConnectInfo, State};
-use axum::http::header::{ACCEPT, SET_COOKIE};
+use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode, Uri};
 use axum::response::IntoResponse;
 use serde_json::json;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
+
+mod audit;
+mod paths;
+
+use self::audit::record_admin_mutation_audit;
+use self::paths::{
+    legacy_legal_redirect, legacy_ui_redirect, legal_tab_from_path, path_id, root_ui_tab_from_path,
+};
 
 pub async fn dispatch(
     State(state): State<AppState>,
@@ -273,69 +279,6 @@ async fn handle_get(
     }
 }
 
-fn legal_tab_from_path(path: &str) -> Option<&'static str> {
-    match path.trim_end_matches('/') {
-        "/legal/privacy" => Some("privacy"),
-        "/legal/accessibility" => Some("accessibility"),
-        "/legal/terms" => Some("terms"),
-        "/legal/cookies" => Some("cookies"),
-        "/legal/notice" => Some("legal"),
-        _ => None,
-    }
-}
-
-fn legacy_legal_redirect(path: &str) -> Option<&'static str> {
-    match path.trim_end_matches('/') {
-        "/ui/privacy" => Some("/legal/privacy"),
-        "/ui/accessibility" => Some("/legal/accessibility"),
-        "/ui/terms" => Some("/legal/terms"),
-        "/ui/cookies" => Some("/legal/cookies"),
-        "/ui/legal" => Some("/legal/notice"),
-        _ => None,
-    }
-}
-
-fn root_ui_tab_from_path(path: &str, headers: &HeaderMap) -> Option<&'static str> {
-    let route = path.trim_matches('/');
-    if route == "inhibitions" && !prefers_html(headers) {
-        return None;
-    }
-    static_files::tab_for_root_route(route)
-}
-
-fn legacy_ui_redirect(path: &str) -> Option<&'static str> {
-    let route = path.strip_prefix("/ui/")?.trim_matches('/');
-    if route.is_empty() || route == "index.html" {
-        return Some("/status");
-    }
-    static_files::root_route_for_tab(route).map(|root| match root {
-        "authentication" => "/authentication",
-        "status" => "/status",
-        "flow" => "/flow",
-        "inhibitions" => "/inhibitions",
-        "deliveries" => "/deliveries",
-        "logs" => "/logs",
-        "audit" => "/audit",
-        "setup" => "/setup",
-        "render" => "/render",
-        "routing" => "/routing",
-        "cascade" => "/cascade",
-        "delivery" => "/delivery",
-        "grouping" => "/grouping",
-        "preview" => "/preview",
-        "simulator" => "/simulator",
-        "test" => "/test",
-        _ => "/status",
-    })
-}
-
-fn prefers_html(headers: &HeaderMap) -> bool {
-    headers
-        .get(ACCEPT)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|accept| accept.contains("text/html"))
-}
-
 async fn handle_post(
     state: &AppState,
     path: &str,
@@ -397,41 +340,4 @@ async fn handle_delete(state: &AppState, path: &str, authed_user: Option<User>) 
     };
     record_admin_mutation_audit(path, resp.status(), authed_user.as_ref(), 0);
     resp
-}
-
-fn path_id(path: &str, prefix: &str) -> Option<String> {
-    let raw = path.strip_prefix(prefix)?;
-    if raw.is_empty() || raw.contains('/') {
-        return None;
-    }
-    Some(urlencoding::decode(raw).ok()?.into_owned())
-}
-
-fn record_admin_mutation_audit(
-    path: &str,
-    status: StatusCode,
-    authed_user: Option<&User>,
-    body_len: usize,
-) {
-    let Some(action) = endpoints::audit_action_for_post(path) else {
-        return;
-    };
-    audit::record(
-        audit_actor(authed_user),
-        action,
-        if status.is_success() { "ok" } else { "error" },
-        format!("{} status={} bytes={}", path, status.as_u16(), body_len),
-    );
-}
-
-fn audit_actor(user: Option<&User>) -> String {
-    user.map(|u| {
-        let sub = if u.sub.trim().is_empty() {
-            "anonymous"
-        } else {
-            u.sub.as_str()
-        };
-        format!("{}:{sub}", u.mode)
-    })
-    .unwrap_or_else(|| "anonymous".into())
 }

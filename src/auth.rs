@@ -8,18 +8,17 @@ use axum::http::{HeaderMap, Method, Response, StatusCode};
 use axum::response::IntoResponse;
 use constant_time_eq::constant_time_eq;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use url::form_urlencoded;
 
 use auth_modules::audit::AuthAuditKind;
-use auth_modules::errors;
-use auth_modules::rate_limit::{GOLD_AUTH_ACCOUNT_FAILURE_MAX, GOLD_AUTH_ACCOUNT_FAILURE_WINDOW};
 
 mod local;
 mod login;
 mod magic_link;
+mod rate_limit;
 mod session;
 #[cfg(test)]
 mod tests;
@@ -36,6 +35,10 @@ pub use tokens::{public_token, required_scope, scopes_allow, token_hash};
 pub use totp_handlers::{totp_disable, totp_enable, totp_start};
 
 use local::{authenticate_basic, authenticate_ldap_basic, authenticate_trusted_proxy};
+use rate_limit::{
+    auth_rate_key, auth_rate_limited, clear_auth_failures, record_auth_audit_failure,
+    record_auth_failure,
+};
 use session::{cookie_values, issue_session, verify_session};
 use tokens::{authenticate_api_token, bearer_token, viewer_allows_scope};
 
@@ -325,69 +328,6 @@ fn body_is_json(body: &Bytes) -> bool {
     std::str::from_utf8(body)
         .map(|s| s.trim_start().starts_with('{'))
         .unwrap_or(false)
-}
-
-fn auth_rate_key(action: &str, subject: &str) -> String {
-    let subject = subject.trim().to_ascii_lowercase();
-    format!(
-        "{action}:{}",
-        if subject.is_empty() {
-            "unknown"
-        } else {
-            subject.as_str()
-        }
-    )
-}
-
-fn auth_rate_limited(state: &AppState, key: &str) -> bool {
-    state
-        .auth_failures
-        .blocked(key, GOLD_AUTH_ACCOUNT_FAILURE_MAX, auth_failure_window())
-}
-
-fn record_auth_failure(state: &AppState, key: &str, action: &'static str, detail: &'static str) {
-    state.auth_failures.record(key, auth_failure_window());
-    let kind = auth_audit_kind_for_failure(action, detail);
-    record_auth_audit_failure(key.to_string(), action, kind, detail);
-}
-
-fn clear_auth_failures(state: &AppState, key: &str) {
-    state.auth_failures.clear(key);
-}
-
-fn auth_audit_kind_for_failure(action: &str, detail: &str) -> AuthAuditKind {
-    if detail == errors::RATE_LIMITED {
-        AuthAuditKind::RateLimitExceeded
-    } else if action == "auth.ldap" {
-        AuthAuditKind::LdapLoginFailure
-    } else if detail.contains("TOTP") {
-        AuthAuditKind::TotpVerificationFailure
-    } else {
-        AuthAuditKind::LoginFailure
-    }
-}
-
-fn record_auth_audit_failure(
-    actor: String,
-    action: &str,
-    kind: AuthAuditKind,
-    detail: impl Into<String>,
-) {
-    let detail = detail.into();
-    crate::audit::record(
-        actor,
-        action,
-        "error",
-        json!({
-            "kind": kind.as_str(),
-            "reason": detail,
-        })
-        .to_string(),
-    );
-}
-
-fn auth_failure_window() -> std::time::Duration {
-    GOLD_AUTH_ACCOUNT_FAILURE_WINDOW
 }
 
 fn sudo_window_seconds() -> i64 {

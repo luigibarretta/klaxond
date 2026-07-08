@@ -1,5 +1,5 @@
 {
-  "maxLines": 500,
+  "maxLines": 400,
   "allowedGrowthLines": 50,
   "roots": [
     "src",

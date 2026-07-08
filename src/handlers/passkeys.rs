@@ -1,56 +1,31 @@
 use super::{json_body, json_response, text};
-use crate::audit;
 use crate::auth::{self, User};
-use crate::config::{PasskeyRecord, RuntimeConfig, save_auth};
+use crate::config::{PasskeyRecord, save_auth};
 use crate::state::{
     AppState, PendingPasskeyAuthentication, PendingPasskeyRegistration, lock_mutex,
 };
 use crate::util::random_hex;
-use auth_modules::rate_limit::{GOLD_AUTH_ACCOUNT_FAILURE_MAX, GOLD_AUTH_ACCOUNT_FAILURE_WINDOW};
 use axum::body::{Body, Bytes};
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
 use serde_json::json;
 use std::net::SocketAddr;
-use url::Url;
 use webauthn_rs::prelude::{
-    CredentialID, Passkey, PublicKeyCredential, RegisterPublicKeyCredential, Uuid, Webauthn,
-    WebauthnBuilder,
+    CredentialID, Passkey, PublicKeyCredential, RegisterPublicKeyCredential, Uuid,
 };
 
 mod login_page;
 mod public;
+mod rate_limit;
+mod webauthn_config;
 
+use self::rate_limit::{
+    clear_passkey_auth_failures, passkey_auth_rate_key, passkey_auth_rate_limited,
+    passkey_auth_rate_limited_response, record_passkey_auth_failure,
+};
+use self::webauthn_config::webauthn_for_cfg;
 pub(super) use login_page::passkey_login_page;
 pub(super) use public::{public_passkey, webauthn_public_config};
-
-fn webauthn_for_cfg(cfg: &RuntimeConfig) -> Result<Webauthn, String> {
-    if !cfg.auth.webauthn.enabled {
-        return Err("WebAuthn/passkeys are disabled".into());
-    }
-    let origin = if cfg.auth.webauthn.origin.trim().is_empty() {
-        cfg.public_url.trim_end_matches('/').to_string()
-    } else {
-        cfg.auth.webauthn.origin.trim_end_matches('/').to_string()
-    };
-    let url = Url::parse(&origin).map_err(|err| format!("invalid WebAuthn origin: {err}"))?;
-    let rp_id = if cfg.auth.webauthn.rp_id.trim().is_empty() {
-        url.domain()
-            .ok_or_else(|| "WebAuthn origin must have a domain host".to_string())?
-            .to_string()
-    } else {
-        cfg.auth.webauthn.rp_id.trim().to_string()
-    };
-    WebauthnBuilder::new(&rp_id, &url)
-        .map_err(|err| format!("invalid WebAuthn relying party: {err}"))?
-        .rp_name("klaxond")
-        .allow_any_port(matches!(
-            url.host_str(),
-            Some("localhost" | "127.0.0.1" | "::1")
-        ))
-        .build()
-        .map_err(|err| format!("invalid WebAuthn config: {err}"))
-}
 
 pub(super) fn passkey_register_start(
     state: &AppState,
@@ -369,69 +344,6 @@ pub(super) fn passkey_login_finish(
             resp
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
-}
-
-fn passkey_auth_rate_key(
-    action: &str,
-    subject: &str,
-    headers: &HeaderMap,
-    peer: SocketAddr,
-) -> String {
-    let subject = subject.trim().to_ascii_lowercase();
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .map(str::to_string)
-        .unwrap_or_else(|| peer.ip().to_string());
-    format!(
-        "{action}:{}:{ip}",
-        if subject.is_empty() {
-            "unknown"
-        } else {
-            subject.as_str()
-        }
-    )
-}
-
-fn passkey_auth_rate_limited(state: &AppState, rate_key: &str) -> bool {
-    state.auth_failures.blocked(
-        rate_key,
-        GOLD_AUTH_ACCOUNT_FAILURE_MAX,
-        GOLD_AUTH_ACCOUNT_FAILURE_WINDOW,
-    )
-}
-
-fn record_passkey_auth_failure(state: &AppState, rate_key: &str, detail: &'static str) {
-    state
-        .auth_failures
-        .record(rate_key, GOLD_AUTH_ACCOUNT_FAILURE_WINDOW);
-    audit::record(
-        rate_key.to_string(),
-        "auth.passkey",
-        "error",
-        detail.to_string(),
-    );
-}
-
-fn clear_passkey_auth_failures(state: &AppState, rate_key: &str) {
-    state.auth_failures.clear(rate_key);
-}
-
-fn passkey_auth_rate_limited_response() -> Response<Body> {
-    text(
-        StatusCode::TOO_MANY_REQUESTS,
-        "too many authentication failures",
-    )
 }
 
 pub(super) fn passkey_delete(
