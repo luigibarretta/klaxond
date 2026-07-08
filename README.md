@@ -549,7 +549,8 @@ klaxond/
 │   ├── style.css           dark theme, ~6KB
 │   ├── table-pager.js      shared finite-table pagination helper
 │   ├── app-main.js         native ESM entrypoint
-│   ├── app.js              shared fetch/auth/router/toast helpers
+│   ├── app.js              stable ESM facade re-exporting runtime modules
+│   ├── app-core.js, app-http.js, app-query.js, app-routing-core.js, app-toast.js shared UI runtime modules
 │   └── app-*.js            feature modules for status, auth, logs, routing and editors
 ├── tests/
 │   ├── parity.rs           parser/inhibition parity tests

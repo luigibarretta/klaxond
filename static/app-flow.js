@@ -1,7 +1,7 @@
 import {
   $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
   escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
-  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  markTabDirty, navigateToTab, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
 } from "./app.js";
@@ -320,4 +320,3 @@ document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
     if (_flowAutorefreshTimer) { clearInterval(_flowAutorefreshTimer); _flowAutorefreshTimer = null; }
   });
 });
-
