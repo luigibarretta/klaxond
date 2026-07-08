@@ -1,17 +1,32 @@
 {
   "maxLines": 1000,
-  "roots": ["src", "static", "tests", "scripts"],
-  "extensions": [".rs", ".js", ".mjs", ".ts", ".css", ".html"],
-  "excludePrefixes": ["static/vendor/"],
-  "excludeSuffixes": [".min.js"],
+  "allowedGrowthLines": 50,
+  "roots": [
+    "src",
+    "static",
+    "tests",
+    "scripts"
+  ],
+  "extensions": [
+    ".rs",
+    ".js",
+    ".mjs",
+    ".ts",
+    ".css",
+    ".html"
+  ],
+  "ignore": {
+    "static/vendor": {
+      "reason": "Vendored Swagger UI assets; update from upstream instead of hand-splitting."
+    },
+    "static/mermaid.min.js": {
+      "reason": "Vendored minified Mermaid bundle; update from upstream instead of hand-editing."
+    }
+  },
   "allow": {
     "src/auth.rs": {
       "linesAtBaseline": 1872,
       "reason": "Auth runtime remains broad because it coordinates sessions, OIDC, tokens, CSRF, sudo, passkeys and local login; split before extending auth flows."
-    },
-    "src/config.rs": {
-      "linesAtBaseline": 2441,
-      "reason": "Configuration loading, sidecar migration and runtime settings are still centralized; split before adding more config domains."
     },
     "src/parsers.rs": {
       "linesAtBaseline": 1363,
