@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "loc:check": "node scripts/check-loc.mjs",
     "openapi:lint": "redocly lint docs/openapi.yaml --config .redocly.yaml",
     "security:rsa-guard": "bash scripts/check-rsa-private-usage.sh",
     "test:e2e": "playwright test"

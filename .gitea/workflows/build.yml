@@ -44,6 +44,9 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Check LOC guardrails
+        run: npm run loc:check
+
       - name: Lint OpenAPI
         run: npm run openapi:lint
 

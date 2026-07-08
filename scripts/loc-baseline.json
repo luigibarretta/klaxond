@@ -1,0 +1,37 @@
+{
+  "maxLines": 1000,
+  "roots": ["src", "static", "tests", "scripts"],
+  "extensions": [".rs", ".js", ".mjs", ".ts", ".css", ".html"],
+  "excludePrefixes": ["static/vendor/"],
+  "excludeSuffixes": [".min.js"],
+  "allow": {
+    "src/auth.rs": {
+      "linesAtBaseline": 1872,
+      "reason": "Auth runtime remains broad because it coordinates sessions, OIDC, tokens, CSRF, sudo, passkeys and local login; split before extending auth flows."
+    },
+    "src/config.rs": {
+      "linesAtBaseline": 2441,
+      "reason": "Configuration loading, sidecar migration and runtime settings are still centralized; split before adding more config domains."
+    },
+    "src/parsers.rs": {
+      "linesAtBaseline": 1363,
+      "reason": "Notification parser parity is consolidated for migration safety; split by source only with golden parity coverage."
+    },
+    "static/i18n.js": {
+      "linesAtBaseline": 1334,
+      "reason": "Translation catalog is centralized for the current vanilla UI; split by locale or feature before adding large copy blocks."
+    },
+    "static/index.html": {
+      "linesAtBaseline": 1089,
+      "reason": "Single-page UI markup is still static HTML; split templates/components before adding new full-page surfaces."
+    },
+    "static/style.css": {
+      "linesAtBaseline": 1208,
+      "reason": "Single stylesheet owns the full admin UI theme; split into layout/view/theme layers before adding substantial UI styling."
+    },
+    "tests/e2e/klaxond.spec.ts": {
+      "linesAtBaseline": 1664,
+      "reason": "End-to-end coverage is consolidated around one server fixture; split by feature area before adding more UI scenarios."
+    }
+  }
+}
