@@ -110,6 +110,19 @@ test("legacy UI URLs and hash URLs migrate to path routes", async ({ page, reque
 });
 
 test("direct flow refresh initializes without frontend TDZ errors", async ({ page, request }) => {
+  const seeded = await request.post("/webhook/warning?dry_run=1", {
+    headers: { Authorization: "bearer e2e-secret" },
+    data: {
+      status: "firing",
+      commonLabels: {
+        alertname: "FlowDeliveryTimestampProbe",
+        component: "host",
+        host: "flow-probe"
+      }
+    }
+  });
+  await expect(seeded).toBeOK();
+
   await page.goto("/flow");
   await expect(page).toHaveURL(/\/flow$/);
   await expect(page.locator("#tab-flow")).toHaveClass(/active/);

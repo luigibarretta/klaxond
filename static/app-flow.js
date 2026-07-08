@@ -5,7 +5,7 @@ import {
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
 } from "./app.js";
-import { fetchDeliveries } from "./app-status.js";
+import { deliveryTsSeconds, fetchDeliveries } from "./app-status.js";
 
 // Make tab-switcher callable from outside (mermaid click handlers).
 // Use the SPA router so the path stays in sync with the active pane.

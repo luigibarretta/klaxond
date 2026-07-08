@@ -278,7 +278,7 @@ export async function fetchDeliveries(limit = 0, opts = {}) {
   }));
 }
 
-function deliveryTsSeconds(item) {
+export function deliveryTsSeconds(item) {
   const raw = Number(item?.ts ?? item?.timestamp ?? 0);
   return raw > 1000000000000 ? raw / 1000 : raw;
 }
