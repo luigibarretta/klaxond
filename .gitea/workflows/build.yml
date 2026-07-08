@@ -47,6 +47,9 @@ jobs:
       - name: Check LOC guardrails
         run: npm run loc:check
 
+      - name: NASA/JPL maintainability warnings
+        run: npm run nasa:warn
+
       - name: Lint OpenAPI
         run: npm run openapi:lint
 

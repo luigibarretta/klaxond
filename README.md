@@ -559,7 +559,8 @@ klaxond/
 │   ├── openapi.yaml                  canonical API contract, also served by the binary
 │   ├── grafana-dashboard.json        importable Grafana dashboard example
 │   ├── prometheus-scrape.example.yml Prometheus scrape example
-│   └── victoriametrics-scrape.example.yml vmagent/VictoriaMetrics scrape example
+│   ├── victoriametrics-scrape.example.yml vmagent/VictoriaMetrics scrape example
+│   └── quality-nasa-jpl-warning-profile.md maintainability warning profile
 ├── .redocly.yaml           Redocly CLI rules for OpenAPI linting
 ├── klaxond.default.toml     bundled defaults, copied to /data on first run
 ├── Dockerfile              multi-stage Rust build
@@ -590,11 +591,20 @@ Verification:
 
 ```bash
 scripts/check-rsa-private-usage.sh
+npm run loc:check
+npm run nasa:warn
 npm run openapi:lint
 cargo test
 npm run test:e2e
 docker buildx build --build-context auth-modules=../auth-modules -t klaxond:local .
 ```
+
+`npm run nasa:warn` runs a warning-only maintainability profile inspired by
+NASA/JPL rules. It reports files over 300 LOC, functions over 60 LOC and
+functions with more than 6 parameters, but does not fail by default. The same
+warning profile runs in CI. See
+[`docs/quality-nasa-jpl-warning-profile.md`](docs/quality-nasa-jpl-warning-profile.md)
+for thresholds and environment knobs.
 
 `npm run openapi:lint` runs the pinned Redocly CLI from `package-lock.json`
 against [`docs/openapi.yaml`](docs/openapi.yaml) using `.redocly.yaml`.
