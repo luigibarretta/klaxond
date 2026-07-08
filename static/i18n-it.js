@@ -1,10 +1,8 @@
 import { IT_AUTH_MESSAGES } from "./i18n-it-auth.js";
 import { buildItalianOperationalMessages } from "./i18n-it-operational.js";
-export function buildItalianMessages({ authorLink }) {
-  return {
-    "app.title": "klaxond — demone notifiche",
+const IT_STATIC_MESSAGES = {
+  "app.title": "klaxond — demone notifiche",
   "app.tagline": "klaxond — cascata • inibizioni • rendering",
-  "footer.byline": `by ${authorLink()}`,
   "footer.legal_links": "Link legali",
   "footer.privacy": "Privacy",
   "footer.accessibility": "Accessibilita'",
@@ -20,7 +18,6 @@ export function buildItalianMessages({ authorLink }) {
   "legal.cookies.title": "Informativa cookie",
   "legal.cookies.body": `<p>klaxond usa solo storage locale e stato di autenticazione strettamente necessari. Non usa cookie pubblicitari, di profilazione o tracking cross-site.</p><h3>Cosa viene salvato</h3><ul><li><code>klaxond_session</code>: cookie di sessione sicuro usato per mantenere autenticati gli utenti autorizzati.</li><li><code>klaxond.lang</code>, <code>klaxond.themeMode</code> e valori di stato UI: preferenze locali del browser per lingua, tema e layout.</li></ul><p>Poiche' questi elementi sono necessari per sicurezza o preferenze UI richieste esplicitamente, non viene mostrato un banner per cookie marketing.</p>`,
   "legal.notice.title": "Note legali e contatti",
-  "legal.notice.body": `<p><strong>Applicazione:</strong> klaxond</p><p><strong>Autore:</strong> ${authorLink()}</p><p><strong>Operatore istanza:</strong> il soggetto che gestisce questo deployment self-hosted.</p><p>klaxond e' una console amministrativa open-source per routing alert e consegna notifiche. Non e' pensato come sito pubblico, marketplace, social network, piattaforma pubblicitaria o servizio di hosting per contenuti generati dagli utenti.</p><p>Per richieste privacy, accessibilita', sicurezza o legali, usa il contatto operativo configurato dall'operatore dell'istanza e includi dettagli sufficienti a identificare account, URL, request ID o timestamp interessati.</p>`,
   "prefs.language": "Lingua",
   "prefs.theme": "Tema",
   "theme.system": "Sistema",
@@ -262,8 +259,20 @@ export function buildItalianMessages({ authorLink }) {
   "deliveries.would_suppress": "sopprimerebbe",
   "deliveries.no_rows_export": "Nessuna riga da esportare",
   "deliveries.exported": "Esportate {count} righe",
+};
 
-  ...buildItalianOperationalMessages(),
-  ...IT_AUTH_MESSAGES,
+function italianAuthorMessages(authorLink) {
+  return {
+    "footer.byline": `by ${authorLink()}`,
+    "legal.notice.body": `<p><strong>Applicazione:</strong> klaxond</p><p><strong>Autore:</strong> ${authorLink()}</p><p><strong>Operatore istanza:</strong> il soggetto che gestisce questo deployment self-hosted.</p><p>klaxond e' una console amministrativa open-source per routing alert e consegna notifiche. Non e' pensato come sito pubblico, marketplace, social network, piattaforma pubblicitaria o servizio di hosting per contenuti generati dagli utenti.</p><p>Per richieste privacy, accessibilita', sicurezza o legali, usa il contatto operativo configurato dall'operatore dell'istanza e includi dettagli sufficienti a identificare account, URL, request ID o timestamp interessati.</p>`,
+  };
 }
+
+export function buildItalianMessages({ authorLink }) {
+  return {
+    ...IT_STATIC_MESSAGES,
+    ...italianAuthorMessages(authorLink),
+    ...buildItalianOperationalMessages(),
+    ...IT_AUTH_MESSAGES,
+  };
 }

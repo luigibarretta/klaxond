@@ -1,5 +1,4 @@
-export function buildItalianOperationalMessages() {
-  return {
+export const IT_OPERATIONAL_MESSAGES = {
   "render.title": "Mappatura componente → dashboard",
   "render.desc": "Quando un alert Grafana ha label <code>component=X</code>, la push ntfy risultante riceve un action button \"Open &lt;label&gt;\" verso l'URL. Gli URL che iniziano con <code>/</code> vengono appesi a <code id=\"gbase\">https://grafana.example.com</code>.",
   "render.desc_before_base": "Quando un alert Grafana ha label <code>component=X</code>, la push ntfy risultante riceve un action button \"Open &lt;label&gt;\" verso l'URL. Gli URL che iniziano con <code>/</code> vengono appesi a",
@@ -189,5 +188,8 @@ export function buildItalianOperationalMessages() {
   "config.import_restore": "Ripristinerà",
   "config.restore_confirm": "Ripristinare la config klaxond da \"{name}\" ({size} byte)?\n\nLa config corrente verrà prima salvata in backup automatico. Sono accettati TOML e bundle JSON completi. Dopo l'upload, lo stato in memoria viene ricaricato. Continuare?",
   "config.restored_toast": "Config ripristinata — ricarica la pagina per aggiornare tutto lo stato UI",
-  };
+};
+
+export function buildItalianOperationalMessages() {
+  return { ...IT_OPERATIONAL_MESSAGES };
 }

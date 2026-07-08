@@ -102,7 +102,18 @@ pub async fn dispatch(
     let mut resp = match method {
         Method::GET => handle_get(&state, &path, &full_path, &headers, authed_user).await,
         Method::POST => {
-            handle_post(&state, &path, &full_path, &headers, body, peer, authed_user).await
+            handle_post(
+                &state,
+                PostRequest {
+                    path: &path,
+                    full_path: &full_path,
+                    headers: &headers,
+                    body,
+                    peer,
+                    authed_user,
+                },
+            )
+            .await
         }
         Method::DELETE => handle_delete(&state, &path, authed_user).await,
         _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
@@ -279,15 +290,24 @@ async fn handle_get(
     }
 }
 
-async fn handle_post(
-    state: &AppState,
-    path: &str,
-    full_path: &str,
-    headers: &HeaderMap,
+struct PostRequest<'a> {
+    path: &'a str,
+    full_path: &'a str,
+    headers: &'a HeaderMap,
     body: Bytes,
     peer: SocketAddr,
     authed_user: Option<User>,
-) -> Response<Body> {
+}
+
+async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
+    let PostRequest {
+        path,
+        full_path,
+        headers,
+        body,
+        peer,
+        authed_user,
+    } = req;
     let body_len = body.len();
     let resp = match path {
         "/api/auth/local/login" => auth::local_login(state, body).await,

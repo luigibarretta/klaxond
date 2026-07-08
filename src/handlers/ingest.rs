@@ -181,12 +181,14 @@ pub(super) async fn ingest(
     if source != "pve"
         && dedup::submit(
             state,
-            source,
-            &severity2,
-            payload.clone(),
-            parts.clone(),
-            common_labels.clone(),
-            with_cascade,
+            dedup::SubmitInput {
+                source: source.to_string(),
+                severity: severity2.clone(),
+                payload: payload.clone(),
+                parts: parts.clone(),
+                common_labels: common_labels.clone(),
+                with_cascade,
+            },
         )
         .await
     {

@@ -75,7 +75,17 @@ pub async fn deliver(
             "broadcast-all-failed".into()
         };
         audit_log_delivery(
-            state, severity, &parts, &labels, source, &attempted, ok, &channel, started,
+            state,
+            DeliveryAudit {
+                severity,
+                parts: &parts,
+                labels: &labels,
+                source,
+                tiers_attempted: &attempted,
+                ok,
+                channel: &channel,
+                started_at: started,
+            },
         );
         return (ok, channel);
     }
@@ -91,21 +101,33 @@ pub async fn deliver(
         if post_tier(state, severity, &parts, &first).await {
             audit_log_delivery(
                 state,
-                severity,
-                &parts,
-                &labels,
-                source,
-                &attempted,
-                true,
-                &first.name,
-                started,
+                DeliveryAudit {
+                    severity,
+                    parts: &parts,
+                    labels: &labels,
+                    source,
+                    tiers_attempted: &attempted,
+                    ok: true,
+                    channel: &first.name,
+                    started_at: started,
+                },
             );
             return (true, first.name);
         }
         if !with_cascade {
             let channel = format!("{}-failed", first.name);
             audit_log_delivery(
-                state, severity, &parts, &labels, source, &attempted, false, &channel, started,
+                state,
+                DeliveryAudit {
+                    severity,
+                    parts: &parts,
+                    labels: &labels,
+                    source,
+                    tiers_attempted: &attempted,
+                    ok: false,
+                    channel: &channel,
+                    started_at: started,
+                },
             );
             return (false, channel);
         }
@@ -113,7 +135,17 @@ pub async fn deliver(
             attempted.push(tier.name.clone());
             if post_tier(state, severity, &parts, tier).await {
                 audit_log_delivery(
-                    state, severity, &parts, &labels, source, &attempted, true, &tier.name, started,
+                    state,
+                    DeliveryAudit {
+                        severity,
+                        parts: &parts,
+                        labels: &labels,
+                        source,
+                        tiers_attempted: &attempted,
+                        ok: true,
+                        channel: &tier.name,
+                        started_at: started,
+                    },
                 );
                 return (true, tier.name.clone());
             }
@@ -121,14 +153,16 @@ pub async fn deliver(
     }
     audit_log_delivery(
         state,
-        severity,
-        &parts,
-        &labels,
-        source,
-        &attempted,
-        false,
-        "all-failed",
-        started,
+        DeliveryAudit {
+            severity,
+            parts: &parts,
+            labels: &labels,
+            source,
+            tiers_attempted: &attempted,
+            ok: false,
+            channel: "all-failed",
+            started_at: started,
+        },
     );
     (false, "all-failed".into())
 }
@@ -199,42 +233,48 @@ fn matcher_matches(matcher: &HashMap<String, String>, labels: &HashMap<String, S
     true
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn audit_log_delivery(
-    state: &AppState,
-    severity: &str,
-    parts: &Parts,
-    labels: &HashMap<String, String>,
-    source: &str,
-    tiers_attempted: &[String],
-    ok: bool,
-    channel: &str,
-    started_at: f64,
-) {
+pub struct DeliveryAudit<'a> {
+    pub severity: &'a str,
+    pub parts: &'a Parts,
+    pub labels: &'a HashMap<String, String>,
+    pub source: &'a str,
+    pub tiers_attempted: &'a [String],
+    pub ok: bool,
+    pub channel: &'a str,
+    pub started_at: f64,
+}
+
+pub fn audit_log_delivery(state: &AppState, audit: DeliveryAudit<'_>) {
     let ended_at = now_epoch();
     let record = json!({
         "audit": "delivery",
-        "source": source,
-        "severity": severity,
-        "alertname": labels.get("alertname").cloned().unwrap_or_else(|| parts.title.chars().take(120).collect()),
-        "component": labels.get("component").cloned().unwrap_or_default(),
-        "host": labels.get("host").or_else(|| labels.get("instance_name")).cloned().unwrap_or_default(),
-        "title": parts.title.chars().take(200).collect::<String>(),
-        "tiers_attempted": tiers_attempted,
-        "ok": ok,
-        "channel": channel,
-        "duration_ms": ((ended_at - started_at) * 1000.0) as i64,
+        "source": audit.source,
+        "severity": audit.severity,
+        "alertname": audit.labels.get("alertname").cloned().unwrap_or_else(|| audit.parts.title.chars().take(120).collect()),
+        "component": audit.labels.get("component").cloned().unwrap_or_default(),
+        "host": audit.labels.get("host").or_else(|| audit.labels.get("instance_name")).cloned().unwrap_or_default(),
+        "title": audit.parts.title.chars().take(200).collect::<String>(),
+        "tiers_attempted": audit.tiers_attempted,
+        "ok": audit.ok,
+        "channel": audit.channel,
+        "duration_ms": ((ended_at - audit.started_at) * 1000.0) as i64,
         "timestamp": (ended_at * 1000.0) as i64,
     });
     tracing::info!("AUDIT {}", record);
-    state.log_delivery(source, severity, &parts.title, channel, "");
+    state.log_delivery(
+        audit.source,
+        audit.severity,
+        &audit.parts.title,
+        audit.channel,
+        "",
+    );
     state.metric_inc(
         "klaxond_deliveries_total",
         &[
-            ("source", source),
-            ("severity", severity),
-            ("channel", channel),
-            ("ok", if ok { "1" } else { "0" }),
+            ("source", audit.source),
+            ("severity", audit.severity),
+            ("channel", audit.channel),
+            ("ok", if audit.ok { "1" } else { "0" }),
         ],
         1,
     );

@@ -1,9 +1,11 @@
+mod key;
 mod persistence;
 mod render;
 
 #[cfg(test)]
 mod tests;
 
+pub use self::key::dedup_key;
 use self::persistence::{clear_persisted, pending_path, persist_item};
 use self::render::{highest_severity, render_batch};
 use crate::config::DEDUP_SOURCES;
@@ -16,146 +18,20 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::Duration;
 
-pub fn dedup_key(
-    source: &str,
-    payload: &Value,
-    parts: &Parts,
-    common_labels: &HashMap<String, String>,
-) -> String {
-    let title_fallback = if parts.title.is_empty() {
-        "?"
-    } else {
-        &parts.title
-    };
-    match source {
-        "wud" => {
-            let p = payload
-                .as_array()
-                .and_then(|a| a.first())
-                .unwrap_or(payload);
-            if let Some(img) = p
-                .get("image")
-                .and_then(|i| i.get("name"))
-                .and_then(|v| v.as_str())
-                .or_else(|| p.get("name").and_then(|v| v.as_str()))
-            {
-                return format!("wud:{img}");
-            }
-        }
-        "grafana" => {
-            if let Some(an) = common_labels.get("alertname").filter(|s| !s.is_empty()) {
-                return format!("grafana:{an}");
-            }
-        }
-        "beszel" => {
-            if let Some(cn) = payload
-                .get("container_name")
-                .and_then(|v| v.as_str())
-                .or_else(|| common_labels.get("container_name").map(String::as_str))
-            {
-                return format!("beszel:{cn}");
-            }
-        }
-        "healthchecks" => {
-            if let Some(ck) = payload.get("name").and_then(|v| v.as_str()).or_else(|| {
-                payload
-                    .get("check")
-                    .and_then(|v| v.get("name"))
-                    .and_then(|v| v.as_str())
-            }) {
-                return format!("hc:{ck}");
-            }
-        }
-        "pve" => {
-            if let Some(t) = payload
-                .get("type")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            {
-                return format!("pve:{t}");
-            }
-        }
-        "authentik" => {
-            let data = payload.get("data").unwrap_or(&Value::Null);
-            let user = data.get("user").and_then(|v| v.as_str()).unwrap_or("");
-            let action = data
-                .get("event")
-                .or_else(|| data.get("status"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if !user.is_empty() || !action.is_empty() {
-                return format!("authentik:{action}:{user}");
-            }
-        }
-        "shelfmark" => {
-            let title = payload
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim();
-            let evt = payload
-                .get("event")
-                .or_else(|| payload.get("type"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim();
-            if !title.is_empty() || !evt.is_empty() {
-                return format!("shelfmark:{evt}:{title}");
-            }
-        }
-        "prowlarr" => {
-            let evt = payload
-                .get("eventType")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim();
-            let health = payload.get("health").unwrap_or(&Value::Null);
-            let msg = health
-                .get("message")
-                .or_else(|| payload.get("message"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .chars()
-                .take(60)
-                .collect::<String>();
-            if !evt.is_empty() {
-                return format!("prowlarr:{evt}:{msg}");
-            }
-        }
-        "decypharr" => {
-            let evt = payload
-                .get("event")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_ascii_lowercase();
-            let h = payload
-                .get("hash")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_ascii_lowercase();
-            if !evt.is_empty() || !h.is_empty() {
-                return format!("decypharr:{evt}:{h}");
-            }
-        }
-        _ => {}
-    }
-    format!("{source}:{title_fallback}")
+pub struct SubmitInput {
+    pub source: String,
+    pub severity: String,
+    pub payload: Value,
+    pub parts: Parts,
+    pub common_labels: HashMap<String, String>,
+    pub with_cascade: bool,
 }
 
-pub async fn submit(
-    state: &AppState,
-    source: &str,
-    severity: &str,
-    payload: Value,
-    parts: Parts,
-    common_labels: HashMap<String, String>,
-    with_cascade: bool,
-) -> bool {
+pub async fn submit(state: &AppState, input: SubmitInput) -> bool {
     let cfg = state.cfg();
-    let Some(setting) = cfg.dedup.get(source) else {
+    let source = input.source;
+    let severity = input.severity;
+    let Some(setting) = cfg.dedup.get(&source) else {
         return false;
     };
     if !setting.enabled || setting.strategy == "none" {
@@ -164,29 +40,29 @@ pub async fn submit(
     if severity == "critical" && !setting.override_critical {
         return false;
     }
-    let key = dedup_key(source, &payload, &parts, &common_labels);
+    let window = setting.window_s;
+    let key = dedup_key(&source, &input.payload, &input.parts, &input.common_labels);
     let item = DedupItem {
         ts: now_epoch(),
-        source: source.to_string(),
-        severity: severity.to_string(),
-        payload,
-        parts,
-        common_labels,
-        with_cascade,
+        source: source.clone(),
+        severity: severity.clone(),
+        payload: input.payload,
+        parts: input.parts,
+        common_labels: input.common_labels,
+        with_cascade: input.with_cascade,
         dedup_key: key,
     };
     {
         let mut d = state.dedup.lock().await;
         d.queues
-            .entry(source.to_string())
+            .entry(source.clone())
             .or_default()
             .push(item.clone());
-        persist_item(state, source, &item);
-        if !d.timer_active.get(source).copied().unwrap_or(false) {
-            d.timer_active.insert(source.to_string(), true);
+        persist_item(state, &source, &item);
+        if !d.timer_active.get(&source).copied().unwrap_or(false) {
+            d.timer_active.insert(source.clone(), true);
             let state2 = state.clone();
-            let source2 = source.to_string();
-            let window = setting.window_s;
+            let source2 = source.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(window)).await;
                 flush_source(&state2, &source2).await;
