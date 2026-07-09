@@ -6,6 +6,8 @@ import {
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
   updateTabAccessibleLabel,
 } from "./app.js";
+import { loadConfigBackups } from "./app-config-backups.js";
+export { loadConfigBackups } from "./app-config-backups.js";
 
 // ---- Status ----
 export async function loadStatus(opts = {}) {
@@ -232,130 +234,4 @@ $("#btn-cascade-toggle").addEventListener("click", async () => {
   } catch (e) {
     notifyError("cascade-toggle", e);
   }
-});
-
-
-// ---- Config backup / restore ----
-export async function loadConfigBackups() {
-  const ul = $("#cfg-backup-list"); if (!ul) return;
-  try {
-    const r = await queryGet("config-backups", "/api/config/backups");
-    if (r.dir) $("#cfg-backup-dir").textContent = r.dir;
-    if (r.keep_max) $("#cfg-backup-keep").textContent = r.keep_max;
-    const items = r.backups || [];
-    if (!items.length) { ul.innerHTML = `<li>${escapeHtml(tr("status.no_backups"))}</li>`; return; }
-    ul.innerHTML = items.slice(0, 10).map(b => {
-      const kb = Math.round(b.size / 1024);
-      return `<li><code>${escapeHtml(b.name)}</code> · ${kb} KB · ${escapeHtml(b.mtime_iso)}</li>`;
-    }).join("");
-  } catch (e) {
-    ul.innerHTML = `<li class='muted'>${escapeHtml(tr("status.backups_unavailable", { message: errorText(e) }))}</li>`;
-    fetchError("config-backups", e);
-  }
-}
-
-let _pendingConfigImport = null;
-
-function clearConfigImportPreview(opts = {}) {
-  _pendingConfigImport = null;
-  const box = $("#cfg-import-preview");
-  if (box) {
-    box.classList.add("hidden");
-    box.innerHTML = "";
-  }
-  $("#cfg-import-apply") && ($("#cfg-import-apply").hidden = true);
-  $("#cfg-import-clear") && ($("#cfg-import-clear").hidden = true);
-  if (!opts.keepStatus) setInlineStatus("#cfg-restore-status", "");
-}
-
-function renderConfigImportPreview(file, preview) {
-  const box = $("#cfg-import-preview");
-  if (!box) return;
-  const warnings = (preview.warnings || []).map(w => `<li>${escapeHtml(w)}</li>`).join("");
-  box.classList.remove("hidden");
-  box.innerHTML = `
-    <strong>${escapeHtml(tr("config.import_preview_title", { name: file.name }))}</strong>
-    <div class="import-preview-grid">
-      <span>${escapeHtml(tr("config.import_kind"))}</span><code>${escapeHtml(preview.source_kind || "")}</code>
-      <span>${escapeHtml(tr("config.import_changed"))}</span><code>${escapeHtml((preview.changed_files || []).join(", ") || tr("status.none"))}</code>
-      <span>${escapeHtml(tr("config.import_unchanged"))}</span><code>${escapeHtml((preview.unchanged_files || []).join(", ") || tr("status.none"))}</code>
-      <span>${escapeHtml(tr("config.import_restore"))}</span><code>${escapeHtml((preview.would_restore || []).join(", ") || tr("status.none"))}</code>
-    </div>
-    ${warnings ? `<ul class="muted">${warnings}</ul>` : ""}`;
-  $("#cfg-import-apply") && ($("#cfg-import-apply").hidden = false);
-  $("#cfg-import-clear") && ($("#cfg-import-clear").hidden = false);
-}
-
-async function previewConfigImportFile(file) {
-  const status = $("#cfg-restore-status");
-  clearConfigImportPreview();
-  setInlineStatus(status, tr("config.previewing"));
-  const raw = await file.text();
-  const isJson = raw.trimStart().startsWith("{");
-  const res = await apiFetch("/api/config/import-preview", {
-    method: "POST",
-    headers: {"Content-Type": isJson ? "application/json" : "application/toml"},
-    body: raw,
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    notifyResponseError("config-import-preview", res, txt.slice(0, 300), status);
-    return;
-  }
-  const preview = await res.json();
-  _pendingConfigImport = { file, raw, contentType: isJson ? "application/json" : "application/toml", preview };
-  renderConfigImportPreview(file, preview);
-  setInlineStatus(status, tr("config.preview_ready"));
-}
-
-async function applyConfigImport() {
-  const pending = _pendingConfigImport;
-  const status = $("#cfg-restore-status");
-  if (!pending) return;
-  if (!confirm(tr("config.restore_confirm", { name: pending.file.name, size: pending.file.size }))) return;
-  setInlineStatus(status, tr("status.uploading"));
-  try {
-    const res = await apiFetch("/api/config/restore", {
-      method: "POST",
-      headers: {"Content-Type": pending.contentType},
-      body: pending.raw,
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      notifyResponseError("config-restore", res, txt.slice(0, 300), status);
-      return;
-    }
-    const j = await res.json();
-    notifySuccess(tr("config.restored_toast"), {
-      status,
-      inlineText: tr("status.restored", { bytes: j.bytes_written, backup: j.pre_restore_backup || tr("status.none") }),
-      durationMs: 6000,
-    });
-    clearConfigImportPreview({ keepStatus: true });
-    loadConfigBackups();
-  } catch (err) {
-    notifyError("config-restore", err, { status, inlineText: "❌ " + errorText(err) });
-  }
-}
-
-// Download is a plain anchor href — the browser handles content-disposition.
-onReady(() => {
-  const dl = document.getElementById("cfg-backup-download");
-  if (dl) dl.href = "/api/config/backup";
-  const full = document.getElementById("cfg-full-export-download");
-  if (full) full.href = "/api/config/export";
-  $("#cfg-import-apply")?.addEventListener("click", applyConfigImport);
-  $("#cfg-import-clear")?.addEventListener("click", clearConfigImportPreview);
-
-  const fileInput = document.getElementById("cfg-restore-file");
-  if (fileInput) fileInput.addEventListener("change", async e => {
-    const f = e.target.files[0]; if (!f) return;
-    try {
-      await previewConfigImportFile(f);
-    } catch (err) {
-      notifyError("config-import-preview", err, { status: "#cfg-restore-status", inlineText: "❌ " + errorText(err) });
-    } finally {
-      e.target.value = "";
-    }
-  });
 });

@@ -6,6 +6,7 @@ import {
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
 } from "./app.js";
 import { clearAllSuppressions, loadAcks, loadInhib } from "./app-inhibitions-active.js";
+import { collectInhibitionRulesFromTable, createInhibitionRuleRow } from "./app-inhibitions-row.js";
 export { loadAcks, loadInhib };
 
 async function testInhibitionRule() {
@@ -62,242 +63,19 @@ export { loadSchedules } from "./app-inhibitions-schedules.js";
 // ---- Inhibition rules (CRUD) ----
 let _inhibAvailableSources = [];
 
-function _matchTypeOf(r) {
-  if (r.match_all) return "match_all";
-  if (r.match_label && r.match_regex) return "match_label";
-  if (r.match_by) return "match_by";
-  return "match_by";
-}
-
-// Common alert-label autocomplete values for the match_by field.
-const _COMMON_LABEL_NAMES = ["host", "job", "alertname", "instance", "service", "component", "severity"];
-
-function _renderInhibRuleRow(r) {
-  const row = document.createElement("tr");
-  row.classList.add("inhib-rule-row");
-  const mt = _matchTypeOf(r);
-
-  // --- Source name ---
-  const tdSrc = document.createElement("td");
-  const inSrc = document.createElement("input");
-  inSrc.type = "text"; inSrc.value = r.source || ""; inSrc.dataset.k = "source";
-  inSrc.placeholder = "e.g. node-down"; inSrc.style.width = "100%";
-  inSrc.addEventListener("input", () => _markRowValidity(row));
-  tdSrc.appendChild(inSrc); row.appendChild(tdSrc);
-
-  // --- Match type select ---
-  const tdMt = document.createElement("td");
-  const sel = document.createElement("select"); sel.dataset.k = "match_type";
-  const _MT_LABELS = {match_by: "match_by", match_label: "match_label + regex", match_all: "match_all"};
-  for (const opt of ["match_by", "match_label", "match_all"]) {
-    const o = document.createElement("option"); o.value = opt; o.textContent = _MT_LABELS[opt];
-    if (opt === mt) o.selected = true;
-    sel.appendChild(o);
-  }
-  tdMt.appendChild(sel); row.appendChild(tdMt);
-
-  // --- Match value cell ---
-  // Two distinct inputs (label + regex), shown/hidden by match_type. For
-  // match_by we show only the label input; for match_label we show both;
-  // for match_all both are hidden and a hint is shown instead.
-  const tdMv = document.createElement("td");
-  const mvWrap = document.createElement("div");
-  mvWrap.style.display = "flex"; mvWrap.style.gap = "0.4em"; mvWrap.style.alignItems = "center";
-
-  const inLabel = document.createElement("input");
-  inLabel.type = "text"; inLabel.dataset.k = "match_label";
-  inLabel.placeholder = "host"; inLabel.style.flex = "0 0 8em";
-  inLabel.setAttribute("list", "inhib-label-suggestions");
-  inLabel.value = r.match_by || r.match_label || "";
-  inLabel.addEventListener("input", () => _markRowValidity(row));
-
-  const eqSign = document.createElement("span");
-  eqSign.textContent = "="; eqSign.style.color = "var(--muted)";
-
-  const inRegex = document.createElement("input");
-  inRegex.type = "text"; inRegex.dataset.k = "match_regex";
-  inRegex.placeholder = "^blackbox-.*"; inRegex.style.flex = "1 1 auto";
-  inRegex.style.fontFamily = "ui-monospace, monospace"; inRegex.style.fontSize = "12px";
-  inRegex.value = r.match_regex || "";
-  inRegex.addEventListener("input", () => _markRowValidity(row));
-
-  const mvHint = document.createElement("span");
-  mvHint.style.color = "var(--muted)"; mvHint.style.fontSize = "12px";
-  mvHint.textContent = tr("inhib.suppresses_all");
-
-  mvWrap.appendChild(inLabel);
-  mvWrap.appendChild(eqSign);
-  mvWrap.appendChild(inRegex);
-  mvWrap.appendChild(mvHint);
-  tdMv.appendChild(mvWrap); row.appendChild(tdMv);
-
-  function _applyMatchType(v) {
-    inLabel.style.display = (v === "match_all") ? "none" : "";
-    eqSign.style.display  = (v === "match_label") ? "" : "none";
-    inRegex.style.display = (v === "match_label") ? "" : "none";
-    mvHint.style.display  = (v === "match_all") ? "" : "none";
-    inLabel.placeholder = v === "match_label" ? "job" : "host";
-    // NB: do NOT call _markRowValidity here on the initial render — the
-    // ttl/applies_to/actions cells aren't appended yet so the validator's
-    // tr.querySelector('[data-k="ttl_seconds"]') would be null and crash
-    // with "Cannot read properties of null (reading 'value')". The final
-    // _markRowValidity at the end of _renderInhibRuleRow handles the
-    // first-pass validation; user-driven `change` events from the select
-    // call this again later, when the row IS complete.
-  }
-  _applyMatchType(mt);
-  sel.addEventListener("change", () => { _applyMatchType(sel.value); _markRowValidity(row); });
-
-  // --- Applies to (checkboxes) ---
-  const tdAp = document.createElement("td");
-  const wrap = document.createElement("div");
-  wrap.dataset.k = "applies_to";
-  wrap.style.display = "flex"; wrap.style.flexWrap = "wrap"; wrap.style.gap = "0.4em";
-  const selected = new Set(r.applies_to || []);
-  for (const s of _inhibAvailableSources) {
-    const lbl = document.createElement("label");
-    lbl.style.fontSize = "0.85em"; lbl.style.whiteSpace = "nowrap"; lbl.style.margin = "0";
-    const cb = document.createElement("input");
-    cb.type = "checkbox"; cb.value = s; cb.checked = selected.has(s);
-    lbl.appendChild(cb);
-    lbl.appendChild(document.createTextNode(" " + s));
-    wrap.appendChild(lbl);
-  }
-  const allHint = document.createElement("small");
-  allHint.className = "muted"; allHint.style.fontSize = "11px";
-  allHint.textContent = tr("inhib.empty_all_sources");
-  tdAp.appendChild(wrap); tdAp.appendChild(allHint); row.appendChild(tdAp);
-
-  // --- TTL ---
-  const tdTtl = document.createElement("td");
-  const ttlWrap = document.createElement("div");
-  ttlWrap.style.display = "flex"; ttlWrap.style.gap = "0.3em"; ttlWrap.style.alignItems = "center"; ttlWrap.style.flexWrap = "wrap";
-  const inTtl = document.createElement("input");
-  inTtl.type = "number"; inTtl.min = "30"; inTtl.max = "86400";
-  inTtl.value = r.ttl_seconds || 900; inTtl.dataset.k = "ttl_seconds";
-  inTtl.style.width = "5.5em";
-  inTtl.addEventListener("input", () => _markRowValidity(row));
-  ttlWrap.appendChild(inTtl);
-  for (const [lbl, sec] of [["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600]]) {
-    const btn = document.createElement("button");
-    btn.type = "button"; btn.className = "btn"; btn.textContent = lbl;
-    btn.style.padding = "2px 6px"; btn.style.fontSize = "11px";
-    btn.title = `Set TTL to ${sec}s`;
-    btn.addEventListener("click", () => { inTtl.value = sec; _markRowValidity(row); });
-    ttlWrap.appendChild(btn);
-  }
-  tdTtl.appendChild(ttlWrap); row.appendChild(tdTtl);
-
-  // --- Actions (duplicate + delete) ---
-  const tdAct = document.createElement("td");
-  tdAct.style.whiteSpace = "nowrap";
-  const dup = document.createElement("button");
-  dup.type = "button"; dup.className = "btn";
-  dup.textContent = "⎘"; dup.title = tr("inhib.duplicate_title");
-  dup.style.padding = "2px 8px"; dup.style.marginRight = "4px";
-  dup.addEventListener("click", () => {
-    // Snapshot current row state and append a clone below it.
-    const get = k => row.querySelector(`[data-k="${k}"]`);
-    const mt = get("match_type").value;
-    const snapshot = {
-      source: get("source").value.trim() + " (copy)",
-      ttl_seconds: parseInt(get("ttl_seconds").value || "900", 10),
-      applies_to: Array.from(row.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
-                  .filter(cb => cb.checked).map(cb => cb.value),
-    };
-    if (mt === "match_by") snapshot.match_by = get("match_label").value.trim();
-    else if (mt === "match_label") {
-      snapshot.match_label = get("match_label").value.trim();
-      snapshot.match_regex = get("match_regex").value.trim();
-    } else snapshot.match_all = true;
-    const clone = _renderInhibRuleRow(snapshot);
-    row.parentNode.insertBefore(clone, row.nextSibling);
-    showTableRowPage("t-inhib-rules", clone);
-  });
-  const btn = document.createElement("button");
-  btn.type = "button"; btn.className = "btn";
-  btn.textContent = "✕"; btn.title = tr("inhib.delete_rule_title");
-  btn.style.color = "var(--red)"; btn.style.padding = "2px 8px";
-  btn.addEventListener("click", () => {
-    row.remove();
-    applyTablePager("t-inhib-rules");
-  });
-  tdAct.appendChild(dup); tdAct.appendChild(btn);
-  row.appendChild(tdAct);
-
-  _markRowValidity(row);
-  return row;
-}
-
-// Validate a single rule row in-place and flash the bad cell.
-// Returns null if valid, or a human-readable error string.
-function _validateInhibRow(tr) {
-  const get = k => tr.querySelector(`[data-k="${k}"]`);
-  const src = get("source").value.trim();
-  if (!src) return "source name is required";
-  const mt = get("match_type").value;
-  if (mt === "match_by") {
-    if (!get("match_label").value.trim()) return "label name is required for match_by";
-  } else if (mt === "match_label") {
-    if (!get("match_label").value.trim()) return "label name is required";
-    const rx = get("match_regex").value.trim();
-    if (!rx) return "regex is required";
-    try { new RegExp(rx); } catch (e) { return "invalid regex: " + e.message; }
-  }
-  const ttl = parseInt(get("ttl_seconds").value || "0", 10);
-  if (!Number.isFinite(ttl) || ttl < 30 || ttl > 86400) return "TTL must be 30..86400 seconds";
-  return null;
-}
-
-function _markRowValidity(tr) {
-  const err = _validateInhibRow(tr);
-  if (err) tr.dataset.invalid = err;
-  else delete tr.dataset.invalid;
-  tr.style.outline = err ? "1px solid var(--red)" : "";
-}
-
 export async function loadInhibRules() {
   try {
     const data = await queryGet("inhibition-rules", "/api/inhibition-rules");
     _inhibAvailableSources = data.available_sources || [];
     const tb = $("#t-inhib-rules tbody"); tb.innerHTML = "";
-    for (const r of (data.rules || [])) tb.appendChild(_renderInhibRuleRow(r));
+    for (const r of (data.rules || [])) tb.appendChild(createInhibitionRuleRow(r, _inhibAvailableSources));
     $("#inhib-save-status").textContent = "";
     applyTablePager("t-inhib-rules", { reset: true });
   } catch (e) { fetchError("inhibition-rules", e); }
 }
 
-function _collectInhibRules() {
-  const rows = document.querySelectorAll("#t-inhib-rules tbody tr.inhib-rule-row");
-  const out = [];
-  for (const tr of rows) {
-    const err = _validateInhibRow(tr);
-    if (err) {
-      const src = tr.querySelector('[data-k="source"]').value.trim() || "(unnamed)";
-      return { error: `rule "${src}": ${err}` };
-    }
-    const get = k => tr.querySelector(`[data-k="${k}"]`);
-    const source = get("source").value.trim();
-    const mt = get("match_type").value;
-    const ttl = parseInt(get("ttl_seconds").value || "900", 10);
-    const applies = Array.from(tr.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
-                    .filter(cb => cb.checked).map(cb => cb.value);
-    const rule = { source, ttl_seconds: ttl, applies_to: applies };
-    if (mt === "match_by") {
-      rule.match_by = get("match_label").value.trim();
-    } else if (mt === "match_label") {
-      rule.match_label = get("match_label").value.trim();
-      rule.match_regex = get("match_regex").value.trim();
-    } else {
-      rule.match_all = true;
-    }
-    out.push(rule);
-  }
-  return { rules: out };
-}
-
 async function saveInhibRules() {
-  const collected = _collectInhibRules();
+  const collected = collectInhibitionRulesFromTable();
   const status = $("#inhib-save-status");
   if (collected.error) {
     notifyValidationError("inhibition-rules", collected.error, status);
@@ -332,7 +110,10 @@ onReady(() => {
   const clearAll = document.getElementById("inhib-clear-all");
   if (add) add.addEventListener("click", () => {
     const tb = $("#t-inhib-rules tbody");
-    tb.appendChild(_renderInhibRuleRow({source: "", ttl_seconds: 900, applies_to: [], match_by: ""}));
+    tb.appendChild(createInhibitionRuleRow(
+      {source: "", ttl_seconds: 900, applies_to: [], match_by: ""},
+      _inhibAvailableSources,
+    ));
     applyTablePager("t-inhib-rules", { page: "last" });
   });
   if (save) save.addEventListener("click", saveInhibRules);

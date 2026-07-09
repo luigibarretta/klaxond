@@ -7,7 +7,8 @@ import {
 } from "./app.js";
 import { updateCurrentUserUI } from "./app-status.js";
 import { loadNtfyTopics } from "./app-routing.js";
-import { webauthnCreateOptions, webauthnCreatePayload } from "./app-auth-webauthn.js";
+import { renderPasskeys, registerPasskey, setPasskeyReload } from "./app-auth-passkeys.js";
+import { disableTotp, enableTotp, renderTotp, setTotpReload, startTotpSetup } from "./app-auth-totp.js";
 import {
   authTokens, createAuthToken, renderScopePicker, renderTokens, selectedTokenScopes,
   setAuthReload, setTokenKind,
@@ -16,7 +17,6 @@ export { authTokens, renderTokens } from "./app-auth-tokens.js";
 
 // ---- Authentication tab ----
 let authData = { settings: {}, current_user: {} };
-let _pendingTotpSecret = "";
 
 const OIDC_ISSUER_HINTS = {
   authentik: "https://idp.example.com/application/o/klaxond/",
@@ -25,11 +25,6 @@ const OIDC_ISSUER_HINTS = {
   google:    "https://accounts.google.com",
   other:     "",
 };
-
-function fmtAuthTs(ts) {
-  return ts ? new Date(ts * 1000).toLocaleString() : "—";
-}
-
 
 function renderAuthGuard(settings) {
   const guard = $("#auth-guard");
@@ -53,93 +48,6 @@ function renderAuthGuard(settings) {
   guard.textContent = warnings.join(" ");
 }
 
-
-function renderPasskeys(passkeys = []) {
-  const tb = $("#t-passkeys tbody"); if (!tb) return;
-  const readOnly = document.body.classList.contains("viewer-readonly");
-  tb.innerHTML = "";
-  if (!passkeys.length) {
-    tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("auth.no_passkeys"))}</td></tr>`;
-    applyTablePager("t-passkeys", { reset: true });
-    return;
-  }
-  for (const key of passkeys) {
-    const trEl = document.createElement("tr");
-    trEl.innerHTML = `
-      <td>${escapeHtml(key.name || "")}</td>
-      <td>${escapeHtml(key.user_name || key.user_email || key.user_sub || "")}</td>
-      <td>${escapeHtml(fmtAuthTs(key.created_at))}</td>
-      <td>${escapeHtml(fmtAuthTs(key.last_used_at))}</td>
-      <td><button class="danger" data-passkey-del="${escapeHtml(key.id)}" ${readOnly ? "disabled" : ""}>${escapeHtml(tr("auth.delete"))}</button></td>`;
-    trEl.querySelector("[data-passkey-del]")?.addEventListener("click", () => deletePasskey(key.id));
-    tb.appendChild(trEl);
-  }
-  applyTablePager("t-passkeys", { reset: true });
-}
-
-function renderTotp(basic = {}) {
-  const enabled = !!basic.totp_enabled;
-  setLocalTotpEnabled(enabled);
-  const status = $("#auth-totp-status");
-  if (status) status.textContent = enabled ? tr("auth.totp_enabled") : tr("auth.totp_disabled");
-  $("#totp-disable")?.toggleAttribute("disabled", !enabled || document.body.classList.contains("viewer-readonly"));
-  if (!enabled) $("#totp-setup")?.classList.add("hidden");
-  if (!enabled) _pendingTotpSecret = "";
-}
-
-async function startTotpSetup() {
-  const status = $("#totp-status");
-  setInlineStatus(status, tr("status.loading"));
-  try {
-    const r = await J("/api/auth/totp/setup/start", {
-      method: "POST",
-      body: JSON.stringify({}),
-      headers: { "Content-Type": "application/json" },
-    });
-    _pendingTotpSecret = r.secret || "";
-    $("#totp-secret").value = _pendingTotpSecret;
-    $("#totp-uri").value = r.otpauth_uri || "";
-    $("#totp-code").value = "";
-    $("#totp-setup")?.classList.remove("hidden");
-    setInlineStatus(status, tr("auth.totp_scan"), { clearMs: 6000 });
-  } catch (e) {
-    notifyError("totp-start", e, { status });
-  }
-}
-
-async function enableTotp() {
-  const status = $("#totp-status");
-  const secret = _pendingTotpSecret || $("#totp-secret")?.value || "";
-  const code = $("#totp-code")?.value || "";
-  try {
-    await J("/api/auth/totp/setup/confirm", {
-      method: "POST",
-      body: JSON.stringify({ secret, code }),
-      headers: { "Content-Type": "application/json" },
-    });
-    $("#totp-setup")?.classList.add("hidden");
-    await loadAuth();
-    notifySuccess(tr("auth.totp_enabled_ok"), { status });
-  } catch (e) {
-    notifyError("totp-enable", e, { status });
-  }
-}
-
-async function disableTotp() {
-  if (!confirm(tr("auth.totp_disable_confirm"))) return;
-  const status = $("#totp-status");
-  try {
-    await J("/api/auth/totp/disable", {
-      method: "POST",
-      body: JSON.stringify({}),
-      headers: { "Content-Type": "application/json" },
-    });
-    await loadAuth();
-    notifySuccess(tr("auth.totp_disabled_ok"), { status });
-  } catch (e) {
-    notifyError("totp-disable", e, { status });
-  }
-}
 
 async function loadAuthPasswordPolicy() {
   try {
@@ -182,6 +90,60 @@ function _showSubcard(mode) {
   }
 }
 
+function applyBasicSettings(settings) {
+  const basic = settings.basic || {};
+  $("#auth-basic-user").value = basic.username || "";
+  $("#auth-basic-realm").value = basic.realm || "klaxond";
+  $("#auth-basic-pwd").value = "";
+  $("#auth-basic-status").textContent = basic.password_hash === "***SET***" ? tr("auth.set") : tr("auth.not_set");
+  renderTotp(basic);
+}
+
+function applyLdapSettings(settings) {
+  const ldap = settings.ldap || {};
+  $("#auth-ldap-url").value = ldap.url || "";
+  $("#auth-ldap-bind-template").value = ldap.bind_dn_template || "";
+  $("#auth-ldap-service-dn").value = ldap.service_bind_dn || "";
+  $("#auth-ldap-service-password").value = "";
+  $("#auth-ldap-service-status").textContent = ldap.service_bind_password === "***SET***" ? tr("auth.set") : tr("auth.not_set");
+  $("#auth-ldap-base-dn").value = ldap.base_dn || "";
+  $("#auth-ldap-user-filter").value = ldap.user_filter || "(|(uid={username})(sAMAccountName={username})(mail={username}))";
+  $("#auth-ldap-scope").value = ldap.scope || "subtree";
+  $("#auth-ldap-timeout").value = ldap.timeout_secs || 5;
+  $("#auth-ldap-username-attr").value = ldap.username_attr || "uid";
+  $("#auth-ldap-email-attr").value = ldap.email_attr || "mail";
+  $("#auth-ldap-name-attr").value = ldap.name_attr || "cn";
+  $("#auth-ldap-groups-attr").value = ldap.groups_attr || "memberOf";
+}
+
+function applyOidcSettings(settings) {
+  const oidc = settings.oidc || {};
+  $("#auth-oidc-provider").value = oidc.provider || "authentik";
+  $("#auth-oidc-issuer").value = oidc.issuer || "";
+  $("#auth-oidc-cid").value = oidc.client_id || "";
+  $("#auth-oidc-csec").value = "";
+  $("#auth-oidc-csec-status").textContent = oidc.client_secret === "***SET***" ? tr("auth.set") : tr("auth.not_set");
+  $("#auth-oidc-scopes").value = oidc.scopes || "openid profile email";
+  $("#auth-oidc-group").value = oidc.required_group || "";
+  $("#auth-oidc-redirect").value = oidc.redirect_path || "/api/auth/callback";
+  $("#auth-oidc-full-redirect").textContent = `${location.protocol}//${location.host}${oidc.redirect_path || "/api/auth/callback"}`;
+}
+
+function applyTrustedProxySettings(settings) {
+  const trustedProxy = settings.trusted_proxy || {};
+  $("#auth-tp-uheader").value = trustedProxy.user_header || "X-Forwarded-User";
+  $("#auth-tp-eheader").value = trustedProxy.email_header || "X-Forwarded-Email";
+  $("#auth-tp-gheader").value = trustedProxy.groups_header || "X-Forwarded-Groups";
+  $("#auth-tp-cidrs").value = (trustedProxy.trusted_cidrs || []).join(", ");
+}
+
+function applyWebauthnSettings(settings) {
+  const webauthn = settings.webauthn || {};
+  $("#auth-webauthn-enabled").checked = webauthn.enabled !== false;
+  $("#auth-webauthn-origin").value = webauthn.origin || "";
+  $("#auth-webauthn-rp-id").value = webauthn.rp_id || "";
+}
+
 export async function loadAuth() {
   try {
     await loadAuthPasswordPolicy();
@@ -196,49 +158,11 @@ export async function loadAuth() {
     $("#auth-session-h").value = s.session_timeout_hours || 8;
     const cu = j.current_user || {};
     updateCurrentUserUI(cu);
-    // basic
-    const b = s.basic || {};
-    $("#auth-basic-user").value = b.username || "";
-    $("#auth-basic-realm").value = b.realm || "klaxond";
-    $("#auth-basic-pwd").value = "";
-    $("#auth-basic-status").textContent = b.password_hash === "***SET***" ? tr("auth.set") : tr("auth.not_set");
-    renderTotp(b);
-    // ldap
-    const ldap = s.ldap || {};
-    $("#auth-ldap-url").value = ldap.url || "";
-    $("#auth-ldap-bind-template").value = ldap.bind_dn_template || "";
-    $("#auth-ldap-service-dn").value = ldap.service_bind_dn || "";
-    $("#auth-ldap-service-password").value = "";
-    $("#auth-ldap-service-status").textContent = ldap.service_bind_password === "***SET***" ? tr("auth.set") : tr("auth.not_set");
-    $("#auth-ldap-base-dn").value = ldap.base_dn || "";
-    $("#auth-ldap-user-filter").value = ldap.user_filter || "(|(uid={username})(sAMAccountName={username})(mail={username}))";
-    $("#auth-ldap-scope").value = ldap.scope || "subtree";
-    $("#auth-ldap-timeout").value = ldap.timeout_secs || 5;
-    $("#auth-ldap-username-attr").value = ldap.username_attr || "uid";
-    $("#auth-ldap-email-attr").value = ldap.email_attr || "mail";
-    $("#auth-ldap-name-attr").value = ldap.name_attr || "cn";
-    $("#auth-ldap-groups-attr").value = ldap.groups_attr || "memberOf";
-    // oidc
-    const o = s.oidc || {};
-    $("#auth-oidc-provider").value = o.provider || "authentik";
-    $("#auth-oidc-issuer").value = o.issuer || "";
-    $("#auth-oidc-cid").value = o.client_id || "";
-    $("#auth-oidc-csec").value = "";
-    $("#auth-oidc-csec-status").textContent = o.client_secret === "***SET***" ? tr("auth.set") : tr("auth.not_set");
-    $("#auth-oidc-scopes").value = o.scopes || "openid profile email";
-    $("#auth-oidc-group").value = o.required_group || "";
-    $("#auth-oidc-redirect").value = o.redirect_path || "/api/auth/callback";
-    $("#auth-oidc-full-redirect").textContent = `${location.protocol}//${location.host}${o.redirect_path || "/api/auth/callback"}`;
-    // trusted-proxy
-    const tp = s.trusted_proxy || {};
-    $("#auth-tp-uheader").value = tp.user_header || "X-Forwarded-User";
-    $("#auth-tp-eheader").value = tp.email_header || "X-Forwarded-Email";
-    $("#auth-tp-gheader").value = tp.groups_header || "X-Forwarded-Groups";
-    $("#auth-tp-cidrs").value = (tp.trusted_cidrs || []).join(", ");
-    const w = s.webauthn || {};
-    $("#auth-webauthn-enabled").checked = w.enabled !== false;
-    $("#auth-webauthn-origin").value = w.origin || "";
-    $("#auth-webauthn-rp-id").value = w.rp_id || "";
+    applyBasicSettings(s);
+    applyLdapSettings(s);
+    applyOidcSettings(s);
+    applyTrustedProxySettings(s);
+    applyWebauthnSettings(s);
     renderAuthGuard(s);
     renderScopePicker(j.available_token_scopes || [], selectedTokenScopes().length ? selectedTokenScopes() : ["admin:read"]);
     renderTokens(s.api_keys || []);
@@ -249,6 +173,8 @@ export async function loadAuth() {
 }
 
 setAuthReload(loadAuth);
+setPasskeyReload(loadAuth);
+setTotpReload(loadAuth);
 
 document.querySelectorAll('input[name="auth-mode"]').forEach(r => {
   r.addEventListener("change", () => _showSubcard(r.value));
@@ -336,44 +262,6 @@ $("#auth-save")?.addEventListener("click", async () => {
     notifyError("auth-save", e, { status: "#auth-status" });
   }
 });
-
-
-async function registerPasskey() {
-  if (!window.PublicKeyCredential || !navigator.credentials?.create) {
-    notifyError("passkey-register", new Error(tr("auth.passkey_unsupported")), { status: "#passkey-status" });
-    return;
-  }
-  const status = $("#passkey-status");
-  setInlineStatus(status, tr("status.saving"));
-  try {
-    const start = await J("/api/auth/passkey/register/options", {
-      method: "POST",
-      body: JSON.stringify({ name: $("#passkey-name").value.trim() || "passkey" }),
-      headers: {"Content-Type": "application/json"},
-    });
-    const credential = await navigator.credentials.create({ publicKey: webauthnCreateOptions(start.publicKey) });
-    await J("/api/auth/passkey/register/verify", {
-      method: "POST",
-      body: JSON.stringify({ request_id: start.request_id, credential: webauthnCreatePayload(credential) }),
-      headers: {"Content-Type": "application/json"},
-    });
-    await loadAuth();
-    notifySuccess(tr("auth.passkey_registered"), { status });
-  } catch (e) {
-    notifyError("passkey-register", e, { status });
-  }
-}
-
-async function deletePasskey(id) {
-  if (!confirm(tr("auth.passkey_delete_confirm"))) return;
-  try {
-    await J(`/api/auth/passkey/credentials/${encodeURIComponent(id)}`, { method: "DELETE" });
-    await loadAuth();
-    notifySuccess(tr("auth.passkey_deleted"), { status: "#passkey-status", clearMs: 3000 });
-  } catch (e) {
-    notifyError("passkey-delete", e, { status: "#passkey-status" });
-  }
-}
 
 $("#token-create")?.addEventListener("click", createAuthToken);
 $("#passkey-register")?.addEventListener("click", registerPasskey);
