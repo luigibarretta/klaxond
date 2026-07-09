@@ -1,22 +1,33 @@
 #[cfg(test)]
 mod tests;
 
+mod locks;
+mod metrics;
+mod session;
+mod types;
+
+pub use self::locks::{lock_mutex, read_lock, write_lock};
+pub use self::metrics::esc_label;
+pub use self::types::{
+    DedupItem, DedupQueues, PendingMagicLink, PendingOidcState, PendingPasskeyAuthentication,
+    PendingPasskeyRegistration, RenderedImage, Suppression,
+};
 use crate::config::{Paths, RuntimeConfig, load_runtime_config};
 use crate::history::{DeliveryEntry, DeliveryPage, HistoryStore};
-use crate::util::{atomic_write, random_bytes, tmp_path};
+use crate::util::tmp_path;
 use anyhow::{Context, Result};
 use fs2::FileExt;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use tokio::sync::Mutex as AsyncMutex;
-use webauthn_rs::prelude::{PasskeyAuthentication, PasskeyRegistration, Uuid};
+
+use self::metrics::metric_key;
+use self::session::load_or_create_session_key;
+use self::types::{DeliveryLog, Metrics};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,7 +39,7 @@ pub struct AppState {
     pub session_key: Arc<Vec<u8>>,
     pub cascade_runtime_enabled: Arc<AtomicBool>,
     pub history: Arc<RwLock<Arc<HistoryStore>>>,
-    pub delivery_log: Arc<Mutex<VecDeque<DeliveryEntry>>>,
+    pub delivery_log: Arc<Mutex<DeliveryLog>>,
     pub suppressions: Arc<Mutex<Vec<Suppression>>>,
     pub ack_suppressions: Arc<Mutex<HashMap<String, f64>>>,
     pub active_mutes: Arc<Mutex<HashMap<String, f64>>>,
@@ -40,79 +51,6 @@ pub struct AppState {
     pub passkey_registrations: Arc<Mutex<HashMap<String, PendingPasskeyRegistration>>>,
     pub passkey_authentications: Arc<Mutex<HashMap<String, PendingPasskeyAuthentication>>>,
     pub auth_failures: auth_modules::rate_limit::InMemoryRateLimiter,
-}
-
-#[derive(Clone)]
-pub struct RenderedImage {
-    pub bytes: Vec<u8>,
-    pub expires_at: f64,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingOidcState {
-    pub created_at: f64,
-    pub return_to: String,
-    pub nonce: String,
-    pub code_verifier: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingMagicLink {
-    pub created_at: f64,
-    pub expires_at: f64,
-    pub username: String,
-    pub return_to: String,
-    pub used_at: Option<f64>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Suppression {
-    pub rule_idx: usize,
-    pub anchor: Option<String>,
-    pub expiry: f64,
-}
-
-#[derive(Default)]
-pub struct Metrics {
-    pub counters: Mutex<HashMap<String, i64>>,
-    pub gauges: Mutex<HashMap<String, f64>>,
-}
-
-#[derive(Default, Debug)]
-pub struct DedupQueues {
-    pub queues: HashMap<String, Vec<DedupItem>>,
-    pub timer_active: HashMap<String, bool>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DedupItem {
-    pub ts: f64,
-    pub source: String,
-    pub severity: String,
-    pub payload: Value,
-    pub parts: crate::parsers::Parts,
-    pub common_labels: HashMap<String, String>,
-    pub with_cascade: bool,
-    pub dedup_key: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingPasskeyRegistration {
-    pub ts: f64,
-    pub user_sub: String,
-    pub user_name: String,
-    pub user_email: String,
-    pub user_uuid: Uuid,
-    pub label: String,
-    pub state: PasskeyRegistration,
-}
-
-#[derive(Clone, Debug)]
-pub struct PendingPasskeyAuthentication {
-    pub ts: f64,
-    pub user_sub: String,
-    pub rate_key: String,
-    pub state: PasskeyAuthentication,
 }
 
 impl AppState {
@@ -138,7 +76,7 @@ impl AppState {
             session_key: Arc::new(session_key),
             cascade_runtime_enabled: Arc::new(AtomicBool::new(cascade_runtime_enabled)),
             history: Arc::new(RwLock::new(history)),
-            delivery_log: Arc::new(Mutex::new(VecDeque::with_capacity(50))),
+            delivery_log: Arc::new(Mutex::new(DeliveryLog::with_capacity(50))),
             suppressions: Arc::new(Mutex::new(Vec::new())),
             ack_suppressions: Arc::new(Mutex::new(HashMap::new())),
             active_mutes: Arc::new(Mutex::new(HashMap::new())),
@@ -301,83 +239,3 @@ impl AppState {
         lock_mutex(&self.metrics.gauges, "metrics gauges").insert(key, value);
     }
 }
-
-pub fn lock_mutex<'a, T>(mutex: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {
-    mutex.lock().unwrap_or_else(|poisoned| {
-        tracing::error!("recovering poisoned mutex: {name}");
-        poisoned.into_inner()
-    })
-}
-
-pub fn read_lock<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockReadGuard<'a, T> {
-    lock.read().unwrap_or_else(|poisoned| {
-        tracing::error!("recovering poisoned rwlock read: {name}");
-        poisoned.into_inner()
-    })
-}
-
-pub fn write_lock<'a, T>(lock: &'a RwLock<T>, name: &str) -> RwLockWriteGuard<'a, T> {
-    lock.write().unwrap_or_else(|poisoned| {
-        tracing::error!("recovering poisoned rwlock write: {name}");
-        poisoned.into_inner()
-    })
-}
-
-fn metric_key(name: &str, labels: &[(&str, &str)]) -> String {
-    let mut l = labels
-        .iter()
-        .map(|(k, v)| format!("{k}={}", esc_label(v)))
-        .collect::<Vec<_>>();
-    l.sort();
-    format!("{name}|{}", l.join(","))
-}
-
-pub fn esc_label(v: &str) -> String {
-    v.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-}
-
-fn load_or_create_session_key(paths: &Paths, cfg: &RuntimeConfig) -> Result<Vec<u8>> {
-    if let Ok(v) = std::env::var("AUTH_SESSION_SECRET")
-        && !v.is_empty()
-    {
-        return Ok(v.into_bytes());
-    }
-    if !cfg.auth.session_secret.trim().is_empty() {
-        return Ok(cfg.auth.session_secret.as_bytes().to_vec());
-    }
-    if let Some(secret) = cfg
-        .toml
-        .get("auth")
-        .and_then(|v| v.get("session_secret"))
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-    {
-        return Ok(secret.as_bytes().to_vec());
-    }
-    if paths.auth_session_key.exists() {
-        return fs::read(&paths.auth_session_key)
-            .with_context(|| format!("read {}", paths.auth_session_key.display()));
-    }
-    let key = random_bytes::<32>().to_vec();
-    if let Some(parent) = paths.auth_session_key.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    atomic_write(&paths.auth_session_key, &key)?;
-    set_private_mode(&paths.auth_session_key);
-    Ok(key)
-}
-
-#[cfg(unix)]
-fn set_private_mode(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    if let Ok(meta) = fs::metadata(path) {
-        let mut perms = meta.permissions();
-        perms.set_mode(0o600);
-        let _ = fs::set_permissions(path, perms);
-    }
-}
-
-#[cfg(not(unix))]
-fn set_private_mode(_path: &Path) {}

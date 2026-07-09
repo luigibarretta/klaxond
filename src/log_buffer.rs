@@ -1,16 +1,19 @@
 #[cfg(test)]
 mod tests;
 
+mod redaction;
+
 use chrono::{SecondsFormat, Utc};
-use regex::{Captures, Regex};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, OnceLock, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use tracing::field::{Field, Visit};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
+
+use self::redaction::{is_sensitive_key, redact_log_text};
 
 const MAX_LIMIT: usize = 500;
 
@@ -253,64 +256,6 @@ fn fields_to_message(fields: &HashMap<String, String>) -> String {
         .collect::<Vec<_>>();
     pairs.sort();
     pairs.join(" ")
-}
-
-fn redact_log_text(value: &str) -> String {
-    static TELEGRAM_BOT_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"bot\d{6,}:[A-Za-z0-9_-]{20,}").expect("valid telegram redaction regex")
-    });
-    static AUTH_HEADER_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b(authorization:\s*(?:bearer|basic)\s+)[^\s,;]+")
-            .expect("valid auth header redaction regex")
-    });
-    static BEARER_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/=-]{12,}")
-            .expect("valid bearer redaction regex")
-    });
-    static QUERY_SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(
-            r"(?i)([?&](?:token|secret|access_token|id_token|refresh_token|client_secret|password|api_key|apikey|key)=)[^&\s]+",
-        )
-        .expect("valid query redaction regex")
-    });
-    static KV_SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(
-            r#"(?i)\b(token|secret|password|client_secret|api_key|apikey|authorization)=("[^"]*"|'[^']*'|[^\s,;]+)"#,
-        )
-        .expect("valid key-value redaction regex")
-    });
-    static ENV_SECRET_RE: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(
-            r#"(?i)\b([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|APIKEY|AUTHORIZATION)[A-Z0-9_]*)(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)"#,
-        )
-        .expect("valid env-style redaction regex")
-    });
-
-    let out = TELEGRAM_BOT_URL_RE.replace_all(value, "bot[REDACTED]");
-    let out = AUTH_HEADER_RE.replace_all(&out, "$1[REDACTED]");
-    let out = BEARER_RE.replace_all(&out, "$1[REDACTED]");
-    let out = QUERY_SECRET_RE.replace_all(&out, "$1[REDACTED]");
-    let out = KV_SECRET_RE
-        .replace_all(&out, |caps: &Captures<'_>| {
-            format!("{}=[REDACTED]", &caps[1])
-        })
-        .into_owned();
-    ENV_SECRET_RE
-        .replace_all(&out, |caps: &Captures<'_>| {
-            format!("{}{}[REDACTED]", &caps[1], &caps[2])
-        })
-        .into_owned()
-}
-
-fn is_sensitive_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
-    key.contains("token")
-        || key.contains("secret")
-        || key.contains("password")
-        || key.contains("authorization")
-        || key.contains("api_key")
-        || key.contains("apikey")
-        || key.ends_with("_key")
 }
 
 #[derive(Default)]
