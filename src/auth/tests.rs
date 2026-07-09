@@ -1,4 +1,4 @@
-use super::login::oidc_client_config;
+use super::login::{callback_url, oidc_client_config};
 use super::magic_link::{
     MagicLinkError, consume_magic_link, issue_magic_link, magic_link_ttl_seconds,
 };
@@ -127,6 +127,13 @@ fn oidc_client_config_preserves_exact_issuer_trailing_slash() {
         shared.issuer_url,
         "https://authentik.example/application/o/klaxond/"
     );
+}
+
+#[test]
+fn oidc_callback_url_parser_rejects_malformed_uri() {
+    assert!(callback_url("/api/auth/callback?code=abc&state=xyz").is_ok());
+    assert!(callback_url("api/auth/callback?code=abc&state=xyz").is_err());
+    assert!(callback_url("\0").is_err());
 }
 
 #[test]

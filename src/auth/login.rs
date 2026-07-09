@@ -214,7 +214,10 @@ fn html_attr(value: &str) -> String {
 
 pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
     let cfg = state.cfg().auth.oidc;
-    let parsed = Url::parse(&format!("http://localhost{uri}")).unwrap();
+    let parsed = match callback_url(uri) {
+        Ok(parsed) => parsed,
+        Err(_) => return (StatusCode::BAD_REQUEST, "bad callback uri").into_response(),
+    };
     let code = parsed
         .query_pairs()
         .find(|(k, _)| k == "code")
@@ -302,6 +305,13 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
     });
     set_session_cookie(&mut resp, &cookie);
     resp
+}
+
+pub(super) fn callback_url(uri: &str) -> Result<Url, String> {
+    if !uri.starts_with('/') || uri.chars().any(char::is_control) {
+        return Err("callback uri must be a local path".into());
+    }
+    Url::parse(&format!("http://localhost{uri}")).map_err(|err| err.to_string())
 }
 
 pub(super) fn oidc_client_config(
