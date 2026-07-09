@@ -266,18 +266,17 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
                 .into_response();
         }
     };
-    if !cfg.required_group.trim().is_empty() {
-        if !identity
+    if !cfg.required_group.trim().is_empty()
+        && !identity
             .groups
             .iter()
             .any(|group| group == cfg.required_group.as_str())
-        {
-            return (
-                StatusCode::FORBIDDEN,
-                format!("required_group '{}' not in user claims", cfg.required_group),
-            )
-                .into_response();
-        }
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            format!("required_group '{}' not in user claims", cfg.required_group),
+        )
+            .into_response();
     }
     let mut user = User {
         sub: identity.subject,

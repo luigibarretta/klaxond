@@ -2,8 +2,10 @@ use super::*;
 
 #[test]
 fn auth_methods_payload_maps_hardware_key_and_magic_link() {
-    let mut auth = AuthConfig::default();
-    auth.mode = "basic".to_string();
+    let mut auth = AuthConfig {
+        mode: "basic".to_string(),
+        ..Default::default()
+    };
     auth.basic.username = "luigi".to_string();
     auth.basic.password_hash = "$argon2id$configured".to_string();
     auth.basic.totp_enabled = true;
@@ -40,8 +42,10 @@ fn auth_methods_payload_maps_hardware_key_and_magic_link() {
 
 #[test]
 fn auth_methods_payload_enables_configured_ldap() {
-    let mut auth = AuthConfig::default();
-    auth.mode = "ldap".to_string();
+    let mut auth = AuthConfig {
+        mode: "ldap".to_string(),
+        ..Default::default()
+    };
     auth.ldap.url = "ldaps://directory.example.com:636".to_string();
     auth.ldap.bind_dn_template = "uid={username},ou=people,dc=example,dc=com".to_string();
 

@@ -1,21 +1,26 @@
-use super::{html, json_body, json_response, parse_query, text};
-use crate::dedup;
+use super::{html, json_body, json_response, text};
 use crate::delivery::deliver;
 use crate::inhibition;
-use crate::parsers::{Parts, normalize_labels, parse_grafana_payload, parse_source};
+use crate::parsers::{Parts, normalize_labels, parse_grafana_payload};
 use crate::state::AppState;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 
 mod auth;
+mod pipeline;
 
 use self::auth::verify_ingest_auth;
 pub(super) use self::auth::{ingest_auth_payload, ingest_secret_for, update_ingest_auth};
+use self::pipeline::{
+    delivery_candidate, dry_run_delivery_response, dry_run_requested, ingest_route,
+    ingest_route_error_response, maybe_buffer_dedup, parse_ingest_payload,
+    suppressed_ingest_response,
+};
 
 pub(super) async fn ingest(
     state: &AppState,
@@ -25,41 +30,17 @@ pub(super) async fn ingest(
     body: Bytes,
     peer: SocketAddr,
 ) -> Response<Body> {
-    let source = if path.starts_with("/webhook/") {
-        "grafana"
-    } else if path.starts_with("/beszel/") {
-        "beszel"
-    } else if path.starts_with("/healthchecks/") {
-        "healthchecks"
-    } else if path.starts_with("/wud/") {
-        "wud"
-    } else if path.starts_with("/authentik/") {
-        "authentik"
-    } else if path.starts_with("/shelfmark/") {
-        "shelfmark"
-    } else if path.starts_with("/prowlarr/") {
-        "prowlarr"
-    } else if path.starts_with("/decypharr/") {
-        "decypharr"
-    } else if path.starts_with("/pve/") {
-        "pve"
-    } else {
-        return StatusCode::NOT_FOUND.into_response();
+    let route = match ingest_route(state, path, full_path) {
+        Ok(route) => route,
+        Err(err) => return ingest_route_error_response(err),
     };
-    let severity = path.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
-    if !state.with_cfg(|cfg| cfg.handles_severity(&severity)) {
-        return text(
-            StatusCode::BAD_REQUEST,
-            &format!("unknown severity {severity} (no topic handles it)"),
-        );
-    }
-    let qs = parse_query(full_path);
-    let (auth_ok, auth_reason) = verify_ingest_auth(state, source, headers, &qs);
+    let source = route.source;
+    let (auth_ok, auth_reason) = verify_ingest_auth(state, source, headers, &route.qs);
     if !auth_ok {
         tracing::warn!(
             "[{}/{}] webhook auth rejected: {} (from {})",
             source,
-            severity,
+            route.severity,
             auth_reason,
             peer.ip()
         );
@@ -68,138 +49,36 @@ pub(super) async fn ingest(
             "unauthorized (per-source secret required)",
         );
     }
-    let payload: Value = if body.is_empty() {
-        json!({})
-    } else {
-        match serde_json::from_slice(&body) {
-            Ok(v) => v,
-            Err(err) => {
-                tracing::error!("invalid JSON: {}", err);
-                return StatusCode::BAD_REQUEST.into_response();
-            }
+    let payload = match parse_ingest_payload(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            tracing::error!("invalid JSON: {}", err);
+            return StatusCode::BAD_REQUEST.into_response();
         }
     };
-    let dry_run = qs
-        .get("dry_run")
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
-        .unwrap_or(false)
-        || payload
-            .get("_klaxond_dry_run")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+    let dry_run = dry_run_requested(&route.qs, &payload);
 
     let norm = normalize_labels(source, &payload);
     let (should_send, reason) = inhibition::apply_inhibition(state, source, &norm, dry_run);
     if !should_send {
-        let title = norm
-            .get("alertname")
-            .or_else(|| norm.get("host"))
-            .cloned()
-            .unwrap_or_else(|| "alert".into());
-        let (suppressed_by, ch) = if let Some(rest) = reason.strip_prefix("ack-snoozed-") {
-            (
-                rest.to_string(),
-                if dry_run {
-                    "dry-run-ack-snoozed"
-                } else {
-                    "ack-snoozed"
-                },
-            )
-        } else if let Some(rest) = reason.strip_prefix("scheduled-mute-") {
-            (
-                rest.to_string(),
-                if dry_run {
-                    "dry-run-scheduled-mute"
-                } else {
-                    "scheduled-mute"
-                },
-            )
-        } else if let Some(rest) = reason.strip_prefix("inhibited-by-") {
-            (
-                rest.to_string(),
-                if dry_run {
-                    "dry-run-suppressed"
-                } else {
-                    "suppressed"
-                },
-            )
-        } else {
-            (
-                reason.clone(),
-                if dry_run {
-                    "dry-run-suppressed"
-                } else {
-                    "suppressed"
-                },
-            )
-        };
-        state.log_delivery(source, &severity, &title, ch, &suppressed_by);
-        if dry_run {
-            return json_response(
-                json!({"dry_run": true, "would_send": false, "reason": reason, "suppressed_by": suppressed_by, "title": title}),
-            );
-        }
-        return text(StatusCode::OK, &format!("suppressed by {reason}"));
+        return suppressed_ingest_response(state, source, &route.severity, &norm, reason, dry_run);
     }
 
-    let (severity2, parts, with_cascade) = state.with_cfg(|cfg| {
-        let (severity2, parts) = parse_source(source, &payload, &severity, cfg);
-        let with_cascade = if source == "grafana" {
-            cfg.cascade_default
-        } else {
-            true
-        };
-        (severity2, parts, with_cascade)
-    });
-    let common_labels = if source == "grafana" {
-        payload
-            .get("commonLabels")
-            .and_then(|v| v.as_object())
-            .map(|m| {
-                m.iter()
-                    .map(|(k, v)| (k.clone(), crate::parsers::scalar_to_string(v)))
-                    .collect::<HashMap<_, _>>()
-            })
-            .unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
+    let delivery = delivery_candidate(state, source, &route.severity, &payload);
 
     if dry_run {
-        state.log_delivery(source, &severity2, &parts.title, "dry-run", "");
-        return json_response(json!({
-            "dry_run": true,
-            "would_send": true,
-            "reason": reason,
-            "source": source,
-            "severity": severity2,
-            "with_cascade": with_cascade,
-            "parsed": parts.public_json(),
-        }));
+        return dry_run_delivery_response(state, source, delivery, reason);
     }
 
-    if source != "pve"
-        && dedup::submit(
-            state,
-            dedup::SubmitInput {
-                source: source.to_string(),
-                severity: severity2.clone(),
-                payload: payload.clone(),
-                parts: parts.clone(),
-                common_labels: common_labels.clone(),
-                with_cascade,
-            },
-        )
-        .await
-    {
+    if maybe_buffer_dedup(state, source, &payload, &delivery).await {
         return text(StatusCode::ACCEPTED, "buffered (dedup window)");
     }
     let (ok, channel) = deliver(
         state,
-        &severity2,
-        parts,
-        with_cascade,
-        common_labels,
+        &delivery.severity,
+        delivery.parts,
+        delivery.with_cascade,
+        delivery.common_labels,
         source,
     )
     .await;
