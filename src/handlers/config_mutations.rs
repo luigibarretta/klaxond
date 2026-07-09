@@ -1,11 +1,13 @@
 use super::config_admin::persist_reload;
 use super::{json_body, json_response, json_to_toml, text};
-use crate::config::{DEDUP_SOURCES, default_dedup, save_dedup};
+use crate::config::{DEDUP_SOURCES, DedupSetting, default_dedup, save_dedup};
 use crate::state::AppState;
 use crate::util::toml_table_mut;
 use axum::body::{Body, Bytes};
 use axum::http::{Response, StatusCode};
+use serde::Deserialize;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::sync::atomic::Ordering;
 
 mod channel;
@@ -31,30 +33,10 @@ pub(super) fn update_dedup_config(state: &AppState, body: Bytes) -> Response<Bod
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let Some(new) = payload.get("settings").and_then(|v| v.as_object()) else {
+    let Ok(request) = DedupConfigRequest::from_value(payload) else {
         return text(StatusCode::BAD_REQUEST, "missing 'settings' object");
     };
-    let mut cleaned = default_dedup();
-    for src in DEDUP_SOURCES {
-        if let Some(incoming) = new.get(*src).and_then(|v| v.as_object())
-            && let Some(base) = cleaned.get_mut(*src)
-        {
-            if let Some(v) = incoming.get("enabled").and_then(|v| v.as_bool()) {
-                base.enabled = v;
-            }
-            if let Some(v) = incoming.get("window_s").and_then(|v| v.as_u64()) {
-                base.window_s = v.clamp(5, 3600);
-            }
-            if let Some(v) = incoming.get("strategy").and_then(|v| v.as_str())
-                && matches!(v, "none" | "time" | "key")
-            {
-                base.strategy = v.into();
-            }
-            if let Some(v) = incoming.get("override_critical").and_then(|v| v.as_bool()) {
-                base.override_critical = v;
-            }
-        }
-    }
+    let cleaned = request.into_settings(default_dedup());
     state
         .with_config_write_lock(|| {
             if let Err(err) = save_dedup(&state.paths, &cleaned) {
@@ -66,6 +48,105 @@ pub(super) fn update_dedup_config(state: &AppState, body: Bytes) -> Response<Bod
             json_response(json!({"ok": true, "settings": cleaned}))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+#[derive(Debug, Default)]
+struct DedupConfigRequest {
+    settings: HashMap<String, DedupSettingPatch>,
+}
+
+impl DedupConfigRequest {
+    fn from_value(value: Value) -> Result<Self, ()> {
+        let settings = value
+            .get("settings")
+            .and_then(Value::as_object)
+            .ok_or(())?
+            .iter()
+            .filter(|(_, patch)| patch.is_object())
+            .map(|(source, patch)| {
+                (
+                    source.clone(),
+                    serde_json::from_value::<DedupSettingPatch>(patch.clone()).unwrap_or_default(),
+                )
+            })
+            .collect();
+        Ok(Self { settings })
+    }
+
+    fn into_settings(
+        self,
+        mut settings: HashMap<String, DedupSetting>,
+    ) -> HashMap<String, DedupSetting> {
+        for source in DEDUP_SOURCES {
+            if let Some(patch) = self.settings.get(*source)
+                && let Some(setting) = settings.get_mut(*source)
+            {
+                patch.apply_to(setting);
+            }
+        }
+        settings
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct DedupSettingPatch {
+    #[serde(default, deserialize_with = "optional_bool")]
+    enabled: Option<bool>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    window_s: Option<u64>,
+    #[serde(default, deserialize_with = "optional_string")]
+    strategy: Option<String>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    override_critical: Option<bool>,
+}
+
+impl DedupSettingPatch {
+    fn apply_to(&self, setting: &mut DedupSetting) {
+        if let Some(enabled) = self.enabled {
+            setting.enabled = enabled;
+        }
+        if let Some(window_s) = self.window_s {
+            setting.window_s = window_s.clamp(5, 3600);
+        }
+        if let Some(strategy) = self.strategy.as_deref()
+            && matches!(strategy, "none" | "time" | "key")
+        {
+            setting.strategy = strategy.to_string();
+        }
+        if let Some(override_critical) = self.override_critical {
+            setting.override_critical = override_critical;
+        }
+    }
+}
+
+fn optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        Some(Value::Bool(value)) => Some(value),
+        _ => None,
+    })
+}
+
+fn optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        Some(Value::Number(value)) => value.as_u64(),
+        _ => None,
+    })
+}
+
+fn optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match Option::<Value>::deserialize(deserializer)? {
+        Some(Value::String(value)) => Some(value),
+        _ => None,
+    })
 }
 
 pub(super) fn update_cascade_config(state: &AppState, body: Bytes) -> Response<Body> {
@@ -135,4 +216,65 @@ pub(super) fn update_delivery_config(state: &AppState, body: Bytes) -> Response<
                 .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dedup_config_request_applies_known_sources_and_preserves_leniency() {
+        let request = DedupConfigRequest::from_value(json!({
+            "settings": {
+                "grafana": {
+                    "enabled": true,
+                    "window_s": 9999,
+                    "strategy": "time",
+                    "override_critical": true
+                },
+                "beszel": {
+                    "enabled": "yes",
+                    "window_s": 1,
+                    "strategy": "invalid",
+                    "override_critical": false
+                },
+                "wud": "ignore non-object source patch",
+                "unknown": {
+                    "enabled": true,
+                    "window_s": 30,
+                    "strategy": "none"
+                }
+            }
+        }))
+        .expect("dedup settings request");
+
+        let settings = request.into_settings(default_dedup());
+
+        let grafana = settings.get("grafana").expect("grafana settings");
+        assert!(grafana.enabled);
+        assert_eq!(grafana.window_s, 3600);
+        assert_eq!(grafana.strategy, "time");
+        assert!(grafana.override_critical);
+
+        let beszel = settings.get("beszel").expect("beszel settings");
+        assert!(!beszel.enabled);
+        assert_eq!(beszel.window_s, 5);
+        assert_eq!(beszel.strategy, "key");
+        assert!(!beszel.override_critical);
+
+        let mut defaults = default_dedup();
+        let default_wud = defaults.remove("wud").expect("default wud");
+        let wud = settings.get("wud").expect("wud settings");
+        assert_eq!(wud.enabled, default_wud.enabled);
+        assert_eq!(wud.window_s, default_wud.window_s);
+        assert_eq!(wud.strategy, default_wud.strategy);
+        assert_eq!(wud.override_critical, default_wud.override_critical);
+        assert!(!settings.contains_key("unknown"));
+    }
+
+    #[test]
+    fn dedup_config_request_requires_settings_object() {
+        assert!(DedupConfigRequest::from_value(json!({})).is_err());
+        assert!(DedupConfigRequest::from_value(json!({"settings": []})).is_err());
+    }
 }
