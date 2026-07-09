@@ -13,11 +13,20 @@ export function printNasaWarningReport(report, policy) {
 
   if (report.totalWarnings === 0) {
     console.log(summary)
+    console.log(policyNotice())
     return
   }
 
   console.warn(summary)
   console.warn('This is a warning profile, not full NASA/JPL compliance. Set NASA_WARNINGS_FAIL=1 to make it blocking.')
+  console.warn(policyNotice())
+}
+
+function policyNotice() {
+  return [
+    'Quality policy: NASA/JPL-inspired warnings are review candidates, not refactor orders.',
+    'Preserve idiomatic Rust, domain boundaries, behavior, and test clarity ahead of LOC thresholds.',
+  ].join(' ')
 }
 
 function printSection(title, warnings, policy) {
