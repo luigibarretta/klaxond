@@ -22,13 +22,8 @@ pub fn totp_start(state: &AppState) -> Response<Body> {
 
 pub fn totp_enable(state: &AppState, body: Bytes) -> Response<Body> {
     let payload = login_payload(&body);
-    let secret = payload
-        .get("secret")
-        .map(String::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_ascii_uppercase();
-    let code = payload.get("code").map(String::as_str).unwrap_or("").trim();
+    let secret = payload.secret().trim().to_ascii_uppercase();
+    let code = payload.code().trim();
     if !totp::is_valid_secret(&secret) {
         return (StatusCode::BAD_REQUEST, "invalid TOTP secret").into_response();
     }

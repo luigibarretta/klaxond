@@ -1,6 +1,6 @@
 use super::session::sanitize_return_to;
 use super::{
-    AuthAuditKind, AuthConfig, User, body_is_json, issue_session, json_response, login_payload,
+    AuthAuditKind, AuthConfig, User, issue_session, json_response, login_payload,
     record_auth_audit_failure, redirect,
 };
 use crate::state::{AppState, PendingMagicLink, lock_mutex};
@@ -34,20 +34,11 @@ pub fn magic_link_request(
         return (StatusCode::NOT_FOUND, "magic link login is not configured").into_response();
     }
     let payload = login_payload(&body);
-    let username = payload
-        .get("username")
-        .map(String::as_str)
-        .unwrap_or("")
-        .trim();
+    let username = payload.username().trim();
     if username.is_empty() {
         return (StatusCode::BAD_REQUEST, "username is required").into_response();
     }
-    let return_to = sanitize_return_to(
-        payload
-            .get("return_to")
-            .map(String::as_str)
-            .unwrap_or("/status"),
-    );
+    let return_to = sanitize_return_to(payload.return_to_or_status());
     let rate_key = magic_link_rate_key(username, headers, peer);
     let decision = state.auth_failures.record_attempt(
         &rate_key,
@@ -68,11 +59,7 @@ pub fn magic_link_request(
     let link = token
         .as_deref()
         .map(|token| magic_link_callback_url(&cfg.public_url, token));
-    let wants_json = payload
-        .get("fetch")
-        .map(|value| value == "1")
-        .unwrap_or_else(|| body_is_json(&body));
-    if wants_json {
+    if payload.wants_json(&body) {
         return json_response(json!({
             "sent": true,
             "link": link,

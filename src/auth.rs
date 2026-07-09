@@ -2,22 +2,21 @@ use crate::config::AuthConfig;
 use crate::endpoints;
 use crate::state::AppState;
 use crate::util::{now_epoch_i64, token_urlsafe};
-use axum::body::{Body, Bytes};
+use axum::body::Body;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, COOKIE};
 use axum::http::{HeaderMap, Method, Response, StatusCode};
 use axum::response::IntoResponse;
 use constant_time_eq::constant_time_eq;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::net::SocketAddr;
-use url::form_urlencoded;
 
 use auth_modules::audit::AuthAuditKind;
 
 mod local;
 mod login;
 mod magic_link;
+mod payload;
 mod rate_limit;
 mod session;
 #[cfg(test)]
@@ -35,6 +34,7 @@ pub use tokens::{public_token, required_scope, scopes_allow, token_hash};
 pub use totp_handlers::{totp_disable, totp_enable, totp_start};
 
 use local::{authenticate_basic, authenticate_ldap_basic, authenticate_trusted_proxy};
+pub(in crate::auth) use payload::login_payload;
 use rate_limit::{
     auth_rate_key, auth_rate_limited, clear_auth_failures, record_auth_audit_failure,
     record_auth_failure,
@@ -298,36 +298,6 @@ fn json_response(value: Value) -> Response<Body> {
         .header(CONTENT_LENGTH, body.len().to_string())
         .body(Body::from(body))
         .unwrap()
-}
-
-fn login_payload(body: &Bytes) -> HashMap<String, String> {
-    let raw = std::str::from_utf8(body).unwrap_or("");
-    if body_is_json(body) {
-        return serde_json::from_str::<Value>(raw)
-            .ok()
-            .and_then(|v| v.as_object().cloned())
-            .map(|obj| {
-                obj.into_iter()
-                    .map(|(key, value)| {
-                        let value = value
-                            .as_str()
-                            .map(ToOwned::to_owned)
-                            .unwrap_or_else(|| value.to_string());
-                        (key, value)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-    }
-    form_urlencoded::parse(raw.as_bytes())
-        .into_owned()
-        .collect()
-}
-
-fn body_is_json(body: &Bytes) -> bool {
-    std::str::from_utf8(body)
-        .map(|s| s.trim_start().starts_with('{'))
-        .unwrap_or(false)
 }
 
 fn sudo_window_seconds() -> i64 {

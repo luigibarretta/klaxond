@@ -7,6 +7,7 @@ use super::*;
 use crate::config::Paths;
 use crate::state::{PendingMagicLink, lock_mutex};
 use auth_modules::one_time_token;
+use axum::body::Bytes;
 use axum::http::header::{HOST, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use std::path::PathBuf;
@@ -66,6 +67,25 @@ fn sanitize_return_to_allows_only_local_non_auth_paths() {
     assert_eq!(sanitize_return_to("/api/auth"), "/");
     assert_eq!(sanitize_return_to("/api/auth/callback"), "/");
     assert_eq!(sanitize_return_to(""), "/");
+}
+
+#[test]
+fn login_payload_preserves_form_and_json_compatibility() {
+    let form =
+        Bytes::from_static(b"username=%20luigi%20&password=secret&return_to=&fetch=1&totp=123456");
+    let payload = login_payload(&form);
+    assert_eq!(payload.username(), " luigi ");
+    assert_eq!(payload.password(), "secret");
+    assert_eq!(payload.totp(), "123456");
+    assert_eq!(payload.return_to_or_status(), "");
+    assert!(payload.wants_json(&form));
+
+    let json = Bytes::from_static(br#"{"username":42,"password":true,"fetch":0}"#);
+    let payload = login_payload(&json);
+    assert_eq!(payload.username(), "42");
+    assert_eq!(payload.password(), "true");
+    assert_eq!(payload.return_to_or_status(), "/status");
+    assert!(payload.wants_json(&json));
 }
 
 #[test]

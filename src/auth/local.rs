@@ -1,7 +1,7 @@
 use super::session::sanitize_return_to;
 use super::{
-    AuthOutcome, User, auth_rate_key, auth_rate_limited, body_is_json, clear_auth_failures,
-    issue_session, json_response, login_payload, record_auth_failure, redirect, set_session_cookie,
+    AuthOutcome, User, auth_rate_key, auth_rate_limited, clear_auth_failures, issue_session,
+    json_response, login_payload, record_auth_failure, redirect, set_session_cookie,
     sudo_window_seconds, verify_password,
 };
 use crate::config::AuthConfig;
@@ -164,13 +164,9 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
             .into_response();
     }
     let payload = login_payload(&body);
-    let username = payload
-        .get("username")
-        .map(String::as_str)
-        .unwrap_or("")
-        .trim();
-    let password = payload.get("password").map(String::as_str).unwrap_or("");
-    let code = payload.get("totp").map(String::as_str).unwrap_or("");
+    let username = payload.username().trim();
+    let password = payload.password();
+    let code = payload.totp();
     let rate_key = auth_rate_key("login", username);
     if auth_rate_limited(state, &rate_key) {
         record_auth_failure(state, &rate_key, "auth.login", errors::RATE_LIMITED);
@@ -180,12 +176,7 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
         )
             .into_response();
     }
-    let return_to = sanitize_return_to(
-        payload
-            .get("return_to")
-            .map(String::as_str)
-            .unwrap_or("/status"),
-    );
+    let return_to = sanitize_return_to(payload.return_to_or_status());
     let mut user = if cfg.mode == "ldap" {
         match authenticate_ldap_credentials(&cfg, username, password).await {
             Ok(identity) => ldap_user(identity),
@@ -228,11 +219,7 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
     };
     clear_auth_failures(state, &rate_key);
     let cookie = issue_session(state, &cfg, &mut user);
-    let mut resp = if payload
-        .get("fetch")
-        .map(|v| v == "1")
-        .unwrap_or_else(|| body_is_json(&body))
-    {
+    let mut resp = if payload.wants_json(&body) {
         json_response(json!({"ok": true, "return_to": return_to, "csrf": user.csrf}))
     } else {
         redirect(&return_to)
@@ -254,8 +241,8 @@ pub async fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Respons
     }
     let cfg = state.cfg().auth;
     let payload = login_payload(&body);
-    let password = payload.get("password").map(String::as_str).unwrap_or("");
-    let code = payload.get("totp").map(String::as_str).unwrap_or("");
+    let password = payload.password();
+    let code = payload.totp();
     let rate_key = auth_rate_key("sudo", &user.sub);
     if auth_rate_limited(state, &rate_key) {
         record_auth_failure(state, &rate_key, "auth.sudo", errors::RATE_LIMITED);
