@@ -16,8 +16,10 @@ use ipnet::IpNet;
 use serde_json::{Value, json};
 use std::net::{IpAddr, SocketAddr};
 
+mod patch;
 mod tokens;
 
+use patch::{AuthConfigPatchError, AuthSettingsPatch};
 pub(super) use tokens::{create_auth_token, password_policy_response, revoke_auth_token};
 
 pub(super) fn anonymous_user() -> User {
@@ -203,6 +205,16 @@ fn cidr_match(ip: IpAddr, cidrs: &[String]) -> bool {
         .any(|net| net.contains(&ip))
 }
 
+fn auth_patch_error_response(err: AuthConfigPatchError) -> Response<Body> {
+    match err {
+        AuthConfigPatchError::InvalidMode => text(StatusCode::BAD_REQUEST, "invalid mode"),
+        AuthConfigPatchError::PasswordPolicy(message) => text(StatusCode::BAD_REQUEST, &message),
+        AuthConfigPatchError::HashPassword(message) => {
+            text(StatusCode::INTERNAL_SERVER_ERROR, &message)
+        }
+    }
+}
+
 pub(super) fn update_auth_config(
     state: &AppState,
     body: Bytes,
@@ -216,135 +228,12 @@ pub(super) fn update_auth_config(
     let Some(incoming) = payload.get("settings") else {
         return text(StatusCode::BAD_REQUEST, "missing 'settings' object");
     };
+    let patch = serde_json::from_value::<AuthSettingsPatch>(incoming.clone()).unwrap_or_default();
     state
         .with_config_write_lock(|| {
             let mut auth = state.cfg().auth;
-            if let Some(mode) = incoming.get("mode").and_then(|v| v.as_str()) {
-                if !matches!(mode, "none" | "basic" | "ldap" | "oidc" | "trusted-proxy") {
-                    return text(StatusCode::BAD_REQUEST, "invalid mode");
-                }
-                auth.mode = mode.into();
-            }
-            if let Some(h) = incoming
-                .get("session_timeout_hours")
-                .and_then(|v| v.as_u64())
-            {
-                auth.session_timeout_hours = h.clamp(1, 720);
-            }
-            if let Some(v) = incoming
-                .get("session_secret")
-                .and_then(|v| v.as_str())
-                .filter(|v| *v != "***SET***")
-            {
-                auth.session_secret = v.into();
-            }
-            if let Some(b) = incoming.get("basic").and_then(|v| v.as_object()) {
-                if let Some(v) = b.get("username").and_then(|v| v.as_str()) {
-                    auth.basic.username = v.into();
-                }
-                if let Some(v) = b.get("realm").and_then(|v| v.as_str()) {
-                    auth.basic.realm = v.into();
-                }
-                if let Some(pwd) = b
-                    .get("password")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty())
-                {
-                    if let Err(error) =
-                        auth::validate_password_policy(pwd, Some(&auth.basic.username))
-                    {
-                        return text(StatusCode::BAD_REQUEST, &error.message());
-                    }
-                    match auth::hash_password(pwd) {
-                        Ok(h) => auth.basic.password_hash = h,
-                        Err(err) => {
-                            return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
-                        }
-                    }
-                } else if let Some(h) = b
-                    .get("password_hash")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| *s != "***SET***" && !s.is_empty())
-                {
-                    auth.basic.password_hash = h.into();
-                }
-            }
-            if let Some(o) = incoming.get("oidc").and_then(|v| v.as_object()) {
-                for (k, slot) in [
-                    ("provider", &mut auth.oidc.provider),
-                    ("issuer", &mut auth.oidc.issuer),
-                    ("client_id", &mut auth.oidc.client_id),
-                    ("scopes", &mut auth.oidc.scopes),
-                    ("required_group", &mut auth.oidc.required_group),
-                    ("redirect_path", &mut auth.oidc.redirect_path),
-                ] {
-                    if let Some(v) = o.get(k).and_then(|v| v.as_str()) {
-                        *slot = v.into();
-                    }
-                }
-                if let Some(v) = o
-                    .get("client_secret")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty() && *s != "***SET***")
-                {
-                    auth.oidc.client_secret = v.into();
-                }
-            }
-            if let Some(ldap) = incoming.get("ldap").and_then(|v| v.as_object()) {
-                for (key, slot) in [
-                    ("url", &mut auth.ldap.url),
-                    ("bind_dn_template", &mut auth.ldap.bind_dn_template),
-                    ("service_bind_dn", &mut auth.ldap.service_bind_dn),
-                    ("base_dn", &mut auth.ldap.base_dn),
-                    ("user_filter", &mut auth.ldap.user_filter),
-                    ("scope", &mut auth.ldap.scope),
-                    ("username_attr", &mut auth.ldap.username_attr),
-                    ("email_attr", &mut auth.ldap.email_attr),
-                    ("name_attr", &mut auth.ldap.name_attr),
-                    ("groups_attr", &mut auth.ldap.groups_attr),
-                ] {
-                    if let Some(v) = ldap.get(key).and_then(|v| v.as_str()) {
-                        *slot = v.trim().to_string();
-                    }
-                }
-                if let Some(v) = ldap
-                    .get("service_bind_password")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.is_empty() && *s != "***SET***")
-                {
-                    auth.ldap.service_bind_password = v.to_string();
-                }
-                if let Some(v) = ldap.get("timeout_secs").and_then(|v| v.as_u64()) {
-                    auth.ldap.timeout_secs = v.clamp(1, 60);
-                }
-            }
-            if let Some(tp) = incoming.get("trusted_proxy").and_then(|v| v.as_object()) {
-                if let Some(v) = tp.get("user_header").and_then(|v| v.as_str()) {
-                    auth.trusted_proxy.user_header = v.into();
-                }
-                if let Some(v) = tp.get("email_header").and_then(|v| v.as_str()) {
-                    auth.trusted_proxy.email_header = v.into();
-                }
-                if let Some(v) = tp.get("groups_header").and_then(|v| v.as_str()) {
-                    auth.trusted_proxy.groups_header = v.into();
-                }
-                if let Some(arr) = tp.get("trusted_cidrs").and_then(|v| v.as_array()) {
-                    auth.trusted_proxy.trusted_cidrs = arr
-                        .iter()
-                        .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                        .collect();
-                }
-            }
-            if let Some(w) = incoming.get("webauthn").and_then(|v| v.as_object()) {
-                if let Some(v) = w.get("enabled").and_then(|v| v.as_bool()) {
-                    auth.webauthn.enabled = v;
-                }
-                if let Some(v) = w.get("rp_id").and_then(|v| v.as_str()) {
-                    auth.webauthn.rp_id = v.trim().to_string();
-                }
-                if let Some(v) = w.get("origin").and_then(|v| v.as_str()) {
-                    auth.webauthn.origin = v.trim().trim_end_matches('/').to_string();
-                }
+            if let Err(err) = patch.apply_to(&mut auth) {
+                return auth_patch_error_response(err);
             }
             if let Err(err) = validate_auth_config(&auth, current_user, peer, headers) {
                 return text(StatusCode::BAD_REQUEST, &err);
