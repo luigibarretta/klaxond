@@ -1,21 +1,23 @@
-use super::ingest::ingest_secret_for;
-use super::{json_response, parse_query, text};
+use super::{json_response, parse_query};
 use crate::audit;
-use crate::auth::User;
 use crate::config::DEDUP_SOURCES;
 use crate::log_buffer;
 use crate::state::AppState;
 use crate::util::env_string;
-use axum::body::{Body, Bytes};
-use axum::http::{Response, StatusCode};
+use axum::body::Body;
+use axum::http::Response;
 use chrono::Utc;
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+mod client_logs;
 mod metrics;
+mod setup;
 
+pub(super) use client_logs::client_log_response;
 pub(super) use metrics::metrics_response;
+pub(super) use setup::setup_status_payload;
 
 pub(super) async fn status_payload(state: &AppState) -> Value {
     let cfg = state.cfg();
@@ -28,85 +30,6 @@ pub(super) async fn status_payload(state: &AppState) -> Value {
         "smtp_host": cfg.smtp_host,
         "telegram_configured": !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
         "logs": log_buffer::stats_global(),
-    })
-}
-
-pub(super) fn setup_status_payload(state: &AppState) -> Value {
-    let cfg = state.cfg();
-    let secrets_configured = DEDUP_SOURCES
-        .iter()
-        .filter(|src| !ingest_secret_for(state, src).is_empty())
-        .count();
-    let channel_count = [
-        !cfg.ntfy_url.is_empty() && !cfg.ntfy_topics.is_empty(),
-        !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
-        !cfg.smtp_host.is_empty() && !cfg.smtp_from.is_empty() && !cfg.smtp_to.is_empty(),
-    ]
-    .iter()
-    .filter(|v| **v)
-    .count();
-    let backup_ready = state.paths.backup_dir.is_dir();
-    let items = vec![
-        json!({
-            "key": "auth",
-            "label": "Authentication",
-            "status": if cfg.auth.mode == "none" { "warn" } else { "ok" },
-            "detail": if cfg.auth.mode == "none" { "admin UI is unauthenticated" } else { "authentication is enabled" },
-            "values": {"mode": cfg.auth.mode},
-        }),
-        json!({
-            "key": "ingest_auth",
-            "label": "Inbound webhook auth",
-            "status": if secrets_configured == DEDUP_SOURCES.len() { "ok" } else if secrets_configured == 0 { "warn" } else { "partial" },
-            "detail": format!("{secrets_configured}/{} sources have a shared secret", DEDUP_SOURCES.len()),
-            "values": {"configured": secrets_configured, "total": DEDUP_SOURCES.len()},
-        }),
-        json!({
-            "key": "channels",
-            "label": "Notification channels",
-            "status": if channel_count > 0 { "ok" } else { "warn" },
-            "detail": format!("{channel_count}/3 channel families configured"),
-            "values": {"configured": channel_count, "total": 3},
-        }),
-        json!({
-            "key": "backups",
-            "label": "Config backups",
-            "status": if backup_ready { "ok" } else { "error" },
-            "detail": state.paths.backup_dir.to_string_lossy(),
-            "values": {"path": state.paths.backup_dir.to_string_lossy()},
-        }),
-        json!({
-            "key": "public_url",
-            "label": "Public URL",
-            "status": if cfg.public_url.trim().is_empty() { "warn" } else { "ok" },
-            "detail": if cfg.public_url.trim().is_empty() { "not configured".into() } else { cfg.public_url.clone() },
-            "values": {"url": cfg.public_url},
-        }),
-        json!({
-            "key": "passkeys",
-            "label": "Passkeys",
-            "status": if cfg.auth.webauthn.enabled { "ok" } else { "info" },
-            "detail": if cfg.auth.webauthn.enabled { "WebAuthn enabled" } else { "optional WebAuthn disabled" },
-            "values": {"enabled": cfg.auth.webauthn.enabled},
-        }),
-    ];
-    let errors = items
-        .iter()
-        .filter(|item| item.get("status").and_then(Value::as_str) == Some("error"))
-        .count();
-    let warnings = items
-        .iter()
-        .filter(|item| {
-            matches!(
-                item.get("status").and_then(Value::as_str),
-                Some("warn" | "partial")
-            )
-        })
-        .count();
-    json!({
-        "ok": errors == 0,
-        "summary": { "errors": errors, "warnings": warnings, "items": items.len() },
-        "items": items,
     })
 }
 
@@ -261,88 +184,6 @@ pub(super) fn inhibition_rules_payload(state: &AppState) -> Value {
         })
         .collect::<Vec<_>>();
     json!({"rules": rules, "available_sources": DEDUP_SOURCES})
-}
-
-pub(super) fn client_log_response(body: Bytes, authed_user: Option<&User>) -> Response<Body> {
-    if body.len() > 8192 {
-        return text(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "client log payload too large",
-        );
-    }
-    let Ok(payload) = serde_json::from_slice::<Value>(&body) else {
-        return text(StatusCode::BAD_REQUEST, "invalid client log payload");
-    };
-    let level = payload
-        .get("level")
-        .and_then(|v| v.as_str())
-        .unwrap_or("error")
-        .trim()
-        .to_ascii_lowercase();
-    let key = client_log_field(&payload, "key", 96);
-    let message = client_log_field(&payload, "message", 512);
-    let path = client_log_field(&payload, "path", 160);
-    let stack = client_log_field(&payload, "stack", 1024);
-    let user_agent = client_log_field(&payload, "userAgent", 256);
-    let user = authed_user
-        .map(|u| {
-            if u.sub.is_empty() {
-                "anonymous"
-            } else {
-                u.sub.as_str()
-            }
-        })
-        .unwrap_or("anonymous");
-
-    match level.as_str() {
-        "warn" | "warning" => tracing::warn!(
-            target: "klaxond::frontend",
-            ui_context = %key,
-            ui_path = %path,
-            ui_user = %user,
-            ui_user_agent = %user_agent,
-            ui_stack = %stack,
-            "frontend warning [{key}]: {message}"
-        ),
-        "info" => tracing::info!(
-            target: "klaxond::frontend",
-            ui_context = %key,
-            ui_path = %path,
-            ui_user = %user,
-            ui_user_agent = %user_agent,
-            ui_stack = %stack,
-            "frontend info [{key}]: {message}"
-        ),
-        _ => tracing::error!(
-            target: "klaxond::frontend",
-            ui_context = %key,
-            ui_path = %path,
-            ui_user = %user,
-            ui_user_agent = %user_agent,
-            ui_stack = %stack,
-            "frontend error [{key}]: {message}"
-        ),
-    }
-
-    Response::builder()
-        .status(StatusCode::NO_CONTENT)
-        .body(Body::empty())
-        .unwrap()
-}
-
-fn client_log_field(payload: &Value, key: &str, max_chars: usize) -> String {
-    let raw = payload.get(key).and_then(|v| v.as_str()).unwrap_or("");
-    let compact = raw
-        .chars()
-        .map(|ch| {
-            if ch.is_control() && ch != '\n' && ch != '\t' {
-                ' '
-            } else {
-                ch
-            }
-        })
-        .collect::<String>();
-    compact.chars().take(max_chars).collect()
 }
 
 pub(super) fn logs_payload(full_path: &str) -> log_buffer::LogQuery {
