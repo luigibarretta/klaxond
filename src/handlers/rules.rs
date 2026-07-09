@@ -5,6 +5,7 @@ use crate::inhibition;
 use crate::state::{AppState, lock_mutex};
 use axum::body::{Body, Bytes};
 use axum::http::{Response, StatusCode};
+use serde::Serialize;
 use serde_json::json;
 
 mod simulate;
@@ -107,10 +108,7 @@ pub(super) fn update_inhibition_rules(state: &AppState, body: Bytes) -> Response
     }
     match state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
-        cfg.toml.as_table_mut().unwrap().insert(
-            "inhibitions".into(),
-            json_to_toml(serde_json::to_value(&cleaned).unwrap()),
-        );
+        persist_toml_section(&mut cfg.toml, "inhibitions", &cleaned)?;
         persist_reload(state, cfg.toml)
     }) {
         Ok(Ok(())) => {}
@@ -201,10 +199,7 @@ pub(super) fn update_schedules(state: &AppState, body: Bytes) -> Response<Body> 
     }
     match state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
-        cfg.toml.as_table_mut().unwrap().insert(
-            "schedules".into(),
-            json_to_toml(serde_json::to_value(&cleaned).unwrap()),
-        );
+        persist_toml_section(&mut cfg.toml, "schedules", &cleaned)?;
         persist_reload(state, cfg.toml)
     }) {
         Ok(Ok(())) => {}
@@ -238,6 +233,20 @@ pub(super) fn clear_acks(state: &AppState, body: Bytes) -> Response<Body> {
     }
     let after = acks.len();
     json_response(json!({"ok": true, "cleared": before - after, "remaining": after}))
+}
+
+fn persist_toml_section<T: Serialize>(
+    toml: &mut toml::Value,
+    key: &str,
+    value: &T,
+) -> Result<(), String> {
+    let table = toml
+        .as_table_mut()
+        .ok_or_else(|| "runtime TOML root is not a table".to_string())?;
+    let value = serde_json::to_value(value)
+        .map_err(|err| format!("serialize {key} config failed: {err}"))?;
+    table.insert(key.into(), json_to_toml(value));
+    Ok(())
 }
 
 pub(super) fn clear_inhibitions(state: &AppState, body: Bytes) -> Response<Body> {
@@ -278,4 +287,32 @@ pub(super) fn clear_inhibitions(state: &AppState, body: Bytes) -> Response<Body>
     }
     let after = suppressions.len();
     json_response(json!({"ok": true, "cleared": before - after, "remaining": after}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn persist_toml_section_inserts_serialized_value() {
+        let mut toml = toml::Value::Table(toml::map::Map::new());
+
+        persist_toml_section(&mut toml, "items", &vec!["one", "two"]).expect("persist section");
+
+        assert_eq!(
+            toml.get("items")
+                .and_then(toml::Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn persist_toml_section_returns_error_for_non_table_root() {
+        let mut toml = toml::Value::String("invalid".to_string());
+
+        let err = persist_toml_section(&mut toml, "items", &vec!["one"]).expect_err("root error");
+
+        assert_eq!(err, "runtime TOML root is not a table");
+    }
 }
