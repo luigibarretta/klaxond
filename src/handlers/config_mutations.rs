@@ -153,21 +153,10 @@ pub(super) fn update_cascade_config(state: &AppState, body: Bytes) -> Response<B
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let Some(arr) = payload.get("tiers").and_then(|v| v.as_array()) else {
+    let Ok(request) = CascadeConfigRequest::from_value(payload) else {
         return text(StatusCode::BAD_REQUEST, "tiers must be a non-empty list");
     };
-    let mut tiers = Vec::new();
-    for t in arr {
-        let name = t
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if !matches!(name.as_str(), "ntfy" | "telegram" | "smtp") {
-            continue;
-        }
-        tiers.push(json!({"name": name, "timeout_seconds": t.get("timeout_seconds").and_then(|v| v.as_u64()).unwrap_or(5).clamp(1, 60)}));
-    }
+    let tiers = request.tier_values();
     if tiers.is_empty() {
         return text(StatusCode::BAD_REQUEST, "no valid tiers");
     }
@@ -177,10 +166,7 @@ pub(super) fn update_cascade_config(state: &AppState, body: Bytes) -> Response<B
             {
                 let cas = toml_table_mut(&mut cfg.toml, &["cascade"]);
                 cas.insert("tiers".into(), json_to_toml(Value::Array(tiers.clone())));
-                if let Some(v) = payload
-                    .get("default_enabled_for_webhook")
-                    .and_then(|v| v.as_bool())
-                {
+                if let Some(v) = request.default_enabled_for_webhook {
                     cas.insert(
                         "default_enabled_for_webhook".into(),
                         toml::Value::Boolean(v),
@@ -192,6 +178,62 @@ pub(super) fn update_cascade_config(state: &AppState, body: Bytes) -> Response<B
                 .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+#[derive(Debug, Default)]
+struct CascadeConfigRequest {
+    tiers: Vec<CascadeTierPatch>,
+    default_enabled_for_webhook: Option<bool>,
+}
+
+impl CascadeConfigRequest {
+    fn from_value(value: Value) -> Result<Self, ()> {
+        let tiers = value
+            .get("tiers")
+            .and_then(Value::as_array)
+            .ok_or(())?
+            .iter()
+            .filter(|tier| tier.is_object())
+            .map(|tier| {
+                serde_json::from_value::<CascadeTierPatch>(tier.clone()).unwrap_or_default()
+            })
+            .collect();
+        let default_enabled_for_webhook = value
+            .get("default_enabled_for_webhook")
+            .and_then(Value::as_bool);
+        Ok(Self {
+            tiers,
+            default_enabled_for_webhook,
+        })
+    }
+
+    fn tier_values(&self) -> Vec<Value> {
+        self.tiers
+            .iter()
+            .filter_map(CascadeTierPatch::to_tier_value)
+            .collect()
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct CascadeTierPatch {
+    #[serde(default, deserialize_with = "optional_string")]
+    name: Option<String>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    timeout_seconds: Option<u64>,
+}
+
+impl CascadeTierPatch {
+    fn to_tier_value(&self) -> Option<Value> {
+        let name = self.name.as_deref().unwrap_or("").to_ascii_lowercase();
+        if !matches!(name.as_str(), "ntfy" | "telegram" | "smtp") {
+            return None;
+        }
+        Some(json!({
+            "name": name,
+            "timeout_seconds": self.timeout_seconds.unwrap_or(5).clamp(1, 60),
+        }))
+    }
 }
 
 pub(super) fn update_delivery_config(state: &AppState, body: Bytes) -> Response<Body> {
@@ -276,5 +318,42 @@ mod tests {
     fn dedup_config_request_requires_settings_object() {
         assert!(DedupConfigRequest::from_value(json!({})).is_err());
         assert!(DedupConfigRequest::from_value(json!({"settings": []})).is_err());
+    }
+
+    #[test]
+    fn cascade_config_request_preserves_tier_normalization_and_leniency() {
+        let request = CascadeConfigRequest::from_value(json!({
+            "tiers": [
+                { "name": "NTFY", "timeout_seconds": 0 },
+                { "name": "telegram", "timeout_seconds": 99 },
+                { "name": "smtp", "timeout_seconds": "slow" },
+                { "name": "pagerduty", "timeout_seconds": 15 },
+                "ignore non-object tier"
+            ],
+            "default_enabled_for_webhook": true
+        }))
+        .expect("cascade config request");
+
+        assert_eq!(request.default_enabled_for_webhook, Some(true));
+        assert_eq!(
+            request.tier_values(),
+            vec![
+                json!({"name": "ntfy", "timeout_seconds": 1}),
+                json!({"name": "telegram", "timeout_seconds": 60}),
+                json!({"name": "smtp", "timeout_seconds": 5}),
+            ]
+        );
+    }
+
+    #[test]
+    fn cascade_config_request_requires_tiers_array() {
+        assert!(CascadeConfigRequest::from_value(json!({})).is_err());
+        assert!(CascadeConfigRequest::from_value(json!({"tiers": {}})).is_err());
+        assert!(
+            CascadeConfigRequest::from_value(json!({"tiers": []}))
+                .expect("empty array is syntactically valid")
+                .tier_values()
+                .is_empty()
+        );
     }
 }
