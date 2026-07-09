@@ -7,7 +7,7 @@ use super::*;
 use crate::config::Paths;
 use crate::state::{PendingMagicLink, lock_mutex};
 use auth_modules::one_time_token;
-use axum::http::header::{HOST, SET_COOKIE};
+use axum::http::header::{HOST, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -66,6 +66,28 @@ fn sanitize_return_to_allows_only_local_non_auth_paths() {
     assert_eq!(sanitize_return_to("/api/auth"), "/");
     assert_eq!(sanitize_return_to("/api/auth/callback"), "/");
     assert_eq!(sanitize_return_to(""), "/");
+}
+
+#[test]
+fn invalid_basic_realm_does_not_panic_while_challenging() {
+    let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let mut auth = state.cfg().auth;
+    auth.mode = "basic".to_string();
+    auth.basic.realm = "bad\rrealm".to_string();
+
+    let headers = HeaderMap::new();
+    let AuthOutcome::Rejected(resp) = super::local::authenticate_basic(&state, &auth, &headers)
+    else {
+        panic!("missing credentials should be rejected");
+    };
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        resp.headers().get(WWW_AUTHENTICATE),
+        Some(&HeaderValue::from_static("Basic realm=\"klaxond\""))
+    );
 }
 
 #[test]

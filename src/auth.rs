@@ -39,7 +39,7 @@ use rate_limit::{
     auth_rate_key, auth_rate_limited, clear_auth_failures, record_auth_audit_failure,
     record_auth_failure,
 };
-use session::{cookie_values, issue_session, verify_session};
+use session::{cookie_values, issue_session, set_session_cookie, verify_session};
 use tokens::{authenticate_api_token, bearer_token, viewer_allows_scope};
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";

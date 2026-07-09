@@ -1,7 +1,7 @@
 use super::session::sanitize_return_to;
 use super::{
     AuthOutcome, User, auth_rate_key, auth_rate_limited, body_is_json, clear_auth_failures,
-    issue_session, json_response, login_payload, record_auth_failure, redirect,
+    issue_session, json_response, login_payload, record_auth_failure, redirect, set_session_cookie,
     sudo_window_seconds, verify_password,
 };
 use crate::config::AuthConfig;
@@ -10,7 +10,7 @@ use crate::totp;
 use crate::util::now_epoch_i64;
 use auth_modules::errors;
 use axum::body::{Body, Bytes};
-use axum::http::header::{AUTHORIZATION, SET_COOKIE, WWW_AUTHENTICATE};
+use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
 use axum::response::IntoResponse;
 use ipnet::IpNet;
@@ -52,15 +52,7 @@ pub(super) fn authenticate_basic(
         let cookie = issue_session(state, cfg, &mut u);
         return AuthOutcome::Authorized(u, Some(cookie));
     }
-    let mut resp = Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .body(Body::empty())
-        .unwrap();
-    resp.headers_mut().insert(
-        WWW_AUTHENTICATE,
-        HeaderValue::from_str(&format!("Basic realm=\"{}\"", cfg.basic.realm)).unwrap(),
-    );
-    AuthOutcome::Rejected(resp)
+    AuthOutcome::Rejected(basic_challenge(&cfg.basic.realm))
 }
 
 pub(super) async fn authenticate_ldap_basic(
@@ -111,11 +103,14 @@ fn basic_challenge(realm: &str) -> Response<Body> {
         .status(StatusCode::UNAUTHORIZED)
         .body(Body::empty())
         .unwrap();
-    resp.headers_mut().insert(
-        WWW_AUTHENTICATE,
-        HeaderValue::from_str(&format!("Basic realm=\"{realm}\"")).unwrap(),
-    );
+    resp.headers_mut()
+        .insert(WWW_AUTHENTICATE, basic_challenge_header(realm));
     resp
+}
+
+fn basic_challenge_header(realm: &str) -> HeaderValue {
+    HeaderValue::from_str(&format!("Basic realm=\"{realm}\""))
+        .unwrap_or_else(|_| HeaderValue::from_static("Basic realm=\"klaxond\""))
 }
 
 pub(super) fn authenticate_trusted_proxy(
@@ -242,12 +237,11 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
     } else {
         redirect(&return_to)
     };
-    resp.headers_mut()
-        .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    set_session_cookie(&mut resp, &cookie);
     resp
 }
 
-pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body> {
+pub async fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body> {
     let Some(user) = user else {
         return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
     };
@@ -272,18 +266,7 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
             .into_response();
     }
     if user.mode == "ldap" {
-        let cfg_for_ldap = cfg.clone();
-        let username = user.sub.clone();
-        let password = password.to_string();
-        let result = tokio::task::block_in_place(|| {
-            cfg_for_ldap
-                .ldap
-                .to_auth_modules_config()
-                .ok_or_else(|| "LDAP is not configured".to_string())?
-                .authenticate(&username, &password)
-                .map_err(|err| err.to_string())
-        });
-        if let Err(err) = result {
+        if let Err(err) = authenticate_ldap_credentials(&cfg, &user.sub, password).await {
             tracing::warn!(?err, "LDAP sudo reauth failed");
             record_auth_failure(state, &rate_key, "auth.sudo", "ldap reauth failed");
             return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
@@ -309,8 +292,7 @@ pub fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body
     let mut resp = json_response(
         json!({"ok": true, "sudo_until": refreshed.sudo_until, "csrf": refreshed.csrf}),
     );
-    resp.headers_mut()
-        .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    set_session_cookie(&mut resp, &cookie);
     resp
 }
 

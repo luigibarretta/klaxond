@@ -48,6 +48,17 @@ pub(super) fn issue_session(state: &AppState, cfg: &AuthConfig, user: &mut User)
     )
 }
 
+pub(super) fn set_session_cookie(resp: &mut Response<Body>, cookie: &str) {
+    match HeaderValue::from_str(cookie) {
+        Ok(value) => {
+            resp.headers_mut().insert(SET_COOKIE, value);
+        }
+        Err(err) => {
+            tracing::error!(?err, "failed to build session cookie header");
+        }
+    }
+}
+
 pub fn issue_session_cookie(state: &AppState, user: &mut User) -> String {
     let cfg = state.cfg().auth;
     issue_session(state, &cfg, user)

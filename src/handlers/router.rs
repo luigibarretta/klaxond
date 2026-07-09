@@ -128,7 +128,7 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
     let body_len = body.len();
     let resp = match path {
         "/api/auth/local/login" => auth::local_login(state, body).await,
-        "/api/auth/reauth" => auth::sudo(state, body, authed_user.as_ref()),
+        "/api/auth/reauth" => auth::sudo(state, body, authed_user.as_ref()).await,
         "/api/auth/magic/request" => auth::magic_link_request(state, headers, peer, body),
         "/api/auth/passkey/login/options" => passkey_login_start(state, headers, peer, body),
         "/api/auth/passkey/login/verify" => passkey_login_finish(state, headers, peer, body),

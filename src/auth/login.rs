@@ -1,14 +1,14 @@
 use super::session::sanitize_return_to;
 use super::{
     AUTH_SESSION_COOKIE, User, cookie_values, issue_session, magic_link_enabled, redirect,
-    verify_session,
+    set_session_cookie, verify_session,
 };
 use crate::state::{AppState, PendingOidcState, lock_mutex};
 use crate::util::token_urlsafe;
 use auth_modules::oidc::{OidcClientConfig, async_client as oidc_client};
 use axum::body::Body;
-use axum::http::header::{COOKIE, HOST, SET_COOKIE};
-use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
+use axum::http::header::{COOKIE, HOST};
+use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
 use url::Url;
 
@@ -300,8 +300,7 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
     } else {
         &return_to
     });
-    resp.headers_mut()
-        .insert(SET_COOKIE, HeaderValue::from_str(&cookie).unwrap());
+    set_session_cookie(&mut resp, &cookie);
     resp
 }
 
