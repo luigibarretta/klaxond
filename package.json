@@ -5,7 +5,7 @@
   "scripts": {
     "loc:check": "node scripts/check-loc.mjs",
     "nasa:warn": "node scripts/check-nasa-warnings.mjs",
-    "openapi:lint": "redocly lint docs/openapi.yaml --config .redocly.yaml",
+    "openapi:lint": "REDOCLY_SUPPRESS_UPDATE_NOTICE=true redocly lint docs/openapi.yaml --config .redocly.yaml",
     "security:rsa-guard": "bash scripts/check-rsa-private-usage.sh",
     "test:e2e": "playwright test"
   },
