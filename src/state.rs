@@ -55,6 +55,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(paths: Paths) -> Result<Self> {
+        prepare_runtime_dirs(&paths)?;
         let cfg = load_runtime_config(&paths)?;
         let cascade_runtime_enabled = cfg.cascade_default;
         let session_key = load_or_create_session_key(&paths, &cfg)?;
@@ -238,4 +239,10 @@ impl AppState {
         let key = metric_key(name, labels);
         lock_mutex(&self.metrics.gauges, "metrics gauges").insert(key, value);
     }
+}
+
+fn prepare_runtime_dirs(paths: &Paths) -> Result<()> {
+    fs::create_dir_all(&paths.backup_dir)
+        .with_context(|| format!("create backup dir {}", paths.backup_dir.display()))?;
+    Ok(())
 }

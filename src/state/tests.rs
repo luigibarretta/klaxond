@@ -59,6 +59,17 @@ fn delivery_history_survives_state_recreation() {
 }
 
 #[test]
+fn state_initialization_creates_backup_dir_for_setup_readiness() {
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+
+    assert!(!paths.backup_dir.exists());
+    let _state = AppState::new(paths.clone()).unwrap();
+
+    assert!(paths.backup_dir.is_dir());
+}
+
+#[test]
 fn history_store_reopens_when_runtime_config_changes() {
     let tmp = TempDir::new().unwrap();
     let paths = temp_paths(&tmp);
