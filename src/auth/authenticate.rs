@@ -1,10 +1,12 @@
 use super::local::{authenticate_basic, authenticate_ldap_basic, authenticate_trusted_proxy};
 use super::session::{cookie_values, issue_session, verify_session};
+use super::step_up::redirect_location_after_primary;
 use super::tokens::{authenticate_api_token, bearer_token, required_scope, viewer_allows_scope};
 use super::{AUTH_SESSION_COOKIE, AuthOutcome, User, auth_required, is_ui_fetch, redirect};
 use crate::config::AuthConfig;
 use crate::state::AppState;
 use crate::util::token_urlsafe;
+use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::Body;
 use axum::http::header::COOKIE;
 use axum::http::{HeaderMap, Method, Response, StatusCode};
@@ -45,6 +47,7 @@ fn anonymous_user() -> User {
         csrf: String::new(),
         sudo_until: 0,
         via_authorization: false,
+        second_factor: String::new(),
     }
 }
 
@@ -87,9 +90,37 @@ async fn authenticate_interactive_mode(
             let outcome = authenticate_ldap_basic(state, cfg, headers).await;
             ui_fetch_login_on_unauthorized(outcome, headers, path)
         }
-        "trusted-proxy" => authenticate_trusted_proxy(cfg, headers, peer),
+        "trusted-proxy" => trusted_proxy_with_step_up(state, cfg, headers, path, peer),
         "oidc" => AuthOutcome::Rejected(oidc_login_redirect(headers, path)),
         _ => AuthOutcome::Rejected(StatusCode::FORBIDDEN.into_response()),
+    }
+}
+
+fn trusted_proxy_with_step_up(
+    state: &AppState,
+    cfg: &AuthConfig,
+    headers: &HeaderMap,
+    path: &str,
+    peer: Option<SocketAddr>,
+) -> AuthOutcome {
+    match authenticate_trusted_proxy(cfg, headers, peer) {
+        AuthOutcome::Authorized(user, cookie) => {
+            if let Some(location) = redirect_location_after_primary(
+                state,
+                cfg,
+                user.clone(),
+                path,
+                PrimaryAuthMethod::TrustedProxy,
+            ) {
+                return AuthOutcome::Rejected(if is_ui_fetch(headers) {
+                    auth_required(&location)
+                } else {
+                    redirect(&location)
+                });
+            }
+            AuthOutcome::Authorized(user, cookie)
+        }
+        rejected => rejected,
     }
 }
 

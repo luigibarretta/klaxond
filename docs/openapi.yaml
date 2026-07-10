@@ -23,7 +23,7 @@ tags:
   - name: Ingest
     description: Machine-to-machine webhook ingress.
   - name: Auth
-    description: Login, local MFA, passkeys, magic links, sessions, API keys and PATs.
+    description: Login, MFA / step-up, passkeys, magic links, sessions, API keys and PATs.
   - name: Operations
     description: Status, setup, logs, audit and channel diagnostics.
   - name: Config
@@ -720,6 +720,12 @@ paths:
             schema:
               type: object
               properties:
+                user:
+                  type: string
+                  description: User subject, username or email for standalone passkey login.
+                step_up:
+                  type: string
+                  description: One-time MFA / step-up token issued after primary authentication.
                 return_to:
                   type: string
       responses:
@@ -750,6 +756,160 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LoginResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+  /api/auth/step-up:
+    get:
+      tags: [Auth]
+      operationId: stepUpPage
+      summary: Render the public MFA / step-up page.
+      description: The page is reachable before the app session is issued and is guarded by the one-time step-up token.
+      security: []
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: return_to
+          schema:
+            type: string
+            default: /status
+      responses:
+        "200":
+          description: MFA / step-up HTML.
+          content:
+            text/html:
+              schema:
+                type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+  /api/auth/step-up/status:
+    get:
+      tags: [Auth]
+      operationId: getStepUpStatus
+      summary: Return the pending MFA / step-up challenge metadata.
+      security: []
+      parameters:
+        - in: query
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pending challenge metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StepUpStatus"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+  /api/auth/step-up/passkey/register/options:
+    post:
+      tags: [Auth]
+      operationId: stepUpPasskeyRegisterOptions
+      summary: Create passkey registration options for an MFA / step-up challenge.
+      description: Allows first-passkey enrollment only for the user bound to the pending step-up token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StepUpPasskeyRegisterRequest"
+      responses:
+        "200":
+          description: WebAuthn registration challenge.
+          content:
+            application/json:
+              schema:
+                type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+  /api/auth/step-up/passkey/register/verify:
+    post:
+      tags: [Auth]
+      operationId: stepUpPasskeyRegisterVerify
+      summary: Verify a step-up passkey registration and issue the app session.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Registered passkey plus issued session user.
+          content:
+            application/json:
+              schema:
+                type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+  /api/auth/step-up/totp/setup/start:
+    post:
+      tags: [Auth]
+      operationId: stepUpTotpSetupStart
+      summary: Start TOTP enrollment for an MFA / step-up challenge.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StepUpTokenRequest"
+      responses:
+        "200":
+          description: TOTP setup payload scoped to the step-up user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StepUpTotpSetup"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+  /api/auth/step-up/totp/setup/confirm:
+    post:
+      tags: [Auth]
+      operationId: stepUpTotpSetupConfirm
+      summary: Confirm TOTP enrollment and issue the app session.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StepUpTotpConfirmRequest"
+      responses:
+        "200":
+          description: Issued session user and return URL.
+          content:
+            application/json:
+              schema:
+                type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
+  /api/auth/step-up/totp/verify:
+    post:
+      tags: [Auth]
+      operationId: stepUpTotpVerify
+      summary: Verify an existing TOTP factor and issue the app session.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StepUpTotpVerifyRequest"
+      responses:
+        "200":
+          description: Issued session user and return URL.
+          content:
+            application/json:
+              schema:
+                type: object
         "4XX":
           $ref: "#/components/responses/ClientError"
   /api/status:
@@ -2060,10 +2220,83 @@ components:
           type: string
         code:
           type: string
+    StepUpStatus:
+      type: object
+      required: [ok, factor, reason, return_to, user, passkey_registered, totp_registered]
+      properties:
+        ok:
+          type: boolean
+        factor:
+          type: string
+          enum: [passkey, hardware_key, totp]
+        reason:
+          type: string
+        return_to:
+          type: string
+        user:
+          type: object
+          required: [sub, name, email]
+          properties:
+            sub:
+              type: string
+            name:
+              type: string
+            email:
+              type: string
+        passkey_registered:
+          type: boolean
+        totp_registered:
+          type: boolean
+    StepUpTokenRequest:
+      type: object
+      required: [step_up]
+      properties:
+        step_up:
+          type: string
+    StepUpPasskeyRegisterRequest:
+      allOf:
+        - $ref: "#/components/schemas/StepUpTokenRequest"
+        - type: object
+          properties:
+            name:
+              type: string
+    StepUpTotpSetup:
+      type: object
+      required: [ok, request_id, secret, otpauth_uri]
+      properties:
+        ok:
+          type: boolean
+        request_id:
+          type: string
+        secret:
+          type: string
+        otpauth_uri:
+          type: string
+          format: uri
+    StepUpTotpConfirmRequest:
+      type: object
+      required: [request_id, code]
+      properties:
+        request_id:
+          type: string
+        code:
+          type: string
+    StepUpTotpVerifyRequest:
+      allOf:
+        - $ref: "#/components/schemas/StepUpTokenRequest"
+        - type: object
+          required: [code]
+          properties:
+            code:
+              type: string
     AuthConfigUpdate:
       type: object
       additionalProperties: true
-      description: Auth settings payload. Secret fields are accepted but redacted from read responses.
+      description: |
+        Auth settings payload. Secret fields are accepted but redacted from read
+        responses. `step_up.required_after_primary` enables MFA / step-up after
+        primary authentication; `step_up.factor` selects `passkey`,
+        `hardware_key` or `totp`.
     CreateTokenRequest:
       type: object
       required: [name, kind, scopes]

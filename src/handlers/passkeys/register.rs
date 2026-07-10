@@ -1,11 +1,13 @@
 use super::super::{json_body, json_response, text};
 use super::public::public_passkey;
 use super::webauthn_config::webauthn_for_cfg;
-use crate::auth::User;
+use crate::auth::{self, User};
 use crate::config::{PasskeyRecord, RuntimeConfig, save_auth};
 use crate::state::{AppState, PendingPasskeyRegistration, lock_mutex};
 use crate::util::random_hex;
 use axum::body::{Body, Bytes};
+use axum::http::HeaderValue;
+use axum::http::header::SET_COOKIE;
 use axum::http::{Response, StatusCode};
 use serde_json::{Value, json};
 use webauthn_rs::prelude::{CredentialID, Passkey, RegisterPublicKeyCredential, Uuid};
@@ -24,7 +26,40 @@ pub(in crate::handlers) fn passkey_register_start(
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let label = passkey_label(&payload);
+    register_start_for_user(state, user, passkey_label(&payload), None)
+}
+
+pub(in crate::handlers) fn passkey_step_up_register_start(
+    state: &AppState,
+    body: Bytes,
+) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let Some(token) = step_up_token(&payload) else {
+        return text(StatusCode::BAD_REQUEST, "step_up token is required");
+    };
+    let Some(challenge) = auth::pending_step_up_challenge(state, &token) else {
+        return text(
+            StatusCode::BAD_REQUEST,
+            "unknown or expired step-up request",
+        );
+    };
+    if !matches!(challenge.factor.as_str(), "passkey" | "hardware_key") {
+        return text(
+            StatusCode::BAD_REQUEST,
+            "current step-up request does not accept passkey registration",
+        );
+    }
+    register_start_for_user(state, &challenge.user, passkey_label(&payload), Some(token))
+}
+
+fn register_start_for_user(
+    state: &AppState,
+    user: &User,
+    label: String,
+    step_up: Option<String>,
+) -> Response<Body> {
     let cfg = state.cfg();
     let webauthn = match webauthn_for_cfg(&cfg) {
         Ok(v) => v,
@@ -59,6 +94,7 @@ pub(in crate::handlers) fn passkey_register_start(
                 } else {
                     label
                 },
+                step_up,
                 state: reg_state,
             },
         );
@@ -111,12 +147,16 @@ pub(in crate::handlers) fn passkey_register_finish(
             {
                 return text(StatusCode::CONFLICT, "passkey already registered");
             }
+            let step_up = pending.step_up.clone();
             let record = passkey_record(pending, passkey);
             cfg.auth.passkeys.push(record.clone());
             if let Err(err) = save_auth(&state.paths, &cfg.auth) {
                 return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
             }
             state.replace_config(cfg);
+            if let Some(token) = step_up {
+                return passkey_step_up_response(state, &token, &record);
+            }
             json_response(json!({"ok": true, "passkey": public_passkey(&record)}))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
@@ -131,6 +171,15 @@ fn passkey_label(payload: &Value) -> String {
         .chars()
         .take(80)
         .collect()
+}
+
+fn step_up_token(payload: &Value) -> Option<String> {
+    payload
+        .get("step_up")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn credential_excludes(cfg: &RuntimeConfig, user: &User) -> Vec<CredentialID> {
@@ -170,4 +219,27 @@ fn passkey_record(pending: PendingPasskeyRegistration, passkey: Passkey) -> Pass
         last_used_at: None,
         credential: passkey,
     }
+}
+
+fn passkey_step_up_response(
+    state: &AppState,
+    token: &str,
+    record: &PasskeyRecord,
+) -> Response<Body> {
+    let (mut user, return_to) = match auth::finish_webauthn_step_up(state, token, &record.user_sub)
+    {
+        Ok(finished) => finished,
+        Err(err) => return text(StatusCode::UNAUTHORIZED, &err),
+    };
+    let cookie = auth::issue_session_cookie(state, &mut user);
+    let mut resp = json_response(json!({
+        "ok": true,
+        "passkey": public_passkey(record),
+        "user": user,
+        "return_to": return_to,
+    }));
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        resp.headers_mut().insert(SET_COOKIE, value);
+    }
+    resp
 }

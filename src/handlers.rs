@@ -13,6 +13,7 @@ mod observability;
 mod passkeys;
 mod router;
 mod rules;
+mod step_up;
 
 pub use router::dispatch;
 

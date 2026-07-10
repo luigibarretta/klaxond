@@ -25,6 +25,7 @@ pub const PUBLIC_ROUTES: &[PathPattern] = &[
     PathPattern::Exact("/api/auth/magic/request"),
     PathPattern::Prefix("/api/auth/magic/callback/"),
     PathPattern::Prefix("/api/auth/passkey/login"),
+    PathPattern::Prefix("/api/auth/step-up"),
     PathPattern::Prefix("/static/"),
     PathPattern::Prefix("/favicon.ico"),
     PathPattern::Exact("/api/auth/logout"),

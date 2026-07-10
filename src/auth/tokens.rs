@@ -104,6 +104,7 @@ fn token_user(record: AuthToken) -> User {
         csrf: String::new(),
         sudo_until: 0,
         via_authorization: true,
+        second_factor: String::new(),
     }
 }
 

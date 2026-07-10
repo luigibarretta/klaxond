@@ -1,10 +1,12 @@
 use super::session::{
     cookie_values, issue_session, sanitize_return_to, set_session_cookie, verify_session,
 };
+use super::step_up::redirect_location_after_primary;
 use super::{AUTH_SESSION_COOKIE, User, magic_link_enabled, redirect};
 use crate::state::{AppState, PendingOidcState, lock_mutex};
 use crate::util::token_urlsafe;
 use auth_modules::oidc::{OidcClientConfig, async_client as oidc_client};
+use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::Body;
 use axum::http::header::{COOKIE, HOST};
 use axum::http::{HeaderMap, Response, StatusCode};
@@ -294,8 +296,18 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
         csrf: String::new(),
         sudo_until: 0,
         via_authorization: false,
+        second_factor: String::new(),
     };
     let cfg_all = state.cfg().auth;
+    if let Some(location) = redirect_location_after_primary(
+        state,
+        &cfg_all,
+        user.clone(),
+        &return_to,
+        PrimaryAuthMethod::Oidc,
+    ) {
+        return redirect(&location);
+    }
     let cookie = issue_session(state, &cfg_all, &mut user);
     let mut resp = redirect(if return_to.is_empty() {
         "/"

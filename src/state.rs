@@ -10,7 +10,8 @@ pub use self::locks::{lock_mutex, read_lock, write_lock};
 pub use self::metrics::esc_label;
 pub use self::types::{
     DedupItem, DedupQueues, PendingMagicLink, PendingOidcState, PendingPasskeyAuthentication,
-    PendingPasskeyRegistration, RenderedImage, Suppression,
+    PendingPasskeyRegistration, PendingStepUpState, PendingTotpRegistration, RenderedImage,
+    Suppression,
 };
 use crate::config::{Paths, RuntimeConfig, load_runtime_config};
 use crate::history::{DeliveryEntry, DeliveryPage, HistoryStore};
@@ -47,9 +48,11 @@ pub struct AppState {
     pub metrics: Arc<Metrics>,
     pub dedup: Arc<AsyncMutex<DedupQueues>>,
     pub oidc_states: Arc<Mutex<HashMap<String, PendingOidcState>>>,
+    pub step_up_states: Arc<Mutex<HashMap<String, PendingStepUpState>>>,
     pub magic_links: Arc<Mutex<HashMap<String, PendingMagicLink>>>,
     pub passkey_registrations: Arc<Mutex<HashMap<String, PendingPasskeyRegistration>>>,
     pub passkey_authentications: Arc<Mutex<HashMap<String, PendingPasskeyAuthentication>>>,
+    pub totp_registrations: Arc<Mutex<HashMap<String, PendingTotpRegistration>>>,
     pub auth_failures: auth_modules::rate_limit::InMemoryRateLimiter,
 }
 
@@ -85,9 +88,11 @@ impl AppState {
             metrics: Arc::new(Metrics::default()),
             dedup: Arc::new(AsyncMutex::new(queues)),
             oidc_states: Arc::new(Mutex::new(HashMap::new())),
+            step_up_states: Arc::new(Mutex::new(HashMap::new())),
             magic_links: Arc::new(Mutex::new(HashMap::new())),
             passkey_registrations: Arc::new(Mutex::new(HashMap::new())),
             passkey_authentications: Arc::new(Mutex::new(HashMap::new())),
+            totp_registrations: Arc::new(Mutex::new(HashMap::new())),
             auth_failures: auth_modules::rate_limit::InMemoryRateLimiter::default(),
         })
     }

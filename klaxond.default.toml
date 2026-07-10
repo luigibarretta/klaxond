@@ -258,6 +258,10 @@ session_timeout_hours = 8
 [auth.basic]
 username = ""
 password_hash = ""
+
+[auth.step_up]
+required_after_primary = false
+factor = "passkey"
 realm = "klaxond"
 
 [auth.ldap]

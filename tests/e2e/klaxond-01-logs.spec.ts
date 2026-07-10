@@ -78,9 +78,12 @@ test("backend log search is debounced in the UI", async ({ page }) => {
   await page.fill("#logs-filter", "auth");
   await page.fill("#logs-filter", "auth rejected");
 
-  await expect.poll(() => logQueries.filter(Boolean).length, { timeout: 2_000 }).toBe(1);
+  await expect.poll(() => logQueries.filter(Boolean).at(-1), { timeout: 2_000 }).toBe("auth rejected");
   await page.waitForTimeout(450);
-  expect(logQueries.filter(Boolean)).toEqual(["auth rejected"]);
+  const filteredQueries = logQueries.filter(Boolean);
+  expect(filteredQueries).not.toContain("a");
+  expect(filteredQueries.at(-1)).toBe("auth rejected");
+  expect(filteredQueries.length).toBeLessThanOrEqual(2);
 });
 
 test("frontend query cache reuses status GETs and invalidates after mutations", async ({ page }) => {

@@ -17,6 +17,7 @@ mod magic_link;
 mod payload;
 mod rate_limit;
 mod session;
+mod step_up;
 #[cfg(test)]
 mod tests;
 mod tokens;
@@ -29,6 +30,10 @@ pub use magic_link::{
     magic_link_callback, magic_link_callback_url, magic_link_enabled, magic_link_request,
 };
 pub use session::{api_logout, issue_session_cookie};
+pub(crate) use step_up::{
+    StepUpChallenge, finish_totp_step_up, finish_webauthn_step_up, pending_step_up_challenge,
+    pending_step_up_user_sub, redirect_location_after_primary,
+};
 pub use tokens::{public_token, required_scope, scopes_allow, token_hash};
 pub use totp_handlers::{totp_disable, totp_enable, totp_start};
 
@@ -80,6 +85,8 @@ pub struct User {
     pub sudo_until: i64,
     #[serde(default, skip_serializing)]
     pub via_authorization: bool,
+    #[serde(default)]
+    pub second_factor: String,
 }
 
 pub enum AuthOutcome {

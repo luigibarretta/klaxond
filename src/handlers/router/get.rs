@@ -10,6 +10,7 @@ use super::super::observability::{
     inhibition_rules_payload, logs_payload, metrics_response, setup_status_payload, status_payload,
 };
 use super::super::passkeys::{passkey_login_page, public_passkey, webauthn_public_config};
+use super::super::step_up::{step_up_page, step_up_status_response};
 use super::super::{json_response, redirect, text};
 use super::paths::{
     legacy_legal_redirect, legacy_ui_redirect, legal_tab_from_path, path_id, root_ui_tab_from_path,
@@ -39,7 +40,7 @@ pub(super) async fn handle_get(
     if let Some(resp) = public_get_response(state, path, headers) {
         return resp;
     }
-    if let Some(resp) = auth_get_response(state, path, authed_user) {
+    if let Some(resp) = auth_get_response(state, path, full_path, authed_user) {
         return resp;
     }
     if let Some(resp) = config_get_response(state, path).await {
@@ -83,6 +84,7 @@ fn public_get_response(
 fn auth_get_response(
     state: &AppState,
     path: &str,
+    full_path: &str,
     authed_user: Option<&User>,
 ) -> Option<Response<Body>> {
     match path {
@@ -101,6 +103,8 @@ fn auth_get_response(
             authed_user.cloned().unwrap_or_else(anonymous_user),
         )),
         "/api/auth/passkey/login" | "/api/auth/passkey/login/" => Some(passkey_login_page()),
+        "/api/auth/step-up" | "/api/auth/step-up/" => Some(step_up_page()),
+        "/api/auth/step-up/status" => Some(step_up_status_response(state, full_path)),
         _ => None,
     }
 }

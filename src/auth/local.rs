@@ -1,5 +1,6 @@
 use super::session::sanitize_return_to;
 use super::session::{issue_session, set_session_cookie};
+use super::step_up::{redirect_location_after_primary, second_factor_satisfied};
 use super::{
     AuthOutcome, User, auth_rate_key, auth_rate_limited, clear_auth_failures, json_response,
     login_payload, record_auth_failure, redirect, sudo_window_seconds, verify_password,
@@ -9,6 +10,7 @@ use crate::state::AppState;
 use crate::totp;
 use crate::util::now_epoch_i64;
 use auth_modules::errors;
+use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::{Body, Bytes};
 use axum::http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
@@ -48,7 +50,15 @@ pub(super) fn authenticate_basic(
             csrf: String::new(),
             sudo_until: now_epoch_i64() + sudo_window_seconds(),
             via_authorization: false,
+            second_factor: if cfg.basic.totp_enabled {
+                "totp".into()
+            } else {
+                String::new()
+            },
         };
+        if !second_factor_satisfied(cfg, &u, PrimaryAuthMethod::Password) {
+            return AuthOutcome::Rejected(basic_challenge(&cfg.basic.realm));
+        }
         let cookie = issue_session(state, cfg, &mut u);
         return AuthOutcome::Authorized(u, Some(cookie));
     }
@@ -85,6 +95,9 @@ pub(super) async fn authenticate_ldap_basic(
     clear_auth_failures(state, &rate_key);
     let mut user = ldap_user(identity);
     user.sudo_until = now_epoch_i64() + sudo_window_seconds();
+    if !second_factor_satisfied(cfg, &user, PrimaryAuthMethod::Ldap) {
+        return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
+    }
     let cookie = issue_session(state, cfg, &mut user);
     AuthOutcome::Authorized(user, Some(cookie))
 }
@@ -145,6 +158,7 @@ pub(super) fn authenticate_trusted_proxy(
             csrf: String::new(),
             sudo_until: 0,
             via_authorization: false,
+            second_factor: String::new(),
         },
         None,
     )
@@ -215,9 +229,28 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
             csrf: String::new(),
             sudo_until: 0,
             via_authorization: false,
+            second_factor: if cfg.basic.totp_enabled {
+                "totp".into()
+            } else {
+                String::new()
+            },
         }
     };
     clear_auth_failures(state, &rate_key);
+    let primary = if user.mode == "ldap" {
+        PrimaryAuthMethod::Ldap
+    } else {
+        PrimaryAuthMethod::Password
+    };
+    if let Some(location) =
+        redirect_location_after_primary(state, &cfg, user.clone(), &return_to, primary)
+    {
+        return if payload.wants_json(&body) {
+            json_response(json!({"ok": true, "step_up": true, "return_to": location}))
+        } else {
+            redirect(&location)
+        };
+    }
     let cookie = issue_session(state, &cfg, &mut user);
     let mut resp = if payload.wants_json(&body) {
         json_response(json!({"ok": true, "return_to": return_to, "csrf": user.csrf}))
@@ -313,6 +346,7 @@ fn ldap_user(identity: auth_modules::ldap::LdapIdentity) -> User {
         csrf: String::new(),
         sudo_until: 0,
         via_authorization: false,
+        second_factor: String::new(),
     }
 }
 

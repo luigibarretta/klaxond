@@ -1,4 +1,5 @@
 use super::session::{issue_session, sanitize_return_to};
+use super::step_up::redirect_location_after_primary;
 use super::{
     AuthAuditKind, User, json_response, login_payload, record_auth_audit_failure, redirect,
 };
@@ -9,6 +10,7 @@ use auth_modules::one_time_token::{self, OneTimeTokenPolicy};
 use auth_modules::rate_limit::{
     GOLD_AUTH_SHORT_BURST_MAX, GOLD_AUTH_SHORT_BURST_WINDOW, RateLimitOutcome,
 };
+use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::{Body, Bytes};
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
@@ -86,6 +88,15 @@ pub fn magic_link_callback(state: &AppState, token: &str) -> Response<Body> {
             return redirect(&format!("/api/auth/login?magic_error={}", error.code()));
         }
     };
+    if let Some(location) = redirect_location_after_primary(
+        state,
+        &cfg,
+        user.clone(),
+        &return_to,
+        PrimaryAuthMethod::MagicLink,
+    ) {
+        return redirect(&location);
+    }
     let cookie = issue_session(state, &cfg, &mut user);
     let mut resp = redirect(&return_to);
     if let Ok(value) = HeaderValue::from_str(&cookie) {
@@ -179,6 +190,7 @@ pub(super) fn consume_magic_link(
             csrf: String::new(),
             sudo_until: 0,
             via_authorization: false,
+            second_factor: String::new(),
         },
         challenge.return_to,
     ))

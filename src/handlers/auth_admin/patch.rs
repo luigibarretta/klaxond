@@ -29,6 +29,8 @@ pub(super) struct AuthSettingsPatch {
     trusted_proxy: Option<TrustedProxyPatch>,
     #[serde(default, deserialize_with = "optional_object_patch")]
     webauthn: Option<WebauthnPatch>,
+    #[serde(default, deserialize_with = "optional_object_patch")]
+    step_up: Option<StepUpPatch>,
 }
 
 impl AuthSettingsPatch {
@@ -63,6 +65,9 @@ impl AuthSettingsPatch {
             patch.apply_to(auth);
         }
         if let Some(patch) = self.webauthn {
+            patch.apply_to(auth);
+        }
+        if let Some(patch) = self.step_up {
             patch.apply_to(auth);
         }
         Ok(())
@@ -238,6 +243,31 @@ impl WebauthnPatch {
         if let Some(origin) = self.origin {
             auth.webauthn.origin = origin.trim().trim_end_matches('/').to_string();
         }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct StepUpPatch {
+    #[serde(default, deserialize_with = "optional_bool")]
+    required_after_primary: Option<bool>,
+    #[serde(default, deserialize_with = "optional_string")]
+    factor: Option<String>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    oidc_requires_passkey: Option<bool>,
+}
+
+impl StepUpPatch {
+    fn apply_to(self, auth: &mut AuthConfig) {
+        if let Some(required) = self.required_after_primary {
+            auth.step_up.required_after_primary = required;
+        }
+        if let Some(factor) = self.factor {
+            auth.step_up.factor = factor.trim().to_string();
+        }
+        if let Some(legacy) = self.oidc_requires_passkey {
+            auth.step_up.oidc_requires_passkey = legacy;
+        }
+        auth.step_up.normalize();
     }
 }
 

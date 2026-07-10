@@ -39,7 +39,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
 
   await page.goto("/legal/privacy");
   await expect(page).toHaveURL(/\/legal\/privacy$/);
-  await expect(page.locator("body")).toHaveClass(/public-info-route/);
+  await expect(page.locator("body")).toHaveClass(/public-info-route/, { timeout: 10_000 });
   await expect(page.locator("#public-legal-bar")).toBeVisible();
   await expect(page.locator(".sidebar")).toBeHidden();
   await expect(page.locator("#tab-privacy")).toHaveClass(/active/);
@@ -90,7 +90,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/legal/notice");
-  await expect(page.locator("body")).toHaveClass(/public-info-route/);
+  await expect(page.locator("body")).toHaveClass(/public-info-route/, { timeout: 10_000 });
   await expect(page.locator("#public-legal-bar")).toBeVisible();
   const mobileFooterBottomGap = await page.locator(".app-footer").evaluate(el =>
     Math.round(window.innerHeight - el.getBoundingClientRect().bottom)

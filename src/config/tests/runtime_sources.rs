@@ -55,6 +55,10 @@ default_limit = 45
 [auth]
 session_secret = "toml-session-secret"
 
+[auth.step_up]
+required_after_primary = true
+factor = "totp"
+
 [ingest.secrets]
 grafana = "toml-grafana-secret"
 "#,
@@ -85,6 +89,8 @@ grafana = "toml-grafana-secret"
     assert_eq!(cfg.history.retention, 123);
     assert_eq!(cfg.history.default_limit, 45);
     assert_eq!(cfg.auth.session_secret, "toml-session-secret");
+    assert!(cfg.auth.step_up.required_after_primary);
+    assert_eq!(cfg.auth.step_up.factor, "totp");
     assert_eq!(
         toml_get(&cfg.toml, &["ingest", "secrets", "grafana"]).and_then(|v| v.as_str()),
         Some("toml-grafana-secret")

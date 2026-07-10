@@ -7,11 +7,13 @@ use super::*;
 use crate::config::Paths;
 use crate::state::{AppState, PendingMagicLink, lock_mutex};
 use auth_modules::one_time_token;
+use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::Bytes;
 use axum::http::header::{HOST, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use std::path::PathBuf;
 use tempfile::TempDir;
+use url::Url;
 
 fn temp_paths(tmp: &TempDir) -> Paths {
     let data = tmp.path();
@@ -229,6 +231,72 @@ fn client_log_remains_csrf_exempt_for_interactive_sessions() {
 }
 
 #[test]
+fn primary_auth_step_up_creates_challenge_before_session_issue() {
+    let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let mut auth = crate::config::AuthConfig::default();
+    auth.step_up.required_after_primary = true;
+    auth.step_up.factor = "totp".to_string();
+    let user = test_user("oidc");
+
+    let location = super::step_up::redirect_location_after_primary(
+        &state,
+        &auth,
+        user,
+        "/status",
+        PrimaryAuthMethod::Oidc,
+    )
+    .expect("step-up location");
+    let parsed = Url::parse(&format!("http://localhost{location}")).unwrap();
+    let token = parsed
+        .query_pairs()
+        .find(|(key, _)| key == "token")
+        .map(|(_, value)| value.to_string())
+        .expect("step-up token");
+
+    let pending = pending_step_up_challenge(&state, &token).expect("pending challenge");
+    assert_eq!(pending.factor, "totp");
+    assert_eq!(pending.return_to, "/status");
+
+    let (finished, return_to) =
+        finish_totp_step_up(&state, &token, "test-user").expect("finish step-up");
+    assert_eq!(finished.mode, "oidc");
+    assert_eq!(finished.second_factor, "totp");
+    assert_eq!(return_to, "/status");
+    assert!(pending_step_up_challenge(&state, &token).is_none());
+}
+
+#[test]
+fn passkey_step_up_rejects_other_primary_user() {
+    let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let mut auth = crate::config::AuthConfig::default();
+    auth.step_up.required_after_primary = true;
+    auth.step_up.factor = "passkey".to_string();
+    let location = super::step_up::redirect_location_after_primary(
+        &state,
+        &auth,
+        test_user("oidc"),
+        "/status",
+        PrimaryAuthMethod::Oidc,
+    )
+    .expect("step-up location");
+    let parsed = Url::parse(&format!("http://localhost{location}")).unwrap();
+    let token = parsed
+        .query_pairs()
+        .find(|(key, _)| key == "token")
+        .map(|(_, value)| value.to_string())
+        .expect("step-up token");
+
+    let err = finish_webauthn_step_up(&state, &token, "other-user").expect_err("user mismatch");
+
+    assert!(err.contains("does not match"));
+    assert!(pending_step_up_challenge(&state, &token).is_some());
+}
+
+#[test]
 fn ui_fetch_auth_required_is_machine_readable() {
     let mut headers = HeaderMap::new();
     headers.insert("X-Klaxond-Request", HeaderValue::from_static("fetch"));
@@ -261,6 +329,7 @@ fn test_user(mode: &str) -> User {
         csrf: "csrf-token".into(),
         sudo_until: 0,
         via_authorization: false,
+        second_factor: String::new(),
     }
 }
 

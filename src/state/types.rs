@@ -20,6 +20,15 @@ pub struct PendingOidcState {
 }
 
 #[derive(Clone, Debug)]
+pub struct PendingStepUpState {
+    pub created_at: f64,
+    pub return_to: String,
+    pub user: crate::auth::User,
+    pub factor: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug)]
 pub struct PendingMagicLink {
     pub created_at: f64,
     pub expires_at: f64,
@@ -67,6 +76,7 @@ pub struct PendingPasskeyRegistration {
     pub user_email: String,
     pub user_uuid: Uuid,
     pub label: String,
+    pub step_up: Option<String>,
     pub state: PasskeyRegistration,
 }
 
@@ -75,7 +85,19 @@ pub struct PendingPasskeyAuthentication {
     pub ts: f64,
     pub user_sub: String,
     pub rate_key: String,
+    pub step_up: Option<String>,
     pub state: PasskeyAuthentication,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingTotpRegistration {
+    pub ts: f64,
+    pub user_sub: String,
+    pub user_name: String,
+    pub user_email: String,
+    pub label: String,
+    pub step_up: String,
+    pub secret: String,
 }
 
 pub type DeliveryLog = std::collections::VecDeque<DeliveryEntry>;

@@ -102,6 +102,10 @@ fn auth_settings_patch_preserves_secret_sentinels_and_lenient_fields() {
         "webauthn": {
             "enabled": true,
             "origin": " https://klaxond.example.com/ "
+        },
+        "step_up": {
+            "required_after_primary": true,
+            "factor": "totp"
         }
     }))
     .expect("patch");
@@ -123,6 +127,8 @@ fn auth_settings_patch_preserves_secret_sentinels_and_lenient_fields() {
     assert_eq!(auth.trusted_proxy.trusted_cidrs, vec!["127.0.0.1/32"]);
     assert!(auth.webauthn.enabled);
     assert_eq!(auth.webauthn.origin, "https://klaxond.example.com");
+    assert!(auth.step_up.required_after_primary);
+    assert_eq!(auth.step_up.factor, "totp");
 }
 
 #[test]

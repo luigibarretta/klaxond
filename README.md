@@ -26,6 +26,7 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 - **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
 - **Full settings export/import**: TOML plus sidecar JSON files, import preview, automatic pre-restore backup and validated restore.
 - **Authentication**: local Argon2id username/password login, LDAP, magic links, optional TOTP/MFA, OIDC, trusted proxy, passkeys, API keys and PATs with granular scopes plus read-only viewer support.
+- **MFA / step-up policy**: require a second factor after primary authentication, with passkey, hardware key or TOTP as the step-up factor before the app session is issued.
 - **Operational diagnostics**: audit log, backend/frontend log search, setup checklist, notification test matrix and policy simulator.
 - **Persistent delivery history**: SQLite by default under `/data`, with optional PostgreSQL for shared multi-backend history and a built-in migration command.
 - **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
@@ -64,7 +65,7 @@ screen.
 ### Authentication and browser safety
 
 The admin UI supports local username/password login backed by Argon2id,
-LDAP, optional TOTP/MFA, OIDC, trusted proxy headers, passkeys, magic links, API keys and PATs. Browser
+LDAP, optional TOTP/MFA, OIDC, trusted proxy headers, passkeys, magic links, API keys and PATs. The Authentication tab can also enable an MFA / step-up policy that requires a second factor after primary login and before the app session is issued. Browser
 sessions receive a CSRF token and every same-origin mutation must send it back.
 Sensitive browser actions also require a short local reauthentication window
 when using local username/password or LDAP login. Machine clients should use scoped
@@ -125,6 +126,9 @@ complete route list, schemas, auth requirements and response contracts.
 | `POST` | `/api/auth/totp/setup/start` | Generate a one-time TOTP setup secret and otpauth URI |
 | `POST` | `/api/auth/totp/setup/confirm` | Enable local TOTP after validating the current code |
 | `POST` | `/api/auth/totp/disable` | Disable local TOTP |
+| `GET` | `/api/auth/step-up` | Public MFA / step-up page guarded by a one-time token |
+| `POST` | `/api/auth/step-up/totp/verify` | Verify a step-up TOTP factor and issue the app session |
+| `POST` | `/api/auth/step-up/passkey/register/options` | Register a first passkey for the pending step-up user |
 | `GET` | `/api/config/backup` | Download current `klaxond.toml` |
 | `GET` | `/api/config/export` | Admin-only full settings bundle: TOML, sidecars, auth sidecars and runtime-derived secrets |
 | `GET` | `/api/config/backups` | List automatic config backups |

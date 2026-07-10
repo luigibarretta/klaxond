@@ -33,6 +33,7 @@ pub(super) fn anonymous_user() -> User {
         csrf: String::new(),
         sudo_until: 0,
         via_authorization: false,
+        second_factor: String::new(),
     }
 }
 
@@ -83,6 +84,21 @@ pub(super) fn redacted_auth_settings(auth_cfg: &AuthConfig) -> Value {
             .map(public_passkey)
             .collect::<Vec<_>>()
     );
+    settings["totp_factors"] = json!(
+        auth_cfg
+            .totp_factors
+            .iter()
+            .map(|record| json!({
+                "id": record.id.as_str(),
+                "name": record.name.as_str(),
+                "user_sub": record.user_sub.as_str(),
+                "user_name": record.user_name.as_str(),
+                "user_email": record.user_email.as_str(),
+                "created_at": record.created_at,
+                "last_used_at": record.last_used_at,
+            }))
+            .collect::<Vec<_>>()
+    );
     settings
 }
 
@@ -95,7 +111,11 @@ pub(super) fn auth_methods_payload(auth_cfg: &AuthConfig) -> Value {
                 && !auth_cfg.oidc.issuer.is_empty()
                 && !auth_cfg.oidc.client_id.is_empty()
         }
-        TOTP => mode == "basic" && auth_cfg.basic.totp_enabled,
+        TOTP => {
+            (mode == "basic" && auth_cfg.basic.totp_enabled)
+                || (auth_cfg.step_up.required_after_primary && auth_cfg.step_up.factor == TOTP)
+                || !auth_cfg.totp_factors.is_empty()
+        }
         PASSKEY => auth_cfg.webauthn.enabled,
         HARDWARE_KEY => auth_cfg.webauthn.enabled,
         TRUSTED_PROXY => mode == "trusted-proxy",
@@ -108,7 +128,11 @@ pub(super) fn auth_methods_payload(auth_cfg: &AuthConfig) -> Value {
     .map(|row| json!({ "method": row.method, "enabled": row.enabled }))
     .collect();
     json!({
-        "methods": methods
+        "methods": methods,
+        "step_up": {
+            "required_after_primary": auth_cfg.step_up.required_after_primary,
+            "factor": auth_cfg.step_up.factor.as_str(),
+        }
     })
 }
 fn validate_auth_config(
@@ -117,6 +141,12 @@ fn validate_auth_config(
     peer: SocketAddr,
     headers: &HeaderMap,
 ) -> Result<(), String> {
+    if auth.step_up.required_after_primary
+        && matches!(auth.step_up.factor.as_str(), PASSKEY | HARDWARE_KEY)
+        && !auth.webauthn.enabled
+    {
+        return Err("MFA / step-up with passkeys requires WebAuthn/passkeys to be enabled".into());
+    }
     match auth.mode.as_str() {
         "none" => Ok(()),
         "basic" => {

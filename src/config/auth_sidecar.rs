@@ -43,8 +43,10 @@ fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {
     base.ldap = raw.ldap;
     base.trusted_proxy = raw.trusted_proxy;
     base.webauthn = raw.webauthn;
+    base.step_up = raw.step_up;
     base.api_keys = raw.api_keys;
     base.passkeys = raw.passkeys;
+    base.totp_factors = raw.totp_factors;
     base
 }
 
@@ -57,6 +59,9 @@ fn normalize_auth_config(auth: &mut AuthConfig) -> bool {
     }
     if auth.oidc.redirect_path == "/auth/callback" {
         auth.oidc.redirect_path = "/api/auth/callback".to_string();
+        changed = true;
+    }
+    if auth.step_up.normalize() {
         changed = true;
     }
     changed
@@ -86,6 +91,9 @@ pub(super) fn merge_auth_toml(mut base: AuthConfig, seed: &toml::Value) -> AuthC
     }
     if let Some(table) = section_table(seed, "trusted_proxy") {
         merge_trusted_proxy_toml(&mut base, table);
+    }
+    if let Some(table) = section_table(seed, "step_up") {
+        merge_step_up_toml(&mut base, table);
     }
     base
 }
@@ -157,4 +165,21 @@ fn merge_trusted_proxy_toml(base: &mut AuthConfig, table: &toml::value::Table) {
             .filter_map(|value| value.as_str().map(ToOwned::to_owned))
             .collect();
     }
+}
+
+fn merge_step_up_toml(base: &mut AuthConfig, table: &toml::value::Table) {
+    if let Some(value) = table
+        .get("required_after_primary")
+        .and_then(|value| value.as_bool())
+    {
+        base.step_up.required_after_primary = value;
+    }
+    set_string_field(table, "factor", &mut base.step_up.factor);
+    if let Some(value) = table
+        .get("oidc_requires_passkey")
+        .and_then(|value| value.as_bool())
+    {
+        base.step_up.oidc_requires_passkey = value;
+    }
+    base.step_up.normalize();
 }

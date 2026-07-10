@@ -12,6 +12,7 @@ import {
 
 test("authentication separates API keys and PATs", async ({ page }) => {
   await page.goto("/authentication");
+  await expect(page.locator("#auth-current-user")).not.toHaveText("—", { timeout: 10_000 });
   await expect(page.locator('[data-token-kind-option="api-key"]')).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("#token-kind")).toHaveValue("api-key");
   await expect(page.locator("#token-create")).toHaveText("Create API key");
@@ -24,6 +25,33 @@ test("authentication separates API keys and PATs", async ({ page }) => {
   await expect(page.locator("#token-create")).toHaveText("Create PAT");
   await expect(page.locator("#token-table-title")).toHaveText("PATs");
   await expect(page.locator("#t-tokens tbody")).toContainText("No PATs.");
+});
+
+test("MFA step-up policy can be configured from authentication UI", async ({ page, request }) => {
+  const originalBundle = await exportConfigBundle(request);
+  const cleanupBearer = await createAdminBearer(request, "e2e-step-up-cleanup");
+
+  try {
+    await page.goto("/authentication");
+    await page.click('[data-tab="auth"]');
+    await expect(page.locator("#tab-auth")).toBeVisible();
+    await expect(page.locator('[data-i18n="auth.mfa_step_up_title"]')).toHaveText("MFA / step-up");
+    await page.check("#auth-step-up-required");
+    await page.selectOption("#auth-step-up-factor", "totp");
+    await page.click("#auth-save");
+    await expect(page.locator(".toast-success").last()).toContainText("Saved");
+
+    const config = await request.get("/api/auth/config", {
+      headers: { Authorization: cleanupBearer },
+    });
+    await expect(config).toBeOK();
+    expect((await config.json()).settings.step_up).toMatchObject({
+      required_after_primary: true,
+      factor: "totp",
+    });
+  } finally {
+    await restoreConfigBundle(request, originalBundle, { Authorization: cleanupBearer });
+  }
 });
 
 test("API keys and PATs support prefixes, last-use tracking, revocation and scope denial", async ({ request }) => {

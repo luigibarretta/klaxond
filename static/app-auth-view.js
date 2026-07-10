@@ -44,6 +44,11 @@ function renderAuthGuard(settings) {
     const tp = settings.trusted_proxy || {};
     if (!tp.user_header || !(tp.trusted_cidrs || []).length) warnings.push(tr("auth.guard_proxy"));
   }
+  const stepUp = settings.step_up || {};
+  if (stepUp.required_after_primary && ["passkey", "hardware_key"].includes(stepUp.factor || "passkey")) {
+    const webauthn = settings.webauthn || {};
+    if (webauthn.enabled === false) warnings.push(tr("auth.guard_step_up_webauthn"));
+  }
   guard.classList.toggle("hidden", warnings.length === 0);
   guard.textContent = warnings.join(" ");
 }
@@ -142,6 +147,9 @@ function applyWebauthnSettings(settings) {
   $("#auth-webauthn-enabled").checked = webauthn.enabled !== false;
   $("#auth-webauthn-origin").value = webauthn.origin || "";
   $("#auth-webauthn-rp-id").value = webauthn.rp_id || "";
+  const stepUp = settings.step_up || {};
+  $("#auth-step-up-required").checked = !!stepUp.required_after_primary;
+  $("#auth-step-up-factor").value = stepUp.factor || "passkey";
 }
 
 export async function loadAuth() {
@@ -241,6 +249,10 @@ $("#auth-save")?.addEventListener("click", async () => {
       origin: $("#auth-webauthn-origin").value.trim(),
       rp_id: $("#auth-webauthn-rp-id").value.trim(),
     },
+    step_up: {
+      required_after_primary: $("#auth-step-up-required").checked,
+      factor: $("#auth-step-up-factor").value || "passkey",
+    },
   };
   setInlineStatus("#auth-status", tr("status.saving"));
   try {
@@ -254,6 +266,7 @@ $("#auth-save")?.addEventListener("click", async () => {
       markTabDirty("auth", false);
       authData.settings = r.settings;
       _showSubcard(r.settings.mode);
+      applyWebauthnSettings(r.settings);
       renderAuthGuard(r.settings);
     } else {
       notifyError("auth-save", new Error(r.error || "unknown"), { status: "#auth-status" });

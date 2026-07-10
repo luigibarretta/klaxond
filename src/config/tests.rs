@@ -160,6 +160,23 @@ fn auth_sidecar_migrates_legacy_oidc_redirect_without_trimming_issuer_slash() {
 }
 
 #[test]
+fn auth_sidecar_migrates_legacy_oidc_passkey_step_up_flag() {
+    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    clear_runtime_env();
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let mut auth = AuthConfig::default();
+    auth.step_up.oidc_requires_passkey = true;
+    save_auth(&paths, &auth).unwrap();
+
+    let auth = load_auth(&paths, None).unwrap();
+
+    assert!(auth.step_up.required_after_primary);
+    assert_eq!(auth.step_up.factor, "passkey");
+    assert!(!auth.step_up.oidc_requires_passkey);
+}
+
+#[test]
 fn render_sidecar_overrides_toml_seed_after_ui_save() {
     let _guard = TEST_ENV_LOCK.lock().unwrap();
     clear_runtime_env();

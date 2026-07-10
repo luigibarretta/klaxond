@@ -3,6 +3,8 @@ use auth_modules::ldap::{
     default_ldap_timeout_secs, default_ldap_user_filter, default_ldap_username_attr,
     ldap_scope_from_name, ldap_scope_name,
 };
+use auth_modules::methods::{HARDWARE_KEY, PASSKEY, TOTP};
+use auth_modules::step_up::{StepUpFactor, StepUpPolicy};
 use serde::{Deserialize, Serialize};
 use webauthn_rs::prelude::Passkey;
 
@@ -20,9 +22,13 @@ pub struct AuthConfig {
     #[serde(default)]
     pub webauthn: WebauthnConfig,
     #[serde(default)]
+    pub step_up: AuthStepUpConfig,
+    #[serde(default)]
     pub api_keys: Vec<AuthToken>,
     #[serde(default)]
     pub passkeys: Vec<PasskeyRecord>,
+    #[serde(default)]
+    pub totp_factors: Vec<TotpRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -90,6 +96,16 @@ pub struct WebauthnConfig {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AuthStepUpConfig {
+    #[serde(default)]
+    pub required_after_primary: bool,
+    #[serde(default = "default_step_up_factor")]
+    pub factor: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub oidc_requires_passkey: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthToken {
     pub id: String,
     pub name: String,
@@ -120,6 +136,19 @@ pub struct PasskeyRecord {
     pub credential: Passkey,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TotpRecord {
+    pub id: String,
+    pub name: String,
+    pub user_sub: String,
+    pub user_name: String,
+    pub user_email: String,
+    pub secret: String,
+    pub created_at: i64,
+    #[serde(default)]
+    pub last_used_at: Option<i64>,
+}
+
 impl Default for WebauthnConfig {
     fn default() -> Self {
         Self {
@@ -132,6 +161,14 @@ impl Default for WebauthnConfig {
 
 fn default_true() -> bool {
     true
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
+fn default_step_up_factor() -> String {
+    PASSKEY.to_string()
 }
 
 fn default_ldap_scope_name() -> String {
@@ -193,6 +230,54 @@ impl LdapConfig {
     }
 }
 
+impl AuthConfig {
+    pub fn step_up_policy(&self) -> StepUpPolicy {
+        if self.step_up.required_after_primary || self.step_up.oidc_requires_passkey {
+            StepUpPolicy {
+                required_after_primary: true,
+                factor: self.step_up.factor(),
+            }
+        } else {
+            StepUpPolicy::new()
+        }
+    }
+}
+
+impl AuthStepUpConfig {
+    pub fn factor(&self) -> StepUpFactor {
+        match self.factor.as_str() {
+            TOTP => StepUpFactor::Totp,
+            HARDWARE_KEY => StepUpFactor::HardwareKey,
+            _ => StepUpFactor::Passkey,
+        }
+    }
+
+    pub fn normalize(&mut self) -> bool {
+        let mut changed = false;
+        if self.oidc_requires_passkey {
+            self.required_after_primary = true;
+            self.factor = PASSKEY.to_string();
+            self.oidc_requires_passkey = false;
+            changed = true;
+        }
+        if !matches!(self.factor.as_str(), PASSKEY | HARDWARE_KEY | TOTP) {
+            self.factor = PASSKEY.to_string();
+            changed = true;
+        }
+        changed
+    }
+}
+
+impl Default for AuthStepUpConfig {
+    fn default() -> Self {
+        Self {
+            required_after_primary: false,
+            factor: default_step_up_factor(),
+            oidc_requires_passkey: false,
+        }
+    }
+}
+
 fn clean_optional_string(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty() && trimmed != "***SET***").then(|| trimmed.to_string())
@@ -233,8 +318,10 @@ impl Default for AuthConfig {
                 ],
             },
             webauthn: WebauthnConfig::default(),
+            step_up: AuthStepUpConfig::default(),
             api_keys: Vec::new(),
             passkeys: Vec::new(),
+            totp_factors: Vec::new(),
         }
     }
 }

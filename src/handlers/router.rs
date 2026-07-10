@@ -8,12 +8,13 @@ use super::ingest::{api_test, ingest, update_ingest_auth};
 use super::observability::client_log_response;
 use super::passkeys::{
     passkey_delete, passkey_login_finish, passkey_login_start, passkey_register_finish,
-    passkey_register_start,
+    passkey_register_start, passkey_step_up_register_start,
 };
 use super::rules::{
     clear_acks, clear_inhibitions, inhibition_rules_test, policy_simulate, update_inhibition_rules,
     update_schedules,
 };
+use super::step_up::{step_up_totp_setup_confirm, step_up_totp_setup_start, step_up_totp_verify};
 use crate::auth::{self, AuthOutcome, User};
 use crate::state::AppState;
 use axum::body::{Body, Bytes};
@@ -132,6 +133,11 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
         "/api/auth/magic/request" => auth::magic_link_request(state, headers, peer, body),
         "/api/auth/passkey/login/options" => passkey_login_start(state, headers, peer, body),
         "/api/auth/passkey/login/verify" => passkey_login_finish(state, headers, peer, body),
+        "/api/auth/step-up/passkey/register/options" => passkey_step_up_register_start(state, body),
+        "/api/auth/step-up/passkey/register/verify" => passkey_register_finish(state, body),
+        "/api/auth/step-up/totp/setup/start" => step_up_totp_setup_start(state, body),
+        "/api/auth/step-up/totp/setup/confirm" => step_up_totp_setup_confirm(state, body),
+        "/api/auth/step-up/totp/verify" => step_up_totp_verify(state, body),
         "/api/client-log" => client_log_response(body, authed_user.as_ref()),
         "/api/auth/config" => update_auth_config(state, body, authed_user.as_ref(), peer, headers),
         "/api/auth/tokens" => create_auth_token(state, body, authed_user.as_ref()),

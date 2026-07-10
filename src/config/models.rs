@@ -6,8 +6,8 @@ use std::path::PathBuf;
 mod auth;
 
 pub use self::auth::{
-    AuthConfig, AuthToken, BasicAuthConfig, LdapConfig, OidcConfig, PasskeyRecord,
-    TrustedProxyConfig, WebauthnConfig,
+    AuthConfig, AuthStepUpConfig, AuthToken, BasicAuthConfig, LdapConfig, OidcConfig,
+    PasskeyRecord, TotpRecord, TrustedProxyConfig, WebauthnConfig,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
