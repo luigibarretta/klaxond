@@ -1,18 +1,16 @@
-use crate::config::AuthConfig;
 use crate::endpoints;
-use crate::state::AppState;
-use crate::util::{now_epoch_i64, token_urlsafe};
+use crate::util::now_epoch_i64;
 use axum::body::Body;
-use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, COOKIE};
-use axum::http::{HeaderMap, Method, Response, StatusCode};
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
 use constant_time_eq::constant_time_eq;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::net::SocketAddr;
 
 use auth_modules::audit::AuthAuditKind;
 
+mod authenticate;
 mod local;
 mod login;
 mod magic_link;
@@ -24,6 +22,7 @@ mod tests;
 mod tokens;
 mod totp_handlers;
 
+pub use authenticate::authenticate;
 pub use local::{ldap_login_enabled, local_login, sudo};
 pub use login::{login, oidc_callback};
 pub use magic_link::{
@@ -33,14 +32,11 @@ pub use session::{api_logout, issue_session_cookie};
 pub use tokens::{public_token, required_scope, scopes_allow, token_hash};
 pub use totp_handlers::{totp_disable, totp_enable, totp_start};
 
-use local::{authenticate_basic, authenticate_ldap_basic, authenticate_trusted_proxy};
 pub(in crate::auth) use payload::login_payload;
 use rate_limit::{
     auth_rate_key, auth_rate_limited, clear_auth_failures, record_auth_audit_failure,
     record_auth_failure,
 };
-use session::{cookie_values, issue_session, set_session_cookie, verify_session};
-use tokens::{authenticate_api_token, bearer_token, viewer_allows_scope};
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
 pub const MIN_PASSWORD_LEN: usize = auth_modules::password::DEFAULT_MIN_PASSWORD_LENGTH;
@@ -93,127 +89,6 @@ pub enum AuthOutcome {
 
 pub fn is_public(path: &str) -> bool {
     endpoints::is_public(path)
-}
-
-pub async fn authenticate(
-    state: &AppState,
-    headers: &HeaderMap,
-    method: &Method,
-    path: &str,
-    peer: Option<SocketAddr>,
-) -> AuthOutcome {
-    let cfg = state.cfg().auth;
-    if cfg.mode == "none" {
-        return AuthOutcome::Authorized(
-            User {
-                sub: "anonymous".into(),
-                email: String::new(),
-                name: String::new(),
-                groups: vec![],
-                mode: "none".into(),
-                exp: 0,
-                csrf: String::new(),
-                sudo_until: 0,
-                via_authorization: false,
-            },
-            None,
-        );
-    }
-    if let Some(token) = bearer_token(headers) {
-        return authenticate_api_token(state, &token, method, path);
-    }
-    if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
-        for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
-            if let Some(mut user) = verify_session(state, value) {
-                let refresh_cookie = ensure_session_security_fields(state, &cfg, &mut user);
-                return authorize_interactive_user(user, refresh_cookie, method, path);
-            }
-        }
-    }
-    let outcome = match cfg.mode.as_str() {
-        "basic" => {
-            let outcome = authenticate_basic(state, &cfg, headers);
-            match outcome {
-                AuthOutcome::Rejected(resp)
-                    if resp.status() == StatusCode::UNAUTHORIZED && is_ui_fetch(headers) =>
-                {
-                    let location =
-                        format!("/api/auth/login?return_to={}", urlencoding::encode(path));
-                    AuthOutcome::Rejected(auth_required(&location))
-                }
-                other => other,
-            }
-        }
-        "ldap" => {
-            let outcome = authenticate_ldap_basic(state, &cfg, headers).await;
-            match outcome {
-                AuthOutcome::Rejected(resp)
-                    if resp.status() == StatusCode::UNAUTHORIZED && is_ui_fetch(headers) =>
-                {
-                    let location =
-                        format!("/api/auth/login?return_to={}", urlencoding::encode(path));
-                    AuthOutcome::Rejected(auth_required(&location))
-                }
-                other => other,
-            }
-        }
-        "trusted-proxy" => authenticate_trusted_proxy(&cfg, headers, peer),
-        "oidc" => {
-            let location = format!("/api/auth/login?return_to={}", urlencoding::encode(path));
-            if is_ui_fetch(headers) {
-                AuthOutcome::Rejected(auth_required(&location))
-            } else {
-                AuthOutcome::Rejected(redirect(&location))
-            }
-        }
-        _ => AuthOutcome::Rejected(StatusCode::FORBIDDEN.into_response()),
-    };
-    match outcome {
-        AuthOutcome::Authorized(user, cookie) => {
-            authorize_interactive_user(user, cookie, method, path)
-        }
-        rejected => rejected,
-    }
-}
-
-fn ensure_session_security_fields(
-    state: &AppState,
-    cfg: &AuthConfig,
-    user: &mut User,
-) -> Option<String> {
-    let needs_refresh = user.csrf.is_empty();
-    if user.csrf.is_empty() {
-        user.csrf = format!("klx_csrf_{}", token_urlsafe(24));
-    }
-    needs_refresh.then(|| issue_session(state, cfg, user))
-}
-
-fn authorize_interactive_user(
-    user: User,
-    cookie: Option<String>,
-    method: &Method,
-    path: &str,
-) -> AuthOutcome {
-    let required = required_scope(method, path);
-    if user_has_viewer_role(&user) && !viewer_allows_scope(required) {
-        return AuthOutcome::Rejected(
-            (
-                StatusCode::FORBIDDEN,
-                format!("viewer user missing required scope '{required}'"),
-            )
-                .into_response(),
-        );
-    }
-    AuthOutcome::Authorized(user, cookie)
-}
-
-fn user_has_viewer_role(user: &User) -> bool {
-    user.groups.iter().any(|group| {
-        matches!(
-            group.as_str(),
-            "viewer" | "klaxond-viewer" | "klaxond:viewer" | "viewer:*"
-        )
-    })
 }
 
 fn is_ui_fetch(headers: &HeaderMap) -> bool {

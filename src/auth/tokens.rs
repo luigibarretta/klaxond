@@ -21,14 +21,7 @@ pub(super) fn authenticate_api_token(
     let cfg = state.cfg().auth;
     let hash = token_hash(token);
     let now = now_epoch_i64();
-    let Some(record) = cfg.api_keys.iter().find(|record| {
-        record.enabled
-            && record
-                .expires_at
-                .map(|expires_at| expires_at > now)
-                .unwrap_or(true)
-            && constant_time_eq(record.token_hash.as_bytes(), hash.as_bytes())
-    }) else {
+    let Some(record) = valid_token_record(&cfg.api_keys, &hash, now) else {
         return AuthOutcome::Rejected(
             (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response(),
         );
@@ -44,53 +37,74 @@ pub(super) fn authenticate_api_token(
         );
     }
     let record = record.clone();
-    let should_persist_last_used = record
+    persist_token_last_used(state, &record, &hash, now);
+
+    AuthOutcome::Authorized(token_user(record), None)
+}
+
+fn valid_token_record<'a>(records: &'a [AuthToken], hash: &str, now: i64) -> Option<&'a AuthToken> {
+    records.iter().find(|record| {
+        record.enabled
+            && !token_is_expired(record, now)
+            && constant_time_eq(record.token_hash.as_bytes(), hash.as_bytes())
+    })
+}
+
+fn token_is_expired(record: &AuthToken, now: i64) -> bool {
+    record
+        .expires_at
+        .map(|expires_at| expires_at <= now)
+        .unwrap_or(false)
+}
+
+fn last_used_update_due(record: &AuthToken, now: i64) -> bool {
+    record
         .last_used_at
         .map(|last| now.saturating_sub(last) >= TOKEN_LAST_USED_PERSIST_INTERVAL_SECS)
-        .unwrap_or(true);
-    if should_persist_last_used {
-        let record_id = record.id.clone();
-        if let Err(err) = state.with_config_write_lock(|| {
-            let mut cfg = state.cfg();
-            if let Some(stored) = cfg
-                .auth
-                .api_keys
-                .iter_mut()
-                .find(|stored| stored.id == record_id && stored.token_hash == hash)
-            {
-                let still_due = stored
-                    .last_used_at
-                    .map(|last| now.saturating_sub(last) >= TOKEN_LAST_USED_PERSIST_INTERVAL_SECS)
-                    .unwrap_or(true);
-                if !still_due {
-                    return;
-                }
-                stored.last_used_at = Some(now);
-                if let Err(err) = save_auth(&state.paths, &cfg.auth) {
-                    tracing::warn!("failed to persist auth token last_used_at: {err}");
-                    return;
-                }
-                state.replace_config_preserving_runtime(cfg);
-            }
-        }) {
-            tracing::warn!("failed to update auth token last_used_at: {err}");
-        }
+        .unwrap_or(true)
+}
+
+fn persist_token_last_used(state: &AppState, record: &AuthToken, hash: &str, now: i64) {
+    if !last_used_update_due(record, now) {
+        return;
     }
 
-    AuthOutcome::Authorized(
-        User {
-            sub: format!("token:{}", record.name),
-            email: String::new(),
-            name: record.name.clone(),
-            groups: record.scopes.clone(),
-            mode: record.kind.clone(),
-            exp: record.expires_at.unwrap_or(0),
-            csrf: String::new(),
-            sudo_until: 0,
-            via_authorization: true,
-        },
-        None,
-    )
+    let record_id = record.id.clone();
+    if let Err(err) = state.with_config_write_lock(|| {
+        let mut cfg = state.cfg();
+        if let Some(stored) = cfg
+            .auth
+            .api_keys
+            .iter_mut()
+            .find(|stored| stored.id == record_id && stored.token_hash == hash)
+        {
+            if !last_used_update_due(stored, now) {
+                return;
+            }
+            stored.last_used_at = Some(now);
+            if let Err(err) = save_auth(&state.paths, &cfg.auth) {
+                tracing::warn!("failed to persist auth token last_used_at: {err}");
+                return;
+            }
+            state.replace_config_preserving_runtime(cfg);
+        }
+    }) {
+        tracing::warn!("failed to update auth token last_used_at: {err}");
+    }
+}
+
+fn token_user(record: AuthToken) -> User {
+    User {
+        sub: format!("token:{}", record.name),
+        email: String::new(),
+        name: record.name,
+        groups: record.scopes,
+        mode: record.kind,
+        exp: record.expires_at.unwrap_or(0),
+        csrf: String::new(),
+        sudo_until: 0,
+        via_authorization: true,
+    }
 }
 
 pub(super) fn bearer_token(headers: &HeaderMap) -> Option<String> {

@@ -75,106 +75,86 @@ pub(super) fn merge_auth_toml(mut base: AuthConfig, seed: &toml::Value) -> AuthC
     {
         base.session_timeout_hours = h.max(1) as u64;
     }
-    for (section, setter) in [
-        ("basic", 0_usize),
-        ("oidc", 1_usize),
-        ("ldap", 2_usize),
-        ("trusted_proxy", 3_usize),
-    ] {
-        let Some(t) = seed.get(section).and_then(|v| v.as_table()) else {
-            continue;
-        };
-        match setter {
-            0 => {
-                if let Some(v) = t.get("username").and_then(|v| v.as_str()) {
-                    base.basic.username = v.to_string();
-                }
-                if let Some(v) = t.get("password_hash").and_then(|v| v.as_str()) {
-                    base.basic.password_hash = v.to_string();
-                }
-                if let Some(v) = t.get("realm").and_then(|v| v.as_str()) {
-                    base.basic.realm = v.to_string();
-                }
-            }
-            1 => {
-                if let Some(v) = t.get("provider").and_then(|v| v.as_str()) {
-                    base.oidc.provider = v.to_string();
-                }
-                if let Some(v) = t.get("issuer").and_then(|v| v.as_str()) {
-                    base.oidc.issuer = v.to_string();
-                }
-                if let Some(v) = t.get("client_id").and_then(|v| v.as_str()) {
-                    base.oidc.client_id = v.to_string();
-                }
-                if let Some(v) = t.get("client_secret").and_then(|v| v.as_str()) {
-                    base.oidc.client_secret = v.to_string();
-                }
-                if let Some(v) = t.get("scopes").and_then(|v| v.as_str()) {
-                    base.oidc.scopes = v.to_string();
-                }
-                if let Some(v) = t.get("required_group").and_then(|v| v.as_str()) {
-                    base.oidc.required_group = v.to_string();
-                }
-                if let Some(v) = t.get("redirect_path").and_then(|v| v.as_str()) {
-                    base.oidc.redirect_path = v.to_string();
-                }
-            }
-            2 => {
-                if let Some(v) = t.get("url").and_then(|v| v.as_str()) {
-                    base.ldap.url = v.to_string();
-                }
-                if let Some(v) = t.get("bind_dn_template").and_then(|v| v.as_str()) {
-                    base.ldap.bind_dn_template = v.to_string();
-                }
-                if let Some(v) = t.get("service_bind_dn").and_then(|v| v.as_str()) {
-                    base.ldap.service_bind_dn = v.to_string();
-                }
-                if let Some(v) = t.get("service_bind_password").and_then(|v| v.as_str()) {
-                    base.ldap.service_bind_password = v.to_string();
-                }
-                if let Some(v) = t.get("base_dn").and_then(|v| v.as_str()) {
-                    base.ldap.base_dn = v.to_string();
-                }
-                if let Some(v) = t.get("user_filter").and_then(|v| v.as_str()) {
-                    base.ldap.user_filter = v.to_string();
-                }
-                if let Some(v) = t.get("scope").and_then(|v| v.as_str()) {
-                    base.ldap.scope = v.to_string();
-                }
-                if let Some(v) = t.get("username_attr").and_then(|v| v.as_str()) {
-                    base.ldap.username_attr = v.to_string();
-                }
-                if let Some(v) = t.get("email_attr").and_then(|v| v.as_str()) {
-                    base.ldap.email_attr = v.to_string();
-                }
-                if let Some(v) = t.get("name_attr").and_then(|v| v.as_str()) {
-                    base.ldap.name_attr = v.to_string();
-                }
-                if let Some(v) = t.get("groups_attr").and_then(|v| v.as_str()) {
-                    base.ldap.groups_attr = v.to_string();
-                }
-                if let Some(v) = t.get("timeout_secs").and_then(|v| v.as_integer()) {
-                    base.ldap.timeout_secs = v.clamp(1, 60) as u64;
-                }
-            }
-            _ => {
-                if let Some(v) = t.get("user_header").and_then(|v| v.as_str()) {
-                    base.trusted_proxy.user_header = v.to_string();
-                }
-                if let Some(v) = t.get("email_header").and_then(|v| v.as_str()) {
-                    base.trusted_proxy.email_header = v.to_string();
-                }
-                if let Some(v) = t.get("groups_header").and_then(|v| v.as_str()) {
-                    base.trusted_proxy.groups_header = v.to_string();
-                }
-                if let Some(arr) = t.get("trusted_cidrs").and_then(|v| v.as_array()) {
-                    base.trusted_proxy.trusted_cidrs = arr
-                        .iter()
-                        .filter_map(|x| x.as_str().map(ToOwned::to_owned))
-                        .collect();
-                }
-            }
-        }
+    if let Some(table) = section_table(seed, "basic") {
+        merge_basic_toml(&mut base, table);
+    }
+    if let Some(table) = section_table(seed, "oidc") {
+        merge_oidc_toml(&mut base, table);
+    }
+    if let Some(table) = section_table(seed, "ldap") {
+        merge_ldap_toml(&mut base, table);
+    }
+    if let Some(table) = section_table(seed, "trusted_proxy") {
+        merge_trusted_proxy_toml(&mut base, table);
     }
     base
+}
+
+fn section_table<'a>(seed: &'a toml::Value, section: &str) -> Option<&'a toml::value::Table> {
+    seed.get(section).and_then(|value| value.as_table())
+}
+
+fn set_string_field(table: &toml::value::Table, key: &str, target: &mut String) {
+    if let Some(value) = table.get(key).and_then(|value| value.as_str()) {
+        *target = value.to_string();
+    }
+}
+
+fn merge_basic_toml(base: &mut AuthConfig, table: &toml::value::Table) {
+    set_string_field(table, "username", &mut base.basic.username);
+    set_string_field(table, "password_hash", &mut base.basic.password_hash);
+    set_string_field(table, "realm", &mut base.basic.realm);
+}
+
+fn merge_oidc_toml(base: &mut AuthConfig, table: &toml::value::Table) {
+    set_string_field(table, "provider", &mut base.oidc.provider);
+    set_string_field(table, "issuer", &mut base.oidc.issuer);
+    set_string_field(table, "client_id", &mut base.oidc.client_id);
+    set_string_field(table, "client_secret", &mut base.oidc.client_secret);
+    set_string_field(table, "scopes", &mut base.oidc.scopes);
+    set_string_field(table, "required_group", &mut base.oidc.required_group);
+    set_string_field(table, "redirect_path", &mut base.oidc.redirect_path);
+}
+
+fn merge_ldap_toml(base: &mut AuthConfig, table: &toml::value::Table) {
+    set_string_field(table, "url", &mut base.ldap.url);
+    set_string_field(table, "bind_dn_template", &mut base.ldap.bind_dn_template);
+    set_string_field(table, "service_bind_dn", &mut base.ldap.service_bind_dn);
+    set_string_field(
+        table,
+        "service_bind_password",
+        &mut base.ldap.service_bind_password,
+    );
+    set_string_field(table, "base_dn", &mut base.ldap.base_dn);
+    set_string_field(table, "user_filter", &mut base.ldap.user_filter);
+    set_string_field(table, "scope", &mut base.ldap.scope);
+    set_string_field(table, "username_attr", &mut base.ldap.username_attr);
+    set_string_field(table, "email_attr", &mut base.ldap.email_attr);
+    set_string_field(table, "name_attr", &mut base.ldap.name_attr);
+    set_string_field(table, "groups_attr", &mut base.ldap.groups_attr);
+    if let Some(value) = table
+        .get("timeout_secs")
+        .and_then(|value| value.as_integer())
+    {
+        base.ldap.timeout_secs = value.clamp(1, 60) as u64;
+    }
+}
+
+fn merge_trusted_proxy_toml(base: &mut AuthConfig, table: &toml::value::Table) {
+    set_string_field(table, "user_header", &mut base.trusted_proxy.user_header);
+    set_string_field(table, "email_header", &mut base.trusted_proxy.email_header);
+    set_string_field(
+        table,
+        "groups_header",
+        &mut base.trusted_proxy.groups_header,
+    );
+    if let Some(values) = table
+        .get("trusted_cidrs")
+        .and_then(|value| value.as_array())
+    {
+        base.trusted_proxy.trusted_cidrs = values
+            .iter()
+            .filter_map(|value| value.as_str().map(ToOwned::to_owned))
+            .collect();
+    }
 }

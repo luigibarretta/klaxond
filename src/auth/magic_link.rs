@@ -1,8 +1,8 @@
-use super::session::sanitize_return_to;
+use super::session::{issue_session, sanitize_return_to};
 use super::{
-    AuthAuditKind, AuthConfig, User, issue_session, json_response, login_payload,
-    record_auth_audit_failure, redirect,
+    AuthAuditKind, User, json_response, login_payload, record_auth_audit_failure, redirect,
 };
+use crate::config::AuthConfig;
 use crate::state::{AppState, PendingMagicLink, lock_mutex};
 use auth_modules::errors;
 use auth_modules::one_time_token::{self, OneTimeTokenPolicy};

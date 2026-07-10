@@ -1,8 +1,7 @@
-use super::session::sanitize_return_to;
-use super::{
-    AUTH_SESSION_COOKIE, User, cookie_values, issue_session, magic_link_enabled, redirect,
-    set_session_cookie, verify_session,
+use super::session::{
+    cookie_values, issue_session, sanitize_return_to, set_session_cookie, verify_session,
 };
+use super::{AUTH_SESSION_COOKIE, User, magic_link_enabled, redirect};
 use crate::state::{AppState, PendingOidcState, lock_mutex};
 use crate::util::token_urlsafe;
 use auth_modules::oidc::{OidcClientConfig, async_client as oidc_client};

@@ -1,8 +1,8 @@
 use super::session::sanitize_return_to;
+use super::session::{issue_session, set_session_cookie};
 use super::{
-    AuthOutcome, User, auth_rate_key, auth_rate_limited, clear_auth_failures, issue_session,
-    json_response, login_payload, record_auth_failure, redirect, set_session_cookie,
-    sudo_window_seconds, verify_password,
+    AuthOutcome, User, auth_rate_key, auth_rate_limited, clear_auth_failures, json_response,
+    login_payload, record_auth_failure, redirect, sudo_window_seconds, verify_password,
 };
 use crate::config::AuthConfig;
 use crate::state::AppState;

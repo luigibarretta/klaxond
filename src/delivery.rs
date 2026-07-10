@@ -22,8 +22,7 @@ pub async fn deliver(
     labels: HashMap<String, String>,
     source: &str,
 ) -> (bool, String) {
-    let mut labels = labels;
-    labels.insert("severity".into(), severity.to_string());
+    let labels = delivery_labels(severity, labels);
     let cfg = state.cfg();
     let (policy, reason) = pick_policy(&cfg, &labels);
     tracing::info!(
@@ -33,17 +32,37 @@ pub async fn deliver(
         policy.tiers.len()
     );
 
+    attach_rendered_image(state, &cfg, &mut parts).await;
+
+    let started = now_epoch();
+    let outcome = dispatch_policy(state, severity, &parts, policy, with_cascade).await;
+    audit_log_delivery(
+        state,
+        DeliveryAudit {
+            severity,
+            parts: &parts,
+            labels: &labels,
+            source,
+            tiers_attempted: &outcome.attempted,
+            ok: outcome.ok,
+            channel: &outcome.channel,
+            started_at: started,
+        },
+    );
+    (outcome.ok, outcome.channel)
+}
+
+fn delivery_labels(severity: &str, mut labels: HashMap<String, String>) -> HashMap<String, String> {
+    labels.insert("severity".into(), severity.to_string());
+    labels
+}
+
+async fn attach_rendered_image(state: &AppState, cfg: &RuntimeConfig, parts: &mut Parts) {
     if !cfg.grafana_render_base.is_empty()
         && let Some(slug) = parts.render_slug.as_deref()
         && parts.attach_url.is_none()
-        && let Some(png) = render_alert_image(
-            state,
-            &cfg,
-            slug,
-            &parts.render_instance,
-            parts.render_panel,
-        )
-        .await
+        && let Some(png) =
+            render_alert_image(state, cfg, slug, &parts.render_instance, parts.render_panel).await
     {
         let tok = token_urlsafe(12);
         let url = format!("{}/img/{tok}.png", cfg.public_url);
@@ -56,115 +75,96 @@ pub async fn deliver(
         );
         parts.attach_url = Some(url);
     }
+}
 
-    let started = now_epoch();
-    let mut attempted = Vec::new();
-
+async fn dispatch_policy(
+    state: &AppState,
+    severity: &str,
+    parts: &Parts,
+    policy: DeliveryPolicy,
+    with_cascade: bool,
+) -> DeliveryOutcome {
     if policy.mode == "broadcast" {
-        let mut succeeded = Vec::new();
-        for tier in &policy.tiers {
-            if post_tier(state, severity, &parts, tier).await {
-                succeeded.push(tier.name.clone());
-            }
-            attempted.push(tier.name.clone());
-        }
-        let ok = !succeeded.is_empty();
-        let channel = if ok {
-            succeeded.join("+")
-        } else {
-            "broadcast-all-failed".into()
-        };
-        audit_log_delivery(
-            state,
-            DeliveryAudit {
-                severity,
-                parts: &parts,
-                labels: &labels,
-                source,
-                tiers_attempted: &attempted,
-                ok,
-                channel: &channel,
-                started_at: started,
-            },
-        );
-        return (ok, channel);
+        return deliver_broadcast(state, severity, parts, &policy).await;
     }
+    deliver_cascade(state, severity, parts, policy, with_cascade).await
+}
 
+async fn deliver_broadcast(
+    state: &AppState,
+    severity: &str,
+    parts: &Parts,
+    policy: &DeliveryPolicy,
+) -> DeliveryOutcome {
+    let mut attempted = Vec::new();
+    let mut succeeded = Vec::new();
+    for tier in &policy.tiers {
+        if post_tier(state, severity, parts, tier).await {
+            succeeded.push(tier.name.clone());
+        }
+        attempted.push(tier.name.clone());
+    }
+    if succeeded.is_empty() {
+        DeliveryOutcome::failed("broadcast-all-failed", attempted)
+    } else {
+        DeliveryOutcome::success(succeeded.join("+"), attempted)
+    }
+}
+
+async fn deliver_cascade(
+    state: &AppState,
+    severity: &str,
+    parts: &Parts,
+    policy: DeliveryPolicy,
+    with_cascade: bool,
+) -> DeliveryOutcome {
     let tiers = if policy.tiers.is_empty() {
         default_tiers()
     } else {
         policy.tiers
     };
+    let mut attempted = Vec::new();
     let first = tiers.first().cloned();
     if let Some(first) = first {
         attempted.push(first.name.clone());
-        if post_tier(state, severity, &parts, &first).await {
-            audit_log_delivery(
-                state,
-                DeliveryAudit {
-                    severity,
-                    parts: &parts,
-                    labels: &labels,
-                    source,
-                    tiers_attempted: &attempted,
-                    ok: true,
-                    channel: &first.name,
-                    started_at: started,
-                },
-            );
-            return (true, first.name);
+        if post_tier(state, severity, parts, &first).await {
+            return DeliveryOutcome::success(first.name, attempted);
         }
         if !with_cascade {
-            let channel = format!("{}-failed", first.name);
-            audit_log_delivery(
-                state,
-                DeliveryAudit {
-                    severity,
-                    parts: &parts,
-                    labels: &labels,
-                    source,
-                    tiers_attempted: &attempted,
-                    ok: false,
-                    channel: &channel,
-                    started_at: started,
-                },
-            );
-            return (false, channel);
+            return DeliveryOutcome::failed(format!("{}-failed", first.name), attempted);
         }
         for tier in tiers.iter().skip(1) {
             attempted.push(tier.name.clone());
-            if post_tier(state, severity, &parts, tier).await {
-                audit_log_delivery(
-                    state,
-                    DeliveryAudit {
-                        severity,
-                        parts: &parts,
-                        labels: &labels,
-                        source,
-                        tiers_attempted: &attempted,
-                        ok: true,
-                        channel: &tier.name,
-                        started_at: started,
-                    },
-                );
-                return (true, tier.name.clone());
+            if post_tier(state, severity, parts, tier).await {
+                return DeliveryOutcome::success(tier.name.clone(), attempted);
             }
         }
     }
-    audit_log_delivery(
-        state,
-        DeliveryAudit {
-            severity,
-            parts: &parts,
-            labels: &labels,
-            source,
-            tiers_attempted: &attempted,
+    DeliveryOutcome::failed("all-failed", attempted)
+}
+
+struct DeliveryOutcome {
+    ok: bool,
+    channel: String,
+    attempted: Vec<String>,
+}
+
+impl DeliveryOutcome {
+    fn success(channel: impl Into<String>, attempted: Vec<String>) -> Self {
+        Self {
+            ok: true,
+            channel: channel.into(),
+            attempted,
+        }
+    }
+
+    fn failed(channel: impl Into<String>, attempted: Vec<String>) -> Self {
+        Self {
             ok: false,
-            channel: "all-failed",
-            started_at: started,
-        },
-    );
-    (false, "all-failed".into())
+            channel: channel.into(),
+            attempted,
+        }
+    }
 }
 
 async fn post_tier(state: &AppState, severity: &str, parts: &Parts, tier: &Tier) -> bool {

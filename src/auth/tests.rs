@@ -5,7 +5,7 @@ use super::magic_link::{
 use super::session::{cookie_values, sanitize_return_to};
 use super::*;
 use crate::config::Paths;
-use crate::state::{PendingMagicLink, lock_mutex};
+use crate::state::{AppState, PendingMagicLink, lock_mutex};
 use auth_modules::one_time_token;
 use axum::body::Bytes;
 use axum::http::header::{HOST, SET_COOKIE, WWW_AUTHENTICATE};
