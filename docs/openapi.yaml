@@ -12,6 +12,9 @@ info:
     Sensitive browser mutations can also return `428 Precondition Required`
     with `X-Klaxond-Reauth: required`; call `/api/auth/reauth` or complete passkey
     reauthentication before retrying.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
 servers:
   - url: /
 tags:
@@ -46,6 +49,8 @@ paths:
             application/yaml:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/openapi.yaml:
     get:
       tags: [Public]
@@ -59,6 +64,8 @@ paths:
             application/yaml:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /swagger:
     get:
       tags: [Public]
@@ -73,6 +80,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/docs:
     get:
       tags: [Public]
@@ -86,6 +95,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/swagger:
     get:
       tags: [Public]
@@ -99,6 +110,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/swagger-ui:
     get:
       tags: [Public]
@@ -112,6 +125,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /legal:
     get:
       tags: [Public]
@@ -121,6 +136,8 @@ paths:
       responses:
         "302":
           description: Redirects to `/legal/privacy`.
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /legal/privacy:
     get:
       tags: [Public]
@@ -134,6 +151,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /legal/accessibility:
     get:
       tags: [Public]
@@ -147,6 +166,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /legal/terms:
     get:
       tags: [Public]
@@ -160,6 +181,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /legal/cookies:
     get:
       tags: [Public]
@@ -173,6 +196,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /legal/notice:
     get:
       tags: [Public]
@@ -186,6 +211,8 @@ paths:
             text/html:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /healthz:
     get:
       tags: [Public]
@@ -200,6 +227,8 @@ paths:
               schema:
                 type: string
                 example: OK
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /metrics:
     get:
       tags: [Public]
@@ -213,6 +242,8 @@ paths:
             text/plain:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /webhook/{severity}:
     post:
       tags: [Ingest]
@@ -424,6 +455,8 @@ paths:
                 type: string
         "302":
           description: Redirect to OIDC or an already authenticated return URL.
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/methods:
     get:
       tags: [Auth]
@@ -451,6 +484,8 @@ paths:
                           enum: [password, oidc, totp, passkey, hardware_key, trusted_proxy, ldap, api_token, magic_link]
                         enabled:
                           type: boolean
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/password-policy:
     get:
       tags: [Auth]
@@ -465,6 +500,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PasswordPolicy"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/local/login:
     post:
       tags: [Auth]
@@ -611,6 +648,8 @@ paths:
                 properties:
                   ok:
                     type: boolean
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/me:
     get:
       tags: [Auth]
@@ -618,6 +657,7 @@ paths:
       summary: Return the current user, auth mode, scopes and browser CSRF token.
       security:
         - bearerAuth: []
+        - basicAuth: []
         - sessionCookie: []
       responses:
         "200":
@@ -665,6 +705,8 @@ paths:
       responses:
         "200":
           description: Passkey login HTML.
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/passkey/login/options:
     post:
       tags: [Auth]
@@ -687,6 +729,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/passkey/login/verify:
     post:
       tags: [Auth]
@@ -706,6 +750,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/LoginResponse"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/status:
     get:
       tags: [Operations]
@@ -721,6 +767,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StatusPayload"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/setup-status:
     get:
       tags: [Operations]
@@ -736,6 +784,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SetupStatus"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/channel-test-matrix:
     get:
       tags: [Operations]
@@ -751,6 +801,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/logs:
     get:
       tags: [Operations]
@@ -771,6 +823,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaginatedLogs"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/audit:
     get:
       tags: [Operations]
@@ -790,6 +844,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PaginatedAudit"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/client-log:
     post:
       tags: [Operations]
@@ -847,6 +903,8 @@ paths:
                     items:
                       $ref: "#/components/schemas/Delivery"
                   - $ref: "#/components/schemas/PaginatedDeliveries"
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/config:
     get:
       tags: [Auth]
@@ -862,6 +920,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Auth]
       operationId: updateAuthConfig
@@ -900,6 +960,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Auth]
       operationId: createToken
@@ -1015,6 +1077,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/auth/passkey/register/options:
     post:
       tags: [Auth]
@@ -1095,6 +1159,8 @@ paths:
             application/toml:
               schema:
                 type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/config/export:
     get:
       tags: [Config]
@@ -1128,6 +1194,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/config/import-preview:
     post:
       tags: [Config]
@@ -1194,6 +1262,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Routing]
       operationId: updateChannelConfig
@@ -1228,6 +1298,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Routing]
       operationId: updateNtfyTopics
@@ -1262,6 +1334,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Routing]
       operationId: updateIngestAuth
@@ -1296,6 +1370,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Routing]
       operationId: updateDeliveryConfig
@@ -1330,6 +1406,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Routing]
       operationId: updateCascadeConfig
@@ -1387,6 +1465,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Policy]
       operationId: updateDedupConfig
@@ -1421,6 +1501,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/inhibitions:
     get:
       tags: [Policy]
@@ -1436,6 +1518,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/inhibition-rules:
     get:
       tags: [Policy]
@@ -1451,6 +1535,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Policy]
       operationId: updateInhibitionRules
@@ -1491,6 +1577,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/inhibitions/clear:
     post:
       tags: [Policy]
@@ -1520,6 +1608,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Policy]
       operationId: updateSchedules
@@ -1554,6 +1644,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/acks/clear:
     post:
       tags: [Policy]
@@ -1614,6 +1706,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/render-config:
     get:
       tags: [Render]
@@ -1629,6 +1723,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
     post:
       tags: [Render]
       operationId: updateRenderConfig
@@ -1674,6 +1770,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/test/{severity}:
     post:
       tags: [Operations]
@@ -1698,6 +1796,8 @@ paths:
             application/json:
               schema:
                 type: object
+        "4XX":
+          $ref: "#/components/responses/ClientError"
 
 components:
   securitySchemes:
@@ -1790,6 +1890,12 @@ components:
         application/json:
           schema:
             type: object
+        text/plain:
+          schema:
+            type: string
+    ClientError:
+      description: Generic client-side error, including invalid input, missing credentials or authorization failure depending on the active auth mode.
+      content:
         text/plain:
           schema:
             type: string

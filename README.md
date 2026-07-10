@@ -616,10 +616,11 @@ Redocly checks the quality and consistency of the OpenAPI document; it does not
 replace backend tests, contract behavior tests, or the custom route/spec coverage
 checks in the Rust test suite.
 
-The Redocly config keeps license metadata, 2xx/4xx response completeness and
-unused component cleanup as explicit warnings: they stay visible locally and in
-CI without blocking changes that only improve the contract incrementally.
-Redocly errors still fail the pipeline.
+The Redocly config keeps license metadata, 4xx response completeness, unused
+component cleanup and a custom success-or-redirect response rule as explicit
+warnings. Redirect-only routes such as auth callbacks are valid in Klaxond, so
+the generic Redocly 2xx-only rule is replaced with a repo-local rule that accepts
+documented `2XX` or `3XX` responses. Redocly errors still fail the pipeline.
 
 Security checks include an RSA timing-advisory guard. `cargo audit` currently
 reports `RUSTSEC-2023-0071` for the transitive RustCrypto `rsa` crate, which has

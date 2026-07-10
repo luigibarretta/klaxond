@@ -11,5 +11,12 @@ rules:
   no-unused-components: warn
   security-defined: warn
   info-license: warn
-  operation-2xx-response: warn
+  operation-2xx-response: off
   operation-4xx-response: warn
+  rule/success-or-redirect-response:
+    subject:
+      type: Responses
+    assertions:
+      requireAny: ["200", "201", "202", "204", "2XX", "301", "302", "303", "307", "308", "3XX"]
+    severity: warn
+    message: Every operation should document a success or redirect response.
