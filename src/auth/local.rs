@@ -1,6 +1,6 @@
 use super::session::sanitize_return_to;
 use super::session::{issue_session, set_session_cookie};
-use super::step_up::{redirect_location_after_primary, second_factor_satisfied};
+use super::step_up::{primary_step_up_response, redirect_location_after_primary};
 use super::{
     AuthOutcome, User, auth_rate_key, auth_rate_limited, clear_auth_failures, json_response,
     login_payload, record_auth_failure, redirect, sudo_window_seconds, verify_password,
@@ -23,6 +23,7 @@ pub(super) fn authenticate_basic(
     state: &AppState,
     cfg: &AuthConfig,
     headers: &HeaderMap,
+    return_to: &str,
 ) -> AuthOutcome {
     if let Some(auth) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok())
         && let Some(raw) = auth.strip_prefix("Basic ")
@@ -56,8 +57,15 @@ pub(super) fn authenticate_basic(
                 String::new()
             },
         };
-        if !second_factor_satisfied(cfg, &u, PrimaryAuthMethod::Password) {
-            return AuthOutcome::Rejected(basic_challenge(&cfg.basic.realm));
+        if let Some(resp) = primary_step_up_response(
+            state,
+            cfg,
+            &u,
+            return_to,
+            PrimaryAuthMethod::Password,
+            headers,
+        ) {
+            return AuthOutcome::Rejected(resp);
         }
         let cookie = issue_session(state, cfg, &mut u);
         return AuthOutcome::Authorized(u, Some(cookie));
@@ -69,6 +77,7 @@ pub(super) async fn authenticate_ldap_basic(
     state: &AppState,
     cfg: &AuthConfig,
     headers: &HeaderMap,
+    return_to: &str,
 ) -> AuthOutcome {
     let Some((username, password)) = basic_credentials(headers) else {
         return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
@@ -95,8 +104,15 @@ pub(super) async fn authenticate_ldap_basic(
     clear_auth_failures(state, &rate_key);
     let mut user = ldap_user(identity);
     user.sudo_until = now_epoch_i64() + sudo_window_seconds();
-    if !second_factor_satisfied(cfg, &user, PrimaryAuthMethod::Ldap) {
-        return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
+    if let Some(resp) = primary_step_up_response(
+        state,
+        cfg,
+        &user,
+        return_to,
+        PrimaryAuthMethod::Ldap,
+        headers,
+    ) {
+        return AuthOutcome::Rejected(resp);
     }
     let cookie = issue_session(state, cfg, &mut user);
     AuthOutcome::Authorized(user, Some(cookie))

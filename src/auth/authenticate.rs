@@ -83,11 +83,11 @@ async fn authenticate_interactive_mode(
 ) -> AuthOutcome {
     match cfg.mode.as_str() {
         "basic" => {
-            let outcome = authenticate_basic(state, cfg, headers);
+            let outcome = authenticate_basic(state, cfg, headers, path);
             ui_fetch_login_on_unauthorized(outcome, headers, path)
         }
         "ldap" => {
-            let outcome = authenticate_ldap_basic(state, cfg, headers).await;
+            let outcome = authenticate_ldap_basic(state, cfg, headers, path).await;
             ui_fetch_login_on_unauthorized(outcome, headers, path)
         }
         "trusted-proxy" => trusted_proxy_with_step_up(state, cfg, headers, path, peer),
@@ -133,7 +133,11 @@ fn ui_fetch_login_on_unauthorized(
         AuthOutcome::Rejected(resp)
             if resp.status() == StatusCode::UNAUTHORIZED && is_ui_fetch(headers) =>
         {
-            AuthOutcome::Rejected(auth_required(&login_location(path)))
+            if resp.headers().contains_key("X-Klaxond-Login") {
+                AuthOutcome::Rejected(resp)
+            } else {
+                AuthOutcome::Rejected(auth_required(&login_location(path)))
+            }
         }
         other => other,
     }

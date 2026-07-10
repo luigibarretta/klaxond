@@ -1,8 +1,10 @@
-use super::User;
+use super::{User, auth_required, is_ui_fetch, redirect};
 use crate::config::AuthConfig;
 use crate::state::{AppState, PendingStepUpState, lock_mutex};
 use crate::util::token_urlsafe;
 use auth_modules::step_up::{PrimaryAuthMethod, StepUpFactor, StepUpRequirement};
+use axum::body::Body;
+use axum::http::{HeaderMap, Response};
 
 const STEP_UP_TTL_SECONDS: f64 = 600.0;
 
@@ -26,16 +28,24 @@ pub(crate) fn redirect_location_after_primary(
     begin_step_up(state, user, return_to, requirement)
 }
 
-pub(super) fn second_factor_satisfied(
-    auth: &AuthConfig,
+pub(super) fn primary_step_up_response(
+    state: &AppState,
+    cfg: &AuthConfig,
     user: &User,
+    return_to: &str,
     primary: PrimaryAuthMethod,
-) -> bool {
-    let requirement = auth.step_up_policy().requirement_after_primary(primary);
-    !requirement.required
-        || requirement
-            .factor
-            .is_some_and(|factor| user.second_factor == factor.as_str())
+    headers: &HeaderMap,
+) -> Option<Response<Body>> {
+    redirect_location_after_primary(state, cfg, user.clone(), return_to, primary)
+        .map(|location| interactive_step_up_response(headers, &location))
+}
+
+fn interactive_step_up_response(headers: &HeaderMap, location: &str) -> Response<Body> {
+    if is_ui_fetch(headers) {
+        auth_required(location)
+    } else {
+        redirect(location)
+    }
 }
 
 #[derive(Clone, Debug)]

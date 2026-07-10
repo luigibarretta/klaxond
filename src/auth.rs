@@ -19,7 +19,11 @@ mod rate_limit;
 mod session;
 mod step_up;
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_step_up;
 mod tokens;
 mod totp_handlers;
 

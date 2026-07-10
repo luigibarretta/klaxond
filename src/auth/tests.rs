@@ -3,35 +3,14 @@ use super::magic_link::{
     MagicLinkError, consume_magic_link, issue_magic_link, magic_link_ttl_seconds,
 };
 use super::session::{cookie_values, sanitize_return_to};
+use super::test_support::{temp_paths, test_user};
 use super::*;
-use crate::config::Paths;
 use crate::state::{AppState, PendingMagicLink, lock_mutex};
 use auth_modules::one_time_token;
-use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::Bytes;
 use axum::http::header::{HOST, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
-use std::path::PathBuf;
 use tempfile::TempDir;
-use url::Url;
-
-fn temp_paths(tmp: &TempDir) -> Paths {
-    let data = tmp.path();
-    Paths {
-        config: data.join("klaxond.toml"),
-        default_config: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("klaxond.default.toml"),
-        render_config: data.join("render-config.json"),
-        ntfy_topics: data.join("ntfy-topics.json"),
-        dedup_config: data.join("dedup-config.json"),
-        dedup_pending_dir: data.join("dedup_pending"),
-        auth_config: data.join("auth-config.json"),
-        auth_session_key: data.join("auth-session.key"),
-        backup_dir: data.join("backups"),
-        static_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"),
-        beszel_db: data.join("missing-beszel.db"),
-        history_db: data.join("klaxond.db"),
-    }
-}
 
 #[test]
 fn password_helpers_use_shared_argon2_contract() {
@@ -100,7 +79,8 @@ fn invalid_basic_realm_does_not_panic_while_challenging() {
     auth.basic.realm = "bad\rrealm".to_string();
 
     let headers = HeaderMap::new();
-    let AuthOutcome::Rejected(resp) = super::local::authenticate_basic(&state, &auth, &headers)
+    let AuthOutcome::Rejected(resp) =
+        super::local::authenticate_basic(&state, &auth, &headers, "/status")
     else {
         panic!("missing credentials should be rejected");
     };
@@ -228,109 +208,6 @@ fn client_log_remains_csrf_exempt_for_interactive_sessions() {
 
     user.via_authorization = true;
     assert!(!csrf_required(&headers, "/api/cascade/toggle", &user));
-}
-
-#[test]
-fn primary_auth_step_up_creates_challenge_before_session_issue() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(temp_paths(&tmp)).unwrap();
-    let mut auth = crate::config::AuthConfig::default();
-    auth.step_up.required_after_primary = true;
-    auth.step_up.factor = "totp".to_string();
-    let user = test_user("oidc");
-
-    let location = super::step_up::redirect_location_after_primary(
-        &state,
-        &auth,
-        user,
-        "/status",
-        PrimaryAuthMethod::Oidc,
-    )
-    .expect("step-up location");
-    let parsed = Url::parse(&format!("http://localhost{location}")).unwrap();
-    let token = parsed
-        .query_pairs()
-        .find(|(key, _)| key == "token")
-        .map(|(_, value)| value.to_string())
-        .expect("step-up token");
-
-    let pending = pending_step_up_challenge(&state, &token).expect("pending challenge");
-    assert_eq!(pending.factor, "totp");
-    assert_eq!(pending.return_to, "/status");
-
-    let (finished, return_to) =
-        finish_totp_step_up(&state, &token, "test-user").expect("finish step-up");
-    assert_eq!(finished.mode, "oidc");
-    assert_eq!(finished.second_factor, "totp");
-    assert_eq!(return_to, "/status");
-    assert!(pending_step_up_challenge(&state, &token).is_none());
-}
-
-#[test]
-fn passkey_step_up_rejects_other_primary_user() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
-    let tmp = TempDir::new().unwrap();
-    let state = AppState::new(temp_paths(&tmp)).unwrap();
-    let mut auth = crate::config::AuthConfig::default();
-    auth.step_up.required_after_primary = true;
-    auth.step_up.factor = "passkey".to_string();
-    let location = super::step_up::redirect_location_after_primary(
-        &state,
-        &auth,
-        test_user("oidc"),
-        "/status",
-        PrimaryAuthMethod::Oidc,
-    )
-    .expect("step-up location");
-    let parsed = Url::parse(&format!("http://localhost{location}")).unwrap();
-    let token = parsed
-        .query_pairs()
-        .find(|(key, _)| key == "token")
-        .map(|(_, value)| value.to_string())
-        .expect("step-up token");
-
-    let err = finish_webauthn_step_up(&state, &token, "other-user").expect_err("user mismatch");
-
-    assert!(err.contains("does not match"));
-    assert!(pending_step_up_challenge(&state, &token).is_some());
-}
-
-#[test]
-fn ui_fetch_auth_required_is_machine_readable() {
-    let mut headers = HeaderMap::new();
-    headers.insert("X-Klaxond-Request", HeaderValue::from_static("fetch"));
-    assert!(is_ui_fetch(&headers));
-
-    let resp = auth_required("/api/auth/login?return_to=%2Fstatus");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        resp.headers()
-            .get("X-Klaxond-Login")
-            .and_then(|v| v.to_str().ok()),
-        Some("/api/auth/login?return_to=%2Fstatus")
-    );
-    assert_eq!(
-        resp.headers()
-            .get("Cache-Control")
-            .and_then(|v| v.to_str().ok()),
-        Some("no-store")
-    );
-}
-
-fn test_user(mode: &str) -> User {
-    User {
-        sub: "test-user".into(),
-        email: String::new(),
-        name: String::new(),
-        groups: vec![],
-        mode: mode.into(),
-        exp: 0,
-        csrf: "csrf-token".into(),
-        sudo_until: 0,
-        via_authorization: false,
-        second_factor: String::new(),
-    }
 }
 
 #[test]
