@@ -23,7 +23,7 @@ for (const key of Object.keys(baseline)) {
   if (!baselineKeys.has(key)) baselineErrors.push('unknown top-level baseline key: ' + key)
 }
 
-const maxLines = asNonNegativeInteger(baseline.maxLines ?? 500, 'maxLines', { min: 1 })
+const maxLines = asNonNegativeInteger(baseline.maxLines ?? 400, 'maxLines', { min: 1 })
 const allowedGrowthLines = asNonNegativeInteger(
   baseline.allowedGrowthLines ?? 0,
   'allowedGrowthLines',
