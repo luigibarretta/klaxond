@@ -16,7 +16,7 @@ use super::paths::{
     legacy_legal_redirect, legacy_ui_redirect, legal_tab_from_path, path_id, root_ui_tab_from_path,
 };
 use crate::auth::{self, User};
-use crate::config::{DEDUP_SOURCES, default_dedup, default_tiers};
+use crate::config::default_tiers;
 use crate::inhibition;
 use crate::openapi;
 use crate::state::AppState;
@@ -26,8 +26,9 @@ use axum::body::Body;
 use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
 use serde_json::json;
-use std::collections::HashMap;
 use std::sync::atomic::Ordering;
+
+mod noise;
 
 pub(super) async fn handle_get(
     state: &AppState,
@@ -114,7 +115,7 @@ async fn config_get_response(state: &AppState, path: &str) -> Option<Response<Bo
         "/api/render-config" => Some(render_config_response(state)),
         "/api/cascade-config" => Some(cascade_config_response(state)),
         "/api/ntfy-topics" => Some(ntfy_topics_response(state)),
-        "/api/dedup-config" => Some(dedup_config_response(state).await),
+        "/api/dedup-config" => Some(noise::response(state).await),
         "/api/delivery-config" => Some(delivery_config_response(state)),
         "/api/channel-config" => Some(json_response(channel_config_payload(state))),
         "/api/ingest-auth" => Some(json_response(ingest_auth_payload(state))),
@@ -246,28 +247,6 @@ fn ntfy_topics_response(state: &AppState) -> Response<Body> {
         "writeable": true,
         "persisted_at": state.paths.ntfy_topics,
         "note": "Edits saved to /data/ntfy-topics.json supersede TOML + env vars. Delete the file + restart to re-bootstrap from env.",
-    }))
-}
-
-async fn dedup_config_response(state: &AppState) -> Response<Body> {
-    let cfg = state.cfg();
-    let pending_counts = {
-        let d = state.dedup.lock().await;
-        DEDUP_SOURCES
-            .iter()
-            .map(|source| {
-                (
-                    (*source).to_string(),
-                    d.queues.get(*source).map(|queue| queue.len()).unwrap_or(0),
-                )
-            })
-            .collect::<HashMap<_, _>>()
-    };
-    json_response(json!({
-        "sources": DEDUP_SOURCES,
-        "settings": cfg.dedup,
-        "pending_counts": pending_counts,
-        "defaults": default_dedup(),
     }))
 }
 

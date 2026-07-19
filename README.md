@@ -113,6 +113,8 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/status` | Cascade flag + channel reachability |
 | `GET` | `/api/setup-status` | Setup/readiness checklist |
 | `GET` | `/api/channel-test-matrix` | Dry-run channel connectivity matrix; sends no notification |
+| `GET` | `/api/dedup-config` | Per-source burst grouping, repeat-suppression cooldowns and recent suppression activity |
+| `POST` | `/api/dedup-config` | Persist per-source notification noise controls |
 | `GET` | `/api/inhibitions` | Active in-memory suppressions with TTL |
 | `GET` | `/api/deliveries` | Persistent delivery history; add `limit`/`offset` for the paginated shape |
 | `GET` | `/api/logs` | Runtime/backend/frontend log buffer with keyword, level and pagination filters |
@@ -163,6 +165,8 @@ The endpoint includes:
 - `klaxond_render_errors_total{source}`
 - `klaxond_dedup_pending{source}`
 - `klaxond_dedup_buffered_total{source}` and `klaxond_dedup_flushed_total{source}`
+- `klaxond_repeat_suppressed_total{source,severity,reason}`
+- `klaxond_repeat_suppression_errors_total{operation,backend}`
 
 Import [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) into Grafana and select your Prometheus datasource.
 
@@ -323,7 +327,7 @@ Every UI-managed setting has a compose-managed path:
 | Routing: inbound webhook secrets | `KLAXOND_INGEST_SECRET_<SOURCE>` or `[ingest.secrets]` |
 | Cascade, delivery policies, inhibitions, schedules | `/data/klaxond.toml` |
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
-| Dedup/grouping | `[dedup]` bootstrap or `/data/dedup-config.json` |
+| Noise control: burst grouping and repeat suppression | `[dedup]` bootstrap or `/data/dedup-config.json` |
 | Auth, API keys/PATs, TOTP, passkeys, LDAP, magic links | `[auth]` bootstrap or `/data/auth-config.json` |
 | Delivery history storage | `[history]`, `[paths].history_db`, or `KLAXOND_HISTORY_*` / `KLAXOND_POSTGRES_URL` |
 | Runtime paths exposed by compose | `[paths]` in `/data/klaxond.toml` |
@@ -488,6 +492,9 @@ These files are written atomically (write-temp-then-rename). With NFS v4 sync mo
 SQLite delivery history is the default for single-backend installs and
 active/passive failover. For two or more simultaneously writing backend
 instances, configure PostgreSQL so history has one real multi-writer store.
+Repeat-suppression fingerprints and cooldown activity live in that same
+history backend. PostgreSQL reservations are serialized across active backend
+instances; SQLite remains intended for a single active writer.
 
 ### What's in-memory and NOT shared
 

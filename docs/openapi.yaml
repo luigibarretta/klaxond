@@ -31,7 +31,7 @@ tags:
   - name: Routing
     description: Delivery, cascade, ntfy topics and ingest authentication.
   - name: Policy
-    description: Inhibitions, schedules, acknowledgements, dedup and simulations.
+    description: Inhibitions, schedules, acknowledgements, burst grouping, repeat suppression and simulations.
   - name: Render
     description: Notification rendering configuration and previews.
 
@@ -1614,7 +1614,10 @@ paths:
     get:
       tags: [Policy]
       operationId: getDedupConfig
-      summary: Return dedup settings and pending queue counts.
+      summary: Return notification noise-control settings and activity.
+      description: |
+        Returns per-source burst-grouping and repeat-suppression settings,
+        live pending grouping counts, and recent persistent cooldown activity.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -1624,13 +1627,17 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/NoiseControlConfig"
         "4XX":
           $ref: "#/components/responses/ClientError"
     post:
       tags: [Policy]
       operationId: updateDedupConfig
-      summary: Replace dedup settings.
+      summary: Replace notification noise-control settings.
+      description: |
+        Persists per-source burst grouping and repeat suppression to the
+        dedup sidecar. Fields unknown to older clients remain backward
+        compatible; repeat suppression is disabled by default.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -1640,10 +1647,16 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: "#/components/schemas/NoiseControlUpdate"
       responses:
         "200":
-          $ref: "#/components/responses/OkJson"
+          description: Noise-control settings saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NoiseControlUpdateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "428":
           $ref: "#/components/responses/ReauthRequired"
   /inhibitions:
@@ -2105,6 +2118,157 @@ components:
     Severity:
       type: string
       enum: [info, warning, critical]
+    NoiseControlSetting:
+      type: object
+      required:
+        - enabled
+        - window_s
+        - strategy
+        - override_critical
+        - repeat_suppression_enabled
+        - repeat_window_s
+        - repeat_override_critical
+      properties:
+        enabled:
+          type: boolean
+          description: Whether inbound events are buffered for burst grouping.
+        window_s:
+          type: integer
+          minimum: 1
+          description: |
+            Burst collection window in seconds. Admin API writes are clamped
+            to 5..3600; legacy TOML and sidecar values remain readable.
+        strategy:
+          type: string
+          description: |
+            `key` groups source-specific identities; `time` groups the whole
+            source window. Legacy configuration may contain other values,
+            which behave as disabled grouping.
+        override_critical:
+          type: boolean
+          description: When true, critical notifications also enter burst grouping.
+        repeat_suppression_enabled:
+          type: boolean
+          description: Whether identical successfully delivered notifications enter a post-delivery cooldown.
+        repeat_window_s:
+          type: integer
+          minimum: 60
+          maximum: 604800
+          description: Repeat-suppression cooldown in seconds.
+        repeat_override_critical:
+          type: boolean
+          description: When true, repeated critical notifications can also be suppressed.
+    NoiseControlSettingPatch:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        window_s:
+          type: integer
+          minimum: 5
+          maximum: 3600
+        strategy:
+          type: string
+          enum: [none, time, key]
+        override_critical:
+          type: boolean
+        repeat_suppression_enabled:
+          type: boolean
+        repeat_window_s:
+          type: integer
+          minimum: 60
+          maximum: 604800
+        repeat_override_critical:
+          type: boolean
+    NoiseControlSettings:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/NoiseControlSetting"
+    NoiseControlUpdate:
+      type: object
+      required: [settings]
+      properties:
+        settings:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/NoiseControlSettingPatch"
+    NoiseControlUpdateResponse:
+      type: object
+      required: [ok, settings]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        settings:
+          $ref: "#/components/schemas/NoiseControlSettings"
+    RepeatSuppressionActivity:
+      type: object
+      required:
+        - source
+        - severity
+        - title
+        - last_suppressed_at
+        - suppressed_count
+      properties:
+        source:
+          type: string
+        severity:
+          type: string
+        title:
+          type: string
+        last_delivered_at:
+          type: [number, "null"]
+          format: double
+          description: Unix timestamp of the last successful matching delivery.
+        last_suppressed_at:
+          type: number
+          format: double
+          description: Unix timestamp of the most recent suppression.
+        suppressed_count:
+          type: integer
+          minimum: 1
+        next_allowed_at:
+          type: [number, "null"]
+          format: double
+          description: Unix timestamp when the current cooldown expires under the active setting.
+    NoiseControlConfig:
+      type: object
+      required:
+        - sources
+        - settings
+        - pending_counts
+        - recent_suppressed
+        - limits
+        - defaults
+      properties:
+        sources:
+          type: array
+          items:
+            type: string
+        settings:
+          $ref: "#/components/schemas/NoiseControlSettings"
+        pending_counts:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        recent_suppressed:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/RepeatSuppressionActivity"
+        limits:
+          type: object
+          additionalProperties:
+            type: object
+            required: [min, max]
+            properties:
+              min:
+                type: integer
+              max:
+                type: integer
+        defaults:
+          $ref: "#/components/schemas/NoiseControlSettings"
     AlertPayload:
       type: object
       additionalProperties: true

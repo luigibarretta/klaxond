@@ -13,6 +13,8 @@ use std::sync::atomic::Ordering;
 mod channel;
 mod ntfy_topics;
 mod render;
+#[cfg(test)]
+mod tests;
 
 pub(super) use self::channel::update_channel_config;
 pub(super) use self::ntfy_topics::update_ntfy_topics;
@@ -36,13 +38,14 @@ pub(super) fn update_dedup_config(state: &AppState, body: Bytes) -> Response<Bod
     let Ok(request) = DedupConfigRequest::from_value(payload) else {
         return text(StatusCode::BAD_REQUEST, "missing 'settings' object");
     };
-    let cleaned = request.into_settings(default_dedup());
     state
-        .with_config_write_lock(|| {
+        .with_config_write_lock(move || {
+            let current = state.cfg();
+            let cleaned = request.into_settings(default_dedup(), &current.dedup);
             if let Err(err) = save_dedup(&state.paths, &cleaned) {
                 return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
             }
-            let mut cfg = state.cfg();
+            let mut cfg = current;
             cfg.dedup = cleaned.clone();
             state.replace_config(cfg);
             json_response(json!({"ok": true, "settings": cleaned}))
@@ -76,8 +79,16 @@ impl DedupConfigRequest {
     fn into_settings(
         self,
         mut settings: HashMap<String, DedupSetting>,
+        current: &HashMap<String, DedupSetting>,
     ) -> HashMap<String, DedupSetting> {
         for source in DEDUP_SOURCES {
+            if let (Some(setting), Some(current)) =
+                (settings.get_mut(*source), current.get(*source))
+            {
+                setting.repeat_suppression_enabled = current.repeat_suppression_enabled;
+                setting.repeat_window_s = current.repeat_window_s;
+                setting.repeat_override_critical = current.repeat_override_critical;
+            }
             if let Some(patch) = self.settings.get(*source)
                 && let Some(setting) = settings.get_mut(*source)
             {
@@ -98,6 +109,12 @@ struct DedupSettingPatch {
     strategy: Option<String>,
     #[serde(default, deserialize_with = "optional_bool")]
     override_critical: Option<bool>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    repeat_suppression_enabled: Option<bool>,
+    #[serde(default, deserialize_with = "optional_u64")]
+    repeat_window_s: Option<u64>,
+    #[serde(default, deserialize_with = "optional_bool")]
+    repeat_override_critical: Option<bool>,
 }
 
 impl DedupSettingPatch {
@@ -115,6 +132,15 @@ impl DedupSettingPatch {
         }
         if let Some(override_critical) = self.override_critical {
             setting.override_critical = override_critical;
+        }
+        if let Some(enabled) = self.repeat_suppression_enabled {
+            setting.repeat_suppression_enabled = enabled;
+        }
+        if let Some(window_s) = self.repeat_window_s {
+            setting.repeat_window_s = window_s.clamp(60, 604_800);
+        }
+        if let Some(override_critical) = self.repeat_override_critical {
+            setting.repeat_override_critical = override_critical;
         }
     }
 }
@@ -258,102 +284,4 @@ pub(super) fn update_delivery_config(state: &AppState, body: Bytes) -> Response<
                 .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dedup_config_request_applies_known_sources_and_preserves_leniency() {
-        let request = DedupConfigRequest::from_value(json!({
-            "settings": {
-                "grafana": {
-                    "enabled": true,
-                    "window_s": 9999,
-                    "strategy": "time",
-                    "override_critical": true
-                },
-                "beszel": {
-                    "enabled": "yes",
-                    "window_s": 1,
-                    "strategy": "invalid",
-                    "override_critical": false
-                },
-                "wud": "ignore non-object source patch",
-                "unknown": {
-                    "enabled": true,
-                    "window_s": 30,
-                    "strategy": "none"
-                }
-            }
-        }))
-        .expect("dedup settings request");
-
-        let settings = request.into_settings(default_dedup());
-
-        let grafana = settings.get("grafana").expect("grafana settings");
-        assert!(grafana.enabled);
-        assert_eq!(grafana.window_s, 3600);
-        assert_eq!(grafana.strategy, "time");
-        assert!(grafana.override_critical);
-
-        let beszel = settings.get("beszel").expect("beszel settings");
-        assert!(!beszel.enabled);
-        assert_eq!(beszel.window_s, 5);
-        assert_eq!(beszel.strategy, "key");
-        assert!(!beszel.override_critical);
-
-        let mut defaults = default_dedup();
-        let default_wud = defaults.remove("wud").expect("default wud");
-        let wud = settings.get("wud").expect("wud settings");
-        assert_eq!(wud.enabled, default_wud.enabled);
-        assert_eq!(wud.window_s, default_wud.window_s);
-        assert_eq!(wud.strategy, default_wud.strategy);
-        assert_eq!(wud.override_critical, default_wud.override_critical);
-        assert!(!settings.contains_key("unknown"));
-    }
-
-    #[test]
-    fn dedup_config_request_requires_settings_object() {
-        assert!(DedupConfigRequest::from_value(json!({})).is_err());
-        assert!(DedupConfigRequest::from_value(json!({"settings": []})).is_err());
-    }
-
-    #[test]
-    fn cascade_config_request_preserves_tier_normalization_and_leniency() {
-        let request = CascadeConfigRequest::from_value(json!({
-            "tiers": [
-                { "name": "NTFY", "timeout_seconds": 0 },
-                { "name": "telegram", "timeout_seconds": 99 },
-                { "name": "smtp", "timeout_seconds": "slow" },
-                { "name": "pagerduty", "timeout_seconds": 15 },
-                "ignore non-object tier"
-            ],
-            "default_enabled_for_webhook": true
-        }))
-        .expect("cascade config request");
-
-        assert_eq!(request.default_enabled_for_webhook, Some(true));
-        assert_eq!(
-            request.tier_values(),
-            vec![
-                json!({"name": "ntfy", "timeout_seconds": 1}),
-                json!({"name": "telegram", "timeout_seconds": 60}),
-                json!({"name": "smtp", "timeout_seconds": 5}),
-            ]
-        );
-    }
-
-    #[test]
-    fn cascade_config_request_requires_tiers_array() {
-        assert!(CascadeConfigRequest::from_value(json!({})).is_err());
-        assert!(CascadeConfigRequest::from_value(json!({"tiers": {}})).is_err());
-        assert!(
-            CascadeConfigRequest::from_value(json!({"tiers": []}))
-                .expect("empty array is syntactically valid")
-                .tier_values()
-                .is_empty()
-        );
-    }
 }

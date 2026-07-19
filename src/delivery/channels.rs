@@ -1,18 +1,28 @@
+use crate::config::RuntimeConfig;
 use crate::inhibition::ack_sign;
 use crate::parsers::Parts;
 use crate::state::AppState;
 use crate::util::{html_escape, strip_non_ascii};
-use anyhow::{Context, Result};
 use base64::{Engine as _, engine::general_purpose};
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::{Message, SmtpTransport, Transport};
+use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::timeout;
 
 pub async fn post_to_ntfy(state: &AppState, severity: &str, parts: &Parts, timeout_s: u64) -> bool {
     let cfg = state.cfg();
+    post_to_ntfy_with_config(state, &cfg, severity, parts, timeout_s).await
+}
+
+pub(super) async fn post_to_ntfy_with_config(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    timeout_s: u64,
+) -> bool {
     let topics = cfg.topics_for(severity);
     if topics.is_empty() {
         tracing::warn!("ntfy: no topic handles severity '{}'", severity);
@@ -94,6 +104,16 @@ pub async fn post_to_telegram(
     timeout_s: u64,
 ) -> bool {
     let cfg = state.cfg();
+    post_to_telegram_with_config(state, &cfg, severity, parts, timeout_s).await
+}
+
+pub(super) async fn post_to_telegram_with_config(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    timeout_s: u64,
+) -> bool {
     if cfg.tg_token.is_empty() || cfg.tg_chat.is_empty() {
         return false;
     }
@@ -104,7 +124,7 @@ pub async fn post_to_telegram(
         html_escape(&parts.body)
     );
     let mut payload = vec![
-        ("chat_id".to_string(), cfg.tg_chat),
+        ("chat_id".to_string(), cfg.tg_chat.clone()),
         ("parse_mode".to_string(), "HTML".into()),
         ("text".to_string(), msg),
         ("disable_web_page_preview".to_string(), "true".into()),
@@ -145,6 +165,15 @@ pub async fn post_to_telegram(
 
 pub async fn post_to_smtp(state: &AppState, severity: &str, parts: &Parts, timeout_s: u64) -> bool {
     let cfg = state.cfg();
+    post_to_smtp_with_config(&cfg, severity, parts, timeout_s).await
+}
+
+pub(super) async fn post_to_smtp_with_config(
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    timeout_s: u64,
+) -> bool {
     if cfg.smtp_host.is_empty()
         || cfg.smtp_user.is_empty()
         || cfg.smtp_pass.is_empty()
@@ -164,39 +193,54 @@ pub async fn post_to_smtp(state: &AppState, severity: &str, parts: &Parts, timeo
                 .join("\n"),
         );
     }
-    let from = cfg.smtp_from.clone();
-    let to = cfg.smtp_to.clone();
-    let subject = format!("[{severity}] {}", parts.title);
-    let host = cfg.smtp_host.clone();
-    let port = cfg.smtp_port;
-    let starttls = cfg.smtp_starttls;
-    let user = cfg.smtp_user.clone();
-    let pass = cfg.smtp_pass.clone();
-    let fut = tokio::task::spawn_blocking(move || -> Result<()> {
-        let email = Message::builder()
-            .from(from.parse()?)
-            .to(to.parse()?)
-            .subject(subject)
-            .header(ContentType::TEXT_PLAIN)
-            .body(body)?;
-        let creds = Credentials::new(user, pass);
-        let builder = if starttls {
-            SmtpTransport::starttls_relay(&host)?
-        } else {
-            SmtpTransport::builder_dangerous(&host)
-        };
-        let mailer = builder.port(port).credentials(creds).build();
-        mailer.send(&email).context("smtp send")?;
-        Ok(())
-    });
-    match timeout(Duration::from_secs(timeout_s), fut).await {
-        Ok(Ok(Ok(()))) => true,
-        Ok(Ok(Err(err))) => {
-            tracing::warn!("smtp send failed: {}", err);
-            false
+    let from = match cfg.smtp_from.parse() {
+        Ok(address) => address,
+        Err(err) => {
+            tracing::warn!("invalid SMTP sender address: {err}");
+            return false;
         }
+    };
+    let to = match cfg.smtp_to.parse() {
+        Ok(address) => address,
+        Err(err) => {
+            tracing::warn!("invalid SMTP recipient address: {err}");
+            return false;
+        }
+    };
+    let email = match Message::builder()
+        .from(from)
+        .to(to)
+        .subject(format!("[{severity}] {}", parts.title))
+        .header(ContentType::TEXT_PLAIN)
+        .body(body)
+    {
+        Ok(email) => email,
+        Err(err) => {
+            tracing::warn!("smtp message build failed: {err}");
+            return false;
+        }
+    };
+    let creds = Credentials::new(cfg.smtp_user.clone(), cfg.smtp_pass.clone());
+    let builder = if cfg.smtp_starttls {
+        match AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&cfg.smtp_host) {
+            Ok(builder) => builder,
+            Err(err) => {
+                tracing::warn!("smtp transport build failed: {err}");
+                return false;
+            }
+        }
+    } else {
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&cfg.smtp_host)
+    };
+    let mailer = builder
+        .port(cfg.smtp_port)
+        .credentials(creds)
+        .timeout(Some(Duration::from_secs(timeout_s)))
+        .build();
+    match timeout(Duration::from_secs(timeout_s), mailer.send(email)).await {
+        Ok(Ok(_)) => true,
         Ok(Err(err)) => {
-            tracing::warn!("smtp task failed: {}", err);
+            tracing::warn!("smtp send failed: {}", err);
             false
         }
         Err(_) => {

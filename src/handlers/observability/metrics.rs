@@ -55,6 +55,14 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
                 "klaxond_dedup_flushed_total",
                 "Events flushed from the dedup buffer per source.",
             ),
+            (
+                "klaxond_repeat_suppressed_total",
+                "Repeated notifications suppressed after a successful delivery.",
+            ),
+            (
+                "klaxond_repeat_suppression_errors_total",
+                "Repeat-suppression persistence errors; delivery fails open.",
+            ),
         ]),
     );
     let gauges = lock_mutex(&state.metrics.gauges, "metrics gauges");

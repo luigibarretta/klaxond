@@ -94,6 +94,9 @@ pub fn default_dedup() -> HashMap<String, DedupSetting> {
                 window_s,
                 strategy: strategy.to_string(),
                 override_critical,
+                repeat_suppression_enabled: false,
+                repeat_window_s: 7_200,
+                repeat_override_critical: false,
             },
         )
     })

@@ -1,8 +1,18 @@
-use super::{DeliveryEntry, DeliveryPage, SCHEMA_VERSION, dedupe_hash};
+use super::{DeliveryEntry, DeliveryPage, RepeatCandidate, RepeatDecision, RepeatState};
 use anyhow::{Context, Result, bail};
 use postgres::{Client, NoTls};
 use std::sync::mpsc;
 use std::thread;
+
+mod repeat;
+mod storage;
+mod worker_repeat;
+
+use self::storage::{
+    count as postgres_count, export_all as postgres_export_all, insert as postgres_insert,
+    migrate as migrate_postgres, page as postgres_page, prune as postgres_prune,
+    validate_schema as validate_postgres_schema,
+};
 
 pub(super) struct PostgresWorker {
     tx: mpsc::Sender<PostgresCommand>,
@@ -20,6 +30,27 @@ enum PostgresCommand {
     },
     ExportAll {
         reply: mpsc::Sender<Result<Vec<DeliveryEntry>>>,
+    },
+    ReserveRepeat {
+        candidate: RepeatCandidate,
+        reply: mpsc::Sender<Result<RepeatDecision>>,
+    },
+    CompleteRepeat {
+        fingerprint: String,
+        reservation_token: String,
+        delivered_at: Option<f64>,
+        reply: mpsc::Sender<Result<()>>,
+    },
+    RecentRepeatSuppressions {
+        limit: usize,
+        reply: mpsc::Sender<Result<Vec<RepeatState>>>,
+    },
+    ExportRepeatStates {
+        reply: mpsc::Sender<Result<Vec<RepeatState>>>,
+    },
+    ImportRepeatState {
+        state: RepeatState,
+        reply: mpsc::Sender<Result<()>>,
     },
 }
 
@@ -83,6 +114,63 @@ impl PostgresWorker {
                                 create_schema,
                                 &mut client,
                                 postgres_export_all,
+                            );
+                            let _ = reply.send(result);
+                        }
+                        PostgresCommand::ReserveRepeat { candidate, reply } => {
+                            let result = postgres_with_retry(
+                                &worker_url,
+                                create_schema,
+                                &mut client,
+                                |client| repeat::reserve(client, &candidate),
+                            );
+                            let _ = reply.send(result);
+                        }
+                        PostgresCommand::CompleteRepeat {
+                            fingerprint,
+                            reservation_token,
+                            delivered_at,
+                            reply,
+                        } => {
+                            let result = postgres_with_retry(
+                                &worker_url,
+                                create_schema,
+                                &mut client,
+                                |client| {
+                                    repeat::complete(
+                                        client,
+                                        &fingerprint,
+                                        &reservation_token,
+                                        delivered_at,
+                                    )
+                                },
+                            );
+                            let _ = reply.send(result);
+                        }
+                        PostgresCommand::RecentRepeatSuppressions { limit, reply } => {
+                            let result = postgres_with_retry(
+                                &worker_url,
+                                create_schema,
+                                &mut client,
+                                |client| repeat::recent_suppressions(client, limit),
+                            );
+                            let _ = reply.send(result);
+                        }
+                        PostgresCommand::ExportRepeatStates { reply } => {
+                            let result = postgres_with_retry(
+                                &worker_url,
+                                create_schema,
+                                &mut client,
+                                repeat::export_all,
+                            );
+                            let _ = reply.send(result);
+                        }
+                        PostgresCommand::ImportRepeatState { state, reply } => {
+                            let result = postgres_with_retry(
+                                &worker_url,
+                                create_schema,
+                                &mut client,
+                                |client| repeat::import(client, &state),
                             );
                             let _ = reply.send(result);
                         }
@@ -161,134 +249,4 @@ fn postgres_with_retry<T>(
             f(client).with_context(|| format!("postgres history retry after: {first_err}"))
         }
     }
-}
-
-fn validate_postgres_schema(client: &mut Client) -> Result<()> {
-    let row = client.query_one("SELECT to_regclass('klaxond_deliveries')::text", &[])?;
-    let table: Option<String> = row.get(0);
-    if table.is_none() {
-        bail!("source postgres history does not contain klaxond_deliveries");
-    }
-    Ok(())
-}
-
-fn migrate_postgres(client: &mut Client) -> Result<()> {
-    client.batch_execute(
-        r#"
-CREATE TABLE IF NOT EXISTS klaxond_schema_migrations (
-  version BIGINT PRIMARY KEY,
-  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS klaxond_deliveries (
-  id BIGSERIAL PRIMARY KEY,
-  ts DOUBLE PRECISION NOT NULL,
-  source TEXT NOT NULL,
-  severity TEXT NOT NULL,
-  title TEXT NOT NULL,
-  channel TEXT NOT NULL,
-  suppressed_by TEXT NOT NULL DEFAULT '',
-  dedupe_hash TEXT NOT NULL
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_klaxond_deliveries_dedupe_hash ON klaxond_deliveries(dedupe_hash);
-CREATE INDEX IF NOT EXISTS idx_klaxond_deliveries_ts_id_desc ON klaxond_deliveries(ts DESC, id DESC);
-"#,
-    )?;
-    client.execute(
-        "INSERT INTO klaxond_schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING",
-        &[&SCHEMA_VERSION],
-    )?;
-    Ok(())
-}
-
-fn postgres_insert(client: &mut Client, entry: &DeliveryEntry) -> Result<()> {
-    let hash = dedupe_hash(entry);
-    client.execute(
-        r#"
-INSERT INTO klaxond_deliveries
-  (ts, source, severity, title, channel, suppressed_by, dedupe_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-ON CONFLICT (dedupe_hash) DO NOTHING
-"#,
-        &[
-            &entry.ts,
-            &entry.source,
-            &entry.severity,
-            &entry.title,
-            &entry.channel,
-            &entry.suppressed_by,
-            &hash,
-        ],
-    )?;
-    Ok(())
-}
-
-fn postgres_count(client: &mut Client) -> Result<usize> {
-    let row = client.query_one("SELECT COUNT(*) FROM klaxond_deliveries", &[])?;
-    Ok(row.get::<_, i64>(0) as usize)
-}
-
-fn postgres_page(client: &mut Client, limit: usize, offset: usize) -> Result<Vec<DeliveryEntry>> {
-    let rows = client.query(
-        r#"
-SELECT ts, source, severity, title, channel, suppressed_by
-FROM klaxond_deliveries
-ORDER BY ts DESC, id DESC
-LIMIT $1 OFFSET $2
-"#,
-        &[&(limit as i64), &(offset as i64)],
-    )?;
-    Ok(rows
-        .into_iter()
-        .map(|row| DeliveryEntry {
-            ts: row.get(0),
-            source: row.get(1),
-            severity: row.get(2),
-            title: row.get(3),
-            channel: row.get(4),
-            suppressed_by: row.get(5),
-        })
-        .collect())
-}
-
-fn postgres_export_all(client: &mut Client) -> Result<Vec<DeliveryEntry>> {
-    let mut tx = client.transaction()?;
-    let rows = tx.query(
-        r#"
-SELECT ts, source, severity, title, channel, suppressed_by
-FROM klaxond_deliveries
-ORDER BY ts ASC, id ASC
-"#,
-        &[],
-    )?;
-    let entries = rows
-        .into_iter()
-        .map(|row| DeliveryEntry {
-            ts: row.get(0),
-            source: row.get(1),
-            severity: row.get(2),
-            title: row.get(3),
-            channel: row.get(4),
-            suppressed_by: row.get(5),
-        })
-        .collect();
-    tx.commit()?;
-    Ok(entries)
-}
-
-fn postgres_prune(client: &mut Client, retention: usize) -> Result<()> {
-    if retention == 0 {
-        return Ok(());
-    }
-    client.execute(
-        r#"
-DELETE FROM klaxond_deliveries
-WHERE id NOT IN (
-  SELECT id FROM klaxond_deliveries ORDER BY ts DESC, id DESC LIMIT $1
-)
-"#,
-        &[&(retention as i64)],
-    )?;
-    Ok(())
 }

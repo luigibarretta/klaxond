@@ -1,4 +1,4 @@
-use super::render::render_batch;
+use super::render::{highest_severity, render_batch};
 use crate::config::{Paths, load_runtime_config};
 use crate::parsers::Parts;
 use crate::state::DedupItem;
@@ -65,4 +65,63 @@ fn render_batch_uses_runtime_severity_render_config() {
     assert!(parts.title.starts_with("WARN WUD: 2 grouped events"));
     assert_eq!(parts.tags, vec!["custom_warn", "wud", "grouped"]);
     assert_eq!(parts.priority, "min");
+}
+
+#[test]
+fn render_batch_orders_equal_groups_and_hosts_deterministically() {
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let cfg = load_runtime_config(&paths).unwrap();
+    let mut zeta_a = item("Zeta: update");
+    zeta_a.dedup_key = "zeta".into();
+    zeta_a.common_labels.insert("host".into(), "node-z".into());
+    let mut alpha_b = item("Alpha: update");
+    alpha_b.dedup_key = "alpha".into();
+    alpha_b.common_labels.insert("host".into(), "node-b".into());
+    let mut zeta_b = zeta_a.clone();
+    zeta_b.common_labels.insert("host".into(), "node-a".into());
+    let mut alpha_a = alpha_b.clone();
+    alpha_a.common_labels.insert("host".into(), "node-a".into());
+
+    let rendered = render_batch(&cfg, "wud", "warning", &[zeta_a, alpha_b, zeta_b, alpha_a]);
+
+    let alpha = rendered.body.find("• update — 2 hosts (node-a, node-b)");
+    let zeta = rendered.body.find("• update — 2 hosts (node-a, node-z)");
+    assert!(alpha.is_some_and(|alpha| zeta.is_some_and(|zeta| alpha < zeta)));
+}
+
+#[test]
+fn render_batch_canonicalizes_titles_within_a_group() {
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let cfg = load_runtime_config(&paths).unwrap();
+    let mut node_b = item("Alert: node-b is down");
+    node_b.dedup_key = "grafana:HostDown".into();
+    node_b.common_labels.insert("host".into(), "node-b".into());
+    let mut node_a = item("Alert: node-a is down");
+    node_a.dedup_key = node_b.dedup_key.clone();
+    node_a.common_labels.insert("host".into(), "node-a".into());
+
+    let forward = render_batch(
+        &cfg,
+        "grafana",
+        "warning",
+        &[node_b.clone(), node_a.clone()],
+    );
+    let reversed = render_batch(&cfg, "grafana", "warning", &[node_a, node_b]);
+
+    assert_eq!(forward.title, reversed.title);
+    assert_eq!(forward.body, reversed.body);
+    assert!(forward.body.contains("node-a is down"));
+}
+
+#[test]
+fn highest_severity_is_independent_of_batch_order() {
+    let mut info = item("Info");
+    info.severity = "info".into();
+    let mut resolved = item("Resolved");
+    resolved.severity = "resolved".into();
+
+    assert_eq!(highest_severity(&[info.clone(), resolved.clone()]), "info");
+    assert_eq!(highest_severity(&[resolved, info]), "info");
 }

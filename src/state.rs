@@ -14,7 +14,7 @@ pub use self::types::{
     Suppression,
 };
 use crate::config::{Paths, RuntimeConfig, load_runtime_config};
-use crate::history::{DeliveryEntry, DeliveryPage, HistoryStore};
+use crate::history::{DeliveryEntry, DeliveryPage, HistoryStore, RepeatSuppressionSummary};
 use crate::util::tmp_path;
 use anyhow::{Context, Result};
 use fs2::FileExt;
@@ -142,7 +142,7 @@ impl AppState {
         Ok(())
     }
 
-    fn history_store(&self) -> Arc<HistoryStore> {
+    pub(crate) fn history_store(&self) -> Arc<HistoryStore> {
         read_lock(&self.history, "history store").clone()
     }
 
@@ -222,6 +222,16 @@ impl AppState {
                     limit,
                     offset,
                 }
+            }
+        }
+    }
+
+    pub fn recent_repeat_suppressions(&self, limit: usize) -> Vec<RepeatSuppressionSummary> {
+        match self.history_store().recent_repeat_suppressions(limit) {
+            Ok(entries) => entries,
+            Err(err) => {
+                tracing::error!("read repeat suppression history failed: {err}");
+                Vec::new()
             }
         }
     }

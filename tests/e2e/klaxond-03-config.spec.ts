@@ -150,7 +150,15 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
     const dedupUpdate = await request.post("/api/dedup-config", {
       data: {
         settings: {
-          grafana: { enabled: true, window_s: 42, strategy: "time", override_critical: true }
+          grafana: {
+            enabled: true,
+            window_s: 42,
+            strategy: "time",
+            override_critical: true,
+            repeat_suppression_enabled: true,
+            repeat_window_s: 7200,
+            repeat_override_critical: false
+          }
         }
       }
     });
@@ -161,7 +169,10 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
       enabled: true,
       window_s: 42,
       strategy: "time",
-      override_critical: true
+      override_critical: true,
+      repeat_suppression_enabled: true,
+      repeat_window_s: 7200,
+      repeat_override_critical: false
     });
 
     const deliveryUpdate = await request.post("/api/delivery-config", {
@@ -211,6 +222,77 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
     expect((await schedulesRead.json()).schedules).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: "e2e-maintenance", cron: "0 3 * * *", duration_minutes: 45 })
     ]));
+  } finally {
+    await restoreConfigBundle(request, originalBundle);
+  }
+});
+
+test("noise-control page configures grouping and repeat suppression with human durations", async ({ page, request }) => {
+  const originalBundle = await exportConfigBundle(request);
+  const browserErrors: string[] = [];
+  page.on("console", message => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("pageerror", error => browserErrors.push(error.message));
+
+  try {
+    const update = await request.post("/api/dedup-config", {
+      data: {
+        settings: {
+          grafana: {
+            enabled: true,
+            window_s: 300,
+            strategy: "key",
+            override_critical: false,
+            repeat_suppression_enabled: true,
+            repeat_window_s: 7200,
+            repeat_override_critical: false
+          }
+        }
+      }
+    });
+    await expect(update).toBeOK();
+
+    await page.goto("/grouping");
+    await expect(page.locator("#tab-grouping")).toHaveClass(/active/);
+    await expect(page.locator("#tab-grouping h2")).toHaveText("Notification noise control");
+    const grafana = page.locator('#dedup-cards [data-src="grafana"]');
+    await expect(grafana.locator(".d-mode")).toHaveValue("group_suppress");
+    await expect(grafana.locator(".d-window")).toHaveValue("300");
+    await expect(grafana.locator(".d-repeat-window")).toHaveValue("7200");
+    await expect(grafana.locator(".d-repeat-window option:checked")).toHaveText("2 hours");
+    await expect(page.locator("#t-repeat-suppressed")).toBeVisible();
+
+    await grafana.locator(".d-mode").selectOption("suppress");
+    await grafana.locator(".d-repeat-window").selectOption("21600");
+    await page.locator("#dedup-save").click();
+    await expect(page.locator(".toast-success").last()).toContainText("Noise controls saved");
+
+    const saved = await request.get("/api/dedup-config");
+    await expect(saved).toBeOK();
+    expect((await saved.json()).settings.grafana).toMatchObject({
+      enabled: false,
+      strategy: "none",
+      repeat_suppression_enabled: true,
+      repeat_window_s: 21600
+    });
+
+    await page.locator('[data-language-option="it"]').click();
+    await expect(page.locator("#tab-grouping h2")).toHaveText("Controllo rumore notifiche");
+    await expect(grafana.locator(".d-repeat-window option:checked")).toHaveText("6 ore");
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.reload();
+    await expect(page.locator(".noise-card")).toHaveCount(8);
+    const layout = await page.evaluate(() => ({
+      viewport: window.innerWidth,
+      body: document.documentElement.scrollWidth,
+      cardsFit: [...document.querySelectorAll<HTMLElement>(".noise-card")]
+        .every(card => card.getBoundingClientRect().right <= window.innerWidth + 1)
+    }));
+    expect(layout.body).toBeLessThanOrEqual(layout.viewport);
+    expect(layout.cardsFit).toBe(true);
+    expect(browserErrors).toEqual([]);
   } finally {
     await restoreConfigBundle(request, originalBundle);
   }

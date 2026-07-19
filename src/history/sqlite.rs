@@ -5,6 +5,8 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
+pub(super) mod repeat;
+
 pub(super) type SqliteConnection = Connection;
 
 pub(super) fn open_sqlite(path: &Path, create_schema: bool) -> Result<Connection> {
@@ -62,6 +64,22 @@ CREATE TABLE IF NOT EXISTS klaxond_deliveries (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_klaxond_deliveries_dedupe_hash ON klaxond_deliveries(dedupe_hash);
 CREATE INDEX IF NOT EXISTS idx_klaxond_deliveries_ts_id_desc ON klaxond_deliveries(ts DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS klaxond_repeat_state (
+  fingerprint TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  last_delivered_at REAL,
+  last_suppressed_at REAL,
+  suppressed_count INTEGER NOT NULL DEFAULT 0,
+  reserved_until REAL NOT NULL DEFAULT 0,
+  reservation_token TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_klaxond_repeat_suppressed_desc
+  ON klaxond_repeat_state(last_suppressed_at DESC)
+  WHERE last_suppressed_at IS NOT NULL;
 "#,
     )?;
     conn.execute(

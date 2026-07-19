@@ -82,7 +82,9 @@ pub(super) async fn ingest(
         source,
     )
     .await;
-    if ok {
+    if channel == "repeat-suppressed" {
+        text(StatusCode::OK, "suppressed duplicate (repeat cooldown)")
+    } else if ok {
         text(StatusCode::OK, &format!("delivered via {channel}"))
     } else {
         text(

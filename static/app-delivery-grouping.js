@@ -6,6 +6,7 @@ import {
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
 } from "./app.js";
 export { loadCascade, renderCascadeTable } from "./app-cascade.js";
+export { loadDedup, renderDedupCards } from "./app-noise-control.js";
 
 // ---- Delivery (policies + rules) ----
 // The synthetic policy built from the global [cascade] block is exposed by
@@ -143,111 +144,5 @@ $("#btn-delivery-save").addEventListener("click", async () => {
     });
     markTabDirty("delivery", false);
   } catch (e) { notifyError("delivery-save", e, { status: "#delivery-status" }); }
-});
-
-
-// ---- Dedup / grouping ----
-let dedupData = { settings: {}, sources: [], pending_counts: {}, defaults: {} };
-
-const STRATEGY_HELP = {
-  none: "dedup.help_none",
-  time: "dedup.help_time",
-  key:  "dedup.help_key",
-};
-
-const SOURCE_HELP = {
-  wud:          "dedup.source_wud",
-  grafana:      "dedup.source_grafana",
-  beszel:       "dedup.source_beszel",
-  healthchecks: "dedup.source_healthchecks",
-  authentik:    "dedup.source_authentik",
-  shelfmark:    "dedup.source_shelfmark",
-  prowlarr:     "dedup.source_prowlarr",
-  decypharr:    "dedup.source_decypharr",
-};
-
-export async function loadDedup() {
-  try {
-    const j = await queryGet("dedup-config", "/api/dedup-config");
-    dedupData = j;
-    renderDedupCards();
-  } catch (e) {
-    const c = $("#dedup-cards");
-    if (c) c.innerHTML = '<p class="muted">Error loading dedup config: ' + e.message + "</p>";
-    fetchError("dedup", e);
-  }
-}
-
-export function renderDedupCards() {
-  const c = $("#dedup-cards");
-  if (!c) return;
-  const sources = dedupData.sources || ["grafana", "beszel", "healthchecks", "wud", "authentik", "shelfmark", "prowlarr", "decypharr"];
-  const settings = dedupData.settings || {};
-  const pending = dedupData.pending_counts || {};
-  let html = '<div class="grid2">';
-  for (const src of sources) {
-    const s = settings[src] || {};
-    const help = SOURCE_HELP[src] ? tr(SOURCE_HELP[src]) : "";
-    const pcount = pending[src] || 0;
-    html += `
-      <div class="card" data-src="${src}">
-        <h3 style="margin-top:0">${src.toUpperCase()}
-          <small class="muted" style="font-weight:normal">${pcount > 0 ? `· ${escapeHtml(tr("dedup.pending", { count: pcount }))}` : ""}</small>
-        </h3>
-        <p class="muted"><small>${help}</small></p>
-        <label><input type="checkbox" class="d-enabled" ${s.enabled ? "checked" : ""}> ${escapeHtml(tr("dedup.enabled"))}</label>
-        <label>${escapeHtml(tr("dedup.strategy"))}
-          <select class="d-strategy">
-            <option value="key" ${s.strategy === "key" ? "selected" : ""}>${escapeHtml(tr("dedup.key_recommended"))}</option>
-            <option value="time" ${s.strategy === "time" ? "selected" : ""}>${escapeHtml(tr("dedup.time"))}</option>
-            <option value="none" ${s.strategy === "none" ? "selected" : ""}>${escapeHtml(tr("dedup.none"))}</option>
-          </select>
-        </label>
-        <label>${escapeHtml(tr("dedup.window"))}
-          <input type="number" class="d-window" min="5" max="3600" value="${s.window_s || 90}">
-        </label>
-        <label title="${escapeHtml(tr("dedup.override_title"))}">
-          <input type="checkbox" class="d-override" ${s.override_critical ? "checked" : ""}>
-          ${escapeHtml(tr("dedup.override_critical"))}
-        </label>
-      </div>`;
-  }
-  html += "</div>";
-  c.innerHTML = html;
-}
-
-$("#dedup-save")?.addEventListener("click", async () => {
-  const out = {};
-  for (const card of document.querySelectorAll("#dedup-cards [data-src]")) {
-    const src = card.dataset.src;
-    out[src] = {
-      enabled:           card.querySelector(".d-enabled").checked,
-      strategy:          card.querySelector(".d-strategy").value,
-      window_s:          parseInt(card.querySelector(".d-window").value, 10) || 90,
-      override_critical: card.querySelector(".d-override").checked,
-    };
-  }
-  setInlineStatus("#dedup-status", tr("status.saving"));
-  try {
-    const r = await J("/api/dedup-config", {
-      method: "POST",
-      body: JSON.stringify({ settings: out }),
-      headers: { "Content-Type": "application/json" },
-    });
-    if (r.ok) {
-      dedupData.settings = r.settings;
-      notifySuccess(tr("dedup.saved"), { status: "#dedup-status", clearMs: 3000 });
-      markTabDirty("grouping", false);
-    } else {
-      notifyError("dedup-save", new Error(r.error || "unknown"), { status: "#dedup-status" });
-    }
-  } catch (e) {
-    notifyError("dedup-save", e, { status: "#dedup-status" });
-  }
-});
-
-// Refresh pending counts when the grouping tab is shown
-document.querySelectorAll('[data-tab="grouping"]').forEach(btn => {
-  btn.addEventListener("click", () => { loadDedup(); });
 });
 

@@ -1,4 +1,6 @@
-use super::super::channels::{post_to_ntfy, post_to_smtp, post_to_telegram};
+use super::super::channels::{
+    post_to_ntfy, post_to_ntfy_with_config, post_to_smtp, post_to_telegram,
+};
 use super::support::{
     http_response, sample_parts, smtp_transcript_timeout, spawn_http_once, spawn_smtp_once,
     test_state,
@@ -28,6 +30,32 @@ async fn ntfy_posts_to_fake_server_with_bearer_token() {
     assert!(lower.contains("title: =?utf-8?b?"));
     assert!(lower.contains("priority: urgent"));
     assert!(request.contains("alert body"));
+}
+
+#[tokio::test]
+async fn ntfy_dispatch_uses_the_reserved_config_snapshot() {
+    let (_tmp, state) = test_state();
+    let (base, request_rx) = spawn_http_once(http_response("text/plain", b"ok")).await;
+    let mut snapshot = state.cfg();
+    snapshot.ntfy_url = base;
+    snapshot.ntfy_topics = vec![NtfyTopic {
+        name: "warning-topic".into(),
+        token: "snapshot-token".into(),
+        handles: vec!["warning".into()],
+    }];
+    let mut replacement = snapshot.clone();
+    replacement.ntfy_url = "http://127.0.0.1:9".into();
+    replacement.ntfy_topics.push(NtfyTopic {
+        name: "late-topic".into(),
+        token: "late-token".into(),
+        handles: vec!["warning".into()],
+    });
+    state.replace_config(replacement);
+
+    assert!(post_to_ntfy_with_config(&state, &snapshot, "warning", &sample_parts(), 2).await);
+    let request = request_rx.await.unwrap();
+    assert!(request.starts_with("POST /warning-topic HTTP/1.1"));
+    assert!(!request.contains("late-token"));
 }
 
 #[tokio::test]

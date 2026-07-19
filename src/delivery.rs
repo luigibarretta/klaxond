@@ -8,10 +8,12 @@ use std::collections::HashMap;
 
 mod channels;
 mod render;
+mod repeat;
 #[cfg(test)]
 mod tests;
 
 pub use channels::{post_to_ntfy, post_to_smtp, post_to_telegram};
+use channels::{post_to_ntfy_with_config, post_to_smtp_with_config, post_to_telegram_with_config};
 use render::render_alert_image;
 
 pub async fn deliver(
@@ -31,11 +33,17 @@ pub async fn deliver(
         policy.mode,
         policy.tiers.len()
     );
+    let repeat_reservation =
+        match repeat::reserve(state, &cfg, source, severity, &parts, &policy, with_cascade).await {
+            repeat::RepeatGate::Deliver(reservation) => reservation,
+            repeat::RepeatGate::Suppress => return (true, "repeat-suppressed".to_string()),
+        };
 
     attach_rendered_image(state, &cfg, &mut parts).await;
 
     let started = now_epoch();
-    let outcome = dispatch_policy(state, severity, &parts, policy, with_cascade).await;
+    let outcome = dispatch_policy(state, &cfg, severity, &parts, policy, with_cascade).await;
+    repeat::complete(state, &cfg, repeat_reservation, outcome.ok);
     audit_log_delivery(
         state,
         DeliveryAudit {
@@ -79,19 +87,21 @@ async fn attach_rendered_image(state: &AppState, cfg: &RuntimeConfig, parts: &mu
 
 async fn dispatch_policy(
     state: &AppState,
+    cfg: &RuntimeConfig,
     severity: &str,
     parts: &Parts,
     policy: DeliveryPolicy,
     with_cascade: bool,
 ) -> DeliveryOutcome {
     if policy.mode == "broadcast" {
-        return deliver_broadcast(state, severity, parts, &policy).await;
+        return deliver_broadcast(state, cfg, severity, parts, &policy).await;
     }
-    deliver_cascade(state, severity, parts, policy, with_cascade).await
+    deliver_cascade(state, cfg, severity, parts, policy, with_cascade).await
 }
 
 async fn deliver_broadcast(
     state: &AppState,
+    cfg: &RuntimeConfig,
     severity: &str,
     parts: &Parts,
     policy: &DeliveryPolicy,
@@ -99,7 +109,7 @@ async fn deliver_broadcast(
     let mut attempted = Vec::new();
     let mut succeeded = Vec::new();
     for tier in &policy.tiers {
-        if post_tier(state, severity, parts, tier).await {
+        if post_tier(state, cfg, severity, parts, tier).await {
             succeeded.push(tier.name.clone());
         }
         attempted.push(tier.name.clone());
@@ -113,6 +123,7 @@ async fn deliver_broadcast(
 
 async fn deliver_cascade(
     state: &AppState,
+    cfg: &RuntimeConfig,
     severity: &str,
     parts: &Parts,
     policy: DeliveryPolicy,
@@ -127,7 +138,7 @@ async fn deliver_cascade(
     let first = tiers.first().cloned();
     if let Some(first) = first {
         attempted.push(first.name.clone());
-        if post_tier(state, severity, parts, &first).await {
+        if post_tier(state, cfg, severity, parts, &first).await {
             return DeliveryOutcome::success(first.name, attempted);
         }
         if !with_cascade {
@@ -135,7 +146,7 @@ async fn deliver_cascade(
         }
         for tier in tiers.iter().skip(1) {
             attempted.push(tier.name.clone());
-            if post_tier(state, severity, parts, tier).await {
+            if post_tier(state, cfg, severity, parts, tier).await {
                 return DeliveryOutcome::success(tier.name.clone(), attempted);
             }
         }
@@ -167,11 +178,19 @@ impl DeliveryOutcome {
     }
 }
 
-async fn post_tier(state: &AppState, severity: &str, parts: &Parts, tier: &Tier) -> bool {
+async fn post_tier(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    tier: &Tier,
+) -> bool {
     match tier.name.as_str() {
-        "ntfy" => post_to_ntfy(state, severity, parts, tier.timeout_seconds).await,
-        "telegram" => post_to_telegram(state, severity, parts, tier.timeout_seconds).await,
-        "smtp" => post_to_smtp(state, severity, parts, tier.timeout_seconds).await,
+        "ntfy" => post_to_ntfy_with_config(state, cfg, severity, parts, tier.timeout_seconds).await,
+        "telegram" => {
+            post_to_telegram_with_config(state, cfg, severity, parts, tier.timeout_seconds).await
+        }
+        "smtp" => post_to_smtp_with_config(cfg, severity, parts, tier.timeout_seconds).await,
         _ => false,
     }
 }

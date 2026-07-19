@@ -26,7 +26,7 @@ pub(super) fn temp_paths(tmp: &TempDir) -> Paths {
     }
 }
 
-pub(super) fn test_state() -> (TempDir, AppState) {
+pub(in crate::delivery) fn test_state() -> (TempDir, AppState) {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(temp_paths(&tmp)).unwrap();
     (tmp, state)

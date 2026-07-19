@@ -1,3 +1,4 @@
 mod channels;
 mod render;
-mod support;
+mod repeat;
+pub(super) mod support;

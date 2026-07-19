@@ -12,6 +12,8 @@ export function showToast(msg, kind = "error", durationMs = 10000) {
   }
   const toast = document.createElement("div");
   toast.className = "toast toast-" + kind;
+  toast.setAttribute("role", kind === "error" ? "alert" : "status");
+  toast.setAttribute("aria-live", kind === "error" ? "assertive" : "polite");
   toast.innerHTML = `<span class="toast-msg"></span><button class="toast-close" title="Dismiss">✕</button>`;
   toast.querySelector(".toast-msg").textContent = msg;
   toast.querySelector(".toast-close").addEventListener("click", () => toast.remove());

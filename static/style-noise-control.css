@@ -1,0 +1,120 @@
+.noise-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: 14px;
+}
+
+.noise-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+}
+
+.noise-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.noise-card-heading h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.noise-source-help {
+  min-height: 38px;
+  margin: 8px 0 10px;
+}
+
+.noise-card .badge {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--panel-light);
+  font-size: 11px;
+}
+
+.noise-card .badge.warn {
+  border-color: var(--yellow);
+  color: var(--text);
+  background: color-mix(in srgb, var(--yellow) 14%, var(--panel));
+}
+
+.noise-mode {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 12px;
+}
+
+.noise-feature {
+  min-width: 0;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  transition: opacity 0.15s ease;
+}
+
+.noise-feature legend {
+  padding: 0 5px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.noise-feature.disabled {
+  opacity: 0.5;
+}
+
+.noise-feature label {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.noise-feature .toggle-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.noise-feature .toggle-line input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.noise-feature small {
+  display: block;
+  line-height: 1.4;
+}
+
+.noise-save-row {
+  align-items: baseline;
+}
+
+#t-repeat-suppressed {
+  min-width: 880px;
+}
+
+#t-repeat-suppressed td:nth-child(3) {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .noise-mode,
+  .noise-feature label {
+    grid-template-columns: 1fr;
+  }
+}

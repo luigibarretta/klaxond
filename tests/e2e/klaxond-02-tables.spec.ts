@@ -64,6 +64,7 @@ test("all configured finite admin tables use the shared pager", async ({ page })
     ["cascade", "t-cas"],
     ["delivery", "t-pol"],
     ["delivery", "t-rules"],
+    ["grouping", "t-repeat-suppressed"],
     ["auth", "t-tokens"],
     ["auth", "t-passkeys"]
   ] as const;

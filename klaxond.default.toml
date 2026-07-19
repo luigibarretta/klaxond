@@ -171,6 +171,13 @@ ttl_seconds = 1800
 # Severity caveat: by default, severity=critical bypasses the dedup window
 # (delivered immediately). Set override_critical=true to debounce critical too.
 #
+# Repeat suppression is a separate post-delivery cooldown. When enabled,
+# klaxond sends the first notification, fingerprints its rendered content,
+# then suppresses identical notifications for repeat_window_s. This state is
+# stored in the selected history database and works with SQLite or PostgreSQL.
+# Critical notifications bypass repeat suppression unless
+# repeat_override_critical=true.
+#
 # These settings are bootstrapped to /data/dedup-config.json on first run.
 # UI edits in the Grouping tab persist there and override these defaults.
 
@@ -179,24 +186,36 @@ enabled           = true
 window_s          = 90
 strategy          = "key"   # key=image.name
 override_critical = false
+repeat_suppression_enabled = false
+repeat_window_s = 7200
+repeat_override_critical = false
 
 [dedup.healthchecks]
 enabled           = false
 window_s          = 180
 strategy          = "time"  # all deadman fires in window
 override_critical = false
+repeat_suppression_enabled = false
+repeat_window_s = 7200
+repeat_override_critical = false
 
 [dedup.grafana]
 enabled           = false
 window_s          = 90
 strategy          = "key"   # key=commonLabels.alertname
 override_critical = false
+repeat_suppression_enabled = false
+repeat_window_s = 7200
+repeat_override_critical = false
 
 [dedup.beszel]
 enabled           = false
 window_s          = 90
 strategy          = "key"   # key=container_name
 override_critical = false
+repeat_suppression_enabled = false
+repeat_window_s = 7200
+repeat_override_critical = false
 
 
 # ============================================================================

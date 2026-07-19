@@ -6,17 +6,21 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
 mod postgres;
+mod repeat;
 mod sqlite;
 #[cfg(test)]
 mod tests;
 
 use postgres::PostgresWorker;
+pub use repeat::{
+    RepeatCandidate, RepeatDecision, RepeatState, RepeatSuppressionReason, RepeatSuppressionSummary,
+};
 use sqlite::{
     SqliteConnection, migrate_sqlite, open_sqlite, sqlite_count, sqlite_export_all, sqlite_insert,
     sqlite_page, sqlite_prune, validate_sqlite_schema,
 };
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const DEFAULT_MIGRATION_BATCH: usize = 500;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,6 +129,72 @@ impl HistoryStore {
             HistoryBackend::Postgres(worker) => worker.export_all(),
         }
     }
+
+    pub fn reserve_repeat(&self, candidate: &RepeatCandidate) -> Result<RepeatDecision> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                let mut conn = lock(conn, "sqlite history connection");
+                sqlite::repeat::reserve(&mut conn, candidate)
+            }
+            HistoryBackend::Postgres(worker) => worker.reserve_repeat(candidate),
+        }
+    }
+
+    pub fn complete_repeat(
+        &self,
+        fingerprint: &str,
+        reservation_token: &str,
+        delivered_at: Option<f64>,
+    ) -> Result<()> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                let conn = lock(conn, "sqlite history connection");
+                sqlite::repeat::complete(&conn, fingerprint, reservation_token, delivered_at)
+            }
+            HistoryBackend::Postgres(worker) => {
+                worker.complete_repeat(fingerprint, reservation_token, delivered_at)
+            }
+        }
+    }
+
+    pub fn recent_repeat_suppressions(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<RepeatSuppressionSummary>> {
+        let states = match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                let conn = lock(conn, "sqlite history connection");
+                sqlite::repeat::recent_suppressions(&conn, limit.clamp(1, 1_000))?
+            }
+            HistoryBackend::Postgres(worker) => {
+                worker.recent_repeat_suppressions(limit.clamp(1, 1_000))?
+            }
+        };
+        Ok(states
+            .into_iter()
+            .filter_map(RepeatState::summary)
+            .collect())
+    }
+
+    fn export_repeat_states(&self) -> Result<Vec<RepeatState>> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                let conn = lock(conn, "sqlite history connection");
+                sqlite::repeat::export_all(&conn)
+            }
+            HistoryBackend::Postgres(worker) => worker.export_repeat_states(),
+        }
+    }
+
+    fn import_repeat_state(&self, state: &RepeatState) -> Result<()> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                let conn = lock(conn, "sqlite history connection");
+                sqlite::repeat::import(&conn, state)
+            }
+            HistoryBackend::Postgres(worker) => worker.import_repeat_state(state),
+        }
+    }
 }
 
 pub fn migrate_between(src: &HistoryConfig, dst: &HistoryConfig) -> Result<usize> {
@@ -137,6 +207,9 @@ pub fn migrate_between(src: &HistoryConfig, dst: &HistoryConfig) -> Result<usize
             dst.record_delivery(row)?;
             copied += 1;
         }
+    }
+    for state in src.export_repeat_states()? {
+        dst.import_repeat_state(&state)?;
     }
     Ok(copied)
 }

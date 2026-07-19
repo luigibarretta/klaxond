@@ -25,6 +25,7 @@
     "t-tokens": { pageSize: 10 },
     "t-passkeys": { pageSize: 10 },
     "t-channel-matrix": { pageSize: 10 },
+    "t-repeat-suppressed": { pageSize: 10 },
   };
   const tablePagerState = new Map();
 

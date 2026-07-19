@@ -12,7 +12,8 @@ pub(super) fn load_dedup(
         let mut out = default_dedup();
         let raw: HashMap<String, DedupSetting> =
             serde_json::from_slice(&fs::read(&paths.dedup_config)?)?;
-        for (k, v) in raw {
+        for (k, mut v) in raw {
+            normalize_setting(&mut v);
             out.insert(k, v);
         }
         return Ok(out);
@@ -41,12 +42,37 @@ pub(super) fn dedup_from_toml(seed: Option<&toml::Value>) -> HashMap<String, Ded
                 if let Some(v) = t.get("override_critical").and_then(|v| v.as_bool()) {
                     s.override_critical = v;
                 }
+                if let Some(v) = t
+                    .get("repeat_suppression_enabled")
+                    .and_then(|v| v.as_bool())
+                {
+                    s.repeat_suppression_enabled = v;
+                }
+                if let Some(v) = t.get("repeat_window_s").and_then(|v| v.as_integer()) {
+                    s.repeat_window_s = v.clamp(60, 604_800) as u64;
+                }
+                if let Some(v) = t.get("repeat_override_critical").and_then(|v| v.as_bool()) {
+                    s.repeat_override_critical = v;
+                }
             }
         }
     }
+    out.values_mut().for_each(normalize_setting);
     out
 }
 
 pub fn save_dedup(paths: &Paths, settings: &HashMap<String, DedupSetting>) -> Result<()> {
-    atomic_write_json(&paths.dedup_config, settings)
+    let normalized = settings
+        .iter()
+        .map(|(source, setting)| {
+            let mut setting = setting.clone();
+            normalize_setting(&mut setting);
+            (source.clone(), setting)
+        })
+        .collect::<HashMap<_, _>>();
+    atomic_write_json(&paths.dedup_config, &normalized)
+}
+
+fn normalize_setting(setting: &mut DedupSetting) {
+    setting.repeat_window_s = setting.repeat_window_s.clamp(60, 604_800);
 }

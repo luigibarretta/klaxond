@@ -6,15 +6,17 @@ use std::collections::{HashMap, HashSet};
 pub(super) fn highest_severity(items: &[DedupItem]) -> String {
     fn rank(s: &str) -> i32 {
         match s {
-            "critical" => 2,
-            "warning" => 1,
+            "critical" => 4,
+            "warning" => 3,
+            "info" => 2,
+            "resolved" => 1,
             _ => 0,
         }
     }
     items
         .iter()
         .map(|i| i.severity.as_str())
-        .max_by_key(|s| rank(s))
+        .max_by(|left, right| rank(left).cmp(&rank(right)).then_with(|| left.cmp(right)))
         .unwrap_or("info")
         .to_string()
 }
@@ -48,10 +50,18 @@ pub(super) fn render_batch(
         groups.entry(it.dedup_key.clone()).or_default().push(it);
     }
     let mut rows = groups.into_iter().collect::<Vec<_>>();
-    rows.sort_by_key(|(_, g)| std::cmp::Reverse(g.len()));
+    rows.sort_by(|(left_key, left), (right_key, right)| {
+        right
+            .len()
+            .cmp(&left.len())
+            .then_with(|| left_key.cmp(right_key))
+    });
     let mut lines = Vec::new();
     for (_, gitems) in rows {
-        let first = gitems[0];
+        let first = gitems
+            .iter()
+            .min_by_key(|item| (&item.parts.title, &item.parts.body))
+            .expect("dedup groups are never empty");
         let first_title = first
             .parts
             .title
@@ -80,6 +90,7 @@ pub(super) fn render_batch(
                     hosts.push(h);
                 }
             }
+            hosts.sort();
             let suffix = if hosts.is_empty() {
                 format!(" — {} hosts", gitems.len())
             } else {

@@ -97,12 +97,22 @@ fn default_ttl() -> u64 {
     900
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DedupSetting {
     pub enabled: bool,
     pub window_s: u64,
     pub strategy: String,
     pub override_critical: bool,
+    #[serde(default)]
+    pub repeat_suppression_enabled: bool,
+    #[serde(default = "default_repeat_window")]
+    pub repeat_window_s: u64,
+    #[serde(default)]
+    pub repeat_override_critical: bool,
+}
+
+fn default_repeat_window() -> u64 {
+    7_200
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
