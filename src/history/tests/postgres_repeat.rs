@@ -13,6 +13,7 @@ fn postgres_cfg(url: String) -> HistoryConfig {
 #[test]
 #[ignore = "requires KLAXOND_TEST_POSTGRES_URL"]
 fn postgres_repeat_reservation_is_atomic_across_workers() {
+    let _guard = postgres_test_guard();
     let url = std::env::var("KLAXOND_TEST_POSTGRES_URL")
         .expect("KLAXOND_TEST_POSTGRES_URL is required for this ignored test");
     let cfg = postgres_cfg(url);
@@ -73,6 +74,7 @@ fn postgres_repeat_reservation_is_atomic_across_workers() {
 #[test]
 #[ignore = "requires KLAXOND_TEST_POSTGRES_URL"]
 fn postgres_repeat_import_preserves_non_null_timestamps() {
+    let _guard = postgres_test_guard();
     let url = std::env::var("KLAXOND_TEST_POSTGRES_URL")
         .expect("KLAXOND_TEST_POSTGRES_URL is required for this ignored test");
     let store = HistoryStore::open(&postgres_cfg(url)).unwrap();

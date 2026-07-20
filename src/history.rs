@@ -1,27 +1,32 @@
 use crate::config::HistoryConfig;
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 
+mod migration;
 mod postgres;
+mod rate_limit;
 mod repeat;
+mod session;
 mod sqlite;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use migration::snapshot_runtime_auth_state;
+pub use migration::{migrate_between, run_migrate_cli};
 use postgres::PostgresWorker;
+pub use rate_limit::AuthRateLimitRecord;
 pub use repeat::{
     RepeatCandidate, RepeatDecision, RepeatState, RepeatSuppressionReason, RepeatSuppressionSummary,
 };
+pub use session::{AuthSessionRecord, OidcLogoutResult, OidcLogoutTokenRecord};
 use sqlite::{
     SqliteConnection, migrate_sqlite, open_sqlite, sqlite_count, sqlite_export_all, sqlite_insert,
     sqlite_page, sqlite_prune, validate_sqlite_schema,
 };
 
-const SCHEMA_VERSION: i64 = 2;
-const DEFAULT_MIGRATION_BATCH: usize = 500;
+const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeliveryEntry {
@@ -44,6 +49,13 @@ pub struct DeliveryPage {
 pub struct HistoryStore {
     backend: HistoryBackend,
     retention: usize,
+}
+
+#[derive(Clone)]
+pub(crate) struct RuntimeAuthState {
+    pub(crate) sessions: Vec<AuthSessionRecord>,
+    pub(crate) logout_tokens: Vec<OidcLogoutTokenRecord>,
+    pub(crate) rate_limits: Vec<AuthRateLimitRecord>,
 }
 
 enum HistoryBackend {
@@ -195,71 +207,153 @@ impl HistoryStore {
             HistoryBackend::Postgres(worker) => worker.import_repeat_state(state),
         }
     }
-}
 
-pub fn migrate_between(src: &HistoryConfig, dst: &HistoryConfig) -> Result<usize> {
-    let src = HistoryStore::open_existing(src).context("open source history store")?;
-    let dst = HistoryStore::open(dst).context("open destination history store")?;
-    let rows = src.export_all()?;
-    let mut copied = 0;
-    for chunk in rows.chunks(DEFAULT_MIGRATION_BATCH) {
-        for row in chunk {
-            dst.record_delivery(row)?;
-            copied += 1;
+    pub fn create_auth_session(
+        &self,
+        record: &AuthSessionRecord,
+        replace_id_hash: Option<&str>,
+        max_concurrent: usize,
+        now: i64,
+    ) -> Result<()> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => sqlite::session::create(
+                &mut lock(conn, "sqlite history connection"),
+                record,
+                replace_id_hash,
+                max_concurrent,
+                now,
+            ),
+            HistoryBackend::Postgres(worker) => {
+                worker.create_auth_session(record, replace_id_hash, max_concurrent, now)
+            }
         }
     }
-    for state in src.export_repeat_states()? {
-        dst.import_repeat_state(&state)?;
+
+    pub fn auth_session(
+        &self,
+        id_hash: &str,
+        now: i64,
+        idle_timeout_seconds: i64,
+    ) -> Result<Option<AuthSessionRecord>> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => sqlite::session::lookup(
+                &mut lock(conn, "sqlite history connection"),
+                id_hash,
+                now,
+                idle_timeout_seconds,
+            ),
+            HistoryBackend::Postgres(worker) => {
+                worker.auth_session(id_hash, now, idle_timeout_seconds)
+            }
+        }
     }
-    Ok(copied)
-}
 
-pub fn run_migrate_cli(args: &[String]) -> Result<()> {
-    let src_backend = arg_value(args, "--from")
-        .or_else(|| arg_value(args, "--source"))
-        .ok_or_else(|| anyhow!("missing --from sqlite|postgres"))?;
-    let src_url = arg_value(args, "--from-url")
-        .or_else(|| arg_value(args, "--source-url"))
-        .ok_or_else(|| anyhow!("missing --from-url"))?;
-    let dst_backend = arg_value(args, "--to")
-        .or_else(|| arg_value(args, "--dest"))
-        .ok_or_else(|| anyhow!("missing --to sqlite|postgres"))?;
-    let dst_url = arg_value(args, "--to-url")
-        .or_else(|| arg_value(args, "--dest-url"))
-        .ok_or_else(|| anyhow!("missing --to-url"))?;
-    let retention = arg_value(args, "--retention")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(0);
-    let src = config_from_spec(&src_backend, &src_url, retention)?;
-    let dst = config_from_spec(&dst_backend, &dst_url, retention)?;
-    let copied = migrate_between(&src, &dst)?;
-    println!("migrated {copied} delivery history rows");
-    Ok(())
-}
+    pub fn revoke_auth_session(&self, id_hash: &str, now: i64) -> Result<bool> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                sqlite::session::revoke(&lock(conn, "sqlite history connection"), id_hash, now)
+            }
+            HistoryBackend::Postgres(worker) => worker.revoke_auth_session(id_hash, now),
+        }
+    }
 
-fn arg_value(args: &[String], key: &str) -> Option<String> {
-    args.windows(2)
-        .find(|pair| pair[0] == key)
-        .map(|pair| pair[1].clone())
-}
+    pub fn revoke_auth_session_family(&self, id_hash: &str, now: i64) -> Result<usize> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => sqlite::session::revoke_family_by_id(
+                &mut lock(conn, "sqlite history connection"),
+                id_hash,
+                now,
+            ),
+            HistoryBackend::Postgres(worker) => worker.revoke_auth_session_family(id_hash, now),
+        }
+    }
 
-fn config_from_spec(backend: &str, url: &str, retention: usize) -> Result<HistoryConfig> {
-    match backend {
-        "sqlite" => Ok(HistoryConfig {
-            backend: "sqlite".to_string(),
-            sqlite_path: PathBuf::from(url),
-            postgres_url: String::new(),
-            retention,
-            default_limit: 500,
-        }),
-        "postgres" | "postgresql" => Ok(HistoryConfig {
-            backend: "postgres".to_string(),
-            sqlite_path: PathBuf::from("/tmp/klaxond-unused.db"),
-            postgres_url: url.to_string(),
-            retention,
-            default_limit: 500,
-        }),
-        other => bail!("unsupported migration backend {other:?}"),
+    pub fn consume_oidc_logout(
+        &self,
+        token: &OidcLogoutTokenRecord,
+        provider_session_id: Option<&str>,
+        subject: Option<&str>,
+        now: i64,
+    ) -> Result<OidcLogoutResult> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => sqlite::session::consume_oidc_logout(
+                &mut lock(conn, "sqlite history connection"),
+                token,
+                provider_session_id,
+                subject,
+                now,
+            ),
+            HistoryBackend::Postgres(worker) => {
+                worker.consume_oidc_logout(token, provider_session_id, subject, now)
+            }
+        }
+    }
+
+    pub fn auth_rate_limited(&self, key_hash: &str, now: i64) -> Result<bool> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => sqlite::rate_limit::limited(
+                &mut lock(conn, "sqlite history connection"),
+                key_hash,
+                now,
+            ),
+            HistoryBackend::Postgres(worker) => worker.auth_rate_limited(key_hash, now),
+        }
+    }
+
+    pub fn record_auth_failure(&self, key_hash: &str, now: i64) -> Result<bool> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => sqlite::rate_limit::record_failure(
+                &mut lock(conn, "sqlite history connection"),
+                key_hash,
+                now,
+            ),
+            HistoryBackend::Postgres(worker) => worker.record_auth_failure(key_hash, now),
+        }
+    }
+
+    pub fn clear_auth_failures(&self, key_hash: &str) -> Result<()> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                sqlite::rate_limit::clear(&lock(conn, "sqlite history connection"), key_hash)
+            }
+            HistoryBackend::Postgres(worker) => worker.clear_auth_failures(key_hash),
+        }
+    }
+
+    fn export_auth_sessions(&self) -> Result<Vec<AuthSessionRecord>> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                sqlite::session::export_sessions(&lock(conn, "sqlite history connection"))
+            }
+            HistoryBackend::Postgres(worker) => worker.export_auth_sessions(),
+        }
+    }
+
+    fn export_oidc_logout_tokens(&self) -> Result<Vec<OidcLogoutTokenRecord>> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                sqlite::session::export_logout_tokens(&lock(conn, "sqlite history connection"))
+            }
+            HistoryBackend::Postgres(worker) => worker.export_oidc_logout_tokens(),
+        }
+    }
+
+    fn export_auth_rate_limits(&self) -> Result<Vec<AuthRateLimitRecord>> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                sqlite::rate_limit::export_all(&lock(conn, "sqlite history connection"))
+            }
+            HistoryBackend::Postgres(worker) => worker.export_auth_rate_limits(),
+        }
+    }
+
+    pub(crate) fn import_runtime_auth_state(&self, state: &RuntimeAuthState) -> Result<()> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => {
+                sqlite::auth_state::import(&mut lock(conn, "sqlite history connection"), state)
+            }
+            HistoryBackend::Postgres(worker) => worker.import_runtime_auth_state(state),
+        }
     }
 }
 

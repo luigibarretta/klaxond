@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: luigibarretta/auth-modules
+          ref: 27be036468f28a68b73b166fb495febac4afbf7f
           path: auth-modules
 
       - name: Install check tools

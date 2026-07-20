@@ -55,6 +55,10 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
         "TOML/JSON auth.basic.password_hash",
     ),
     (
+        "AUTH_TRUSTED_PROXY_CIDRS",
+        "TOML/JSON auth.trusted_proxy.trusted_cidrs",
+    ),
+    (
         "KLAXOND_INGEST_SECRET_GRAFANA",
         "TOML [ingest.secrets].grafana",
     ),

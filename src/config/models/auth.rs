@@ -330,12 +330,7 @@ impl Default for AuthConfig {
                 user_header: "X-Forwarded-User".to_string(),
                 email_header: "X-Forwarded-Email".to_string(),
                 groups_header: "X-Forwarded-Groups".to_string(),
-                trusted_cidrs: vec![
-                    "127.0.0.1/32".to_string(),
-                    "192.168.0.0/16".to_string(),
-                    "10.0.0.0/8".to_string(),
-                    "172.16.0.0/12".to_string(),
-                ],
+                trusted_cidrs: vec!["127.0.0.1/32".to_string(), "::1/128".to_string()],
             },
             webauthn: WebauthnConfig::default(),
             step_up: AuthStepUpConfig::default(),

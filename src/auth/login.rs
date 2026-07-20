@@ -1,6 +1,8 @@
+use super::login_page::login_page;
 use super::oidc_client::client_for;
 use super::session::{
-    cookie_values, issue_session, sanitize_return_to, set_session_cookie, verify_session,
+    cookie_values, issue_session_on_worker, rotate_session_on_worker, sanitize_return_to,
+    set_session_cookie, verify_session,
 };
 use super::step_up::redirect_location_after_primary;
 use super::{AUTH_SESSION_COOKIE, User, magic_link_enabled, redirect};
@@ -31,8 +33,32 @@ pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<
     }
     if !logged_out && let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
         for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
-            if verify_session(state, value).is_some() {
-                return redirect(&return_to);
+            match verify_session(state, value).await {
+                Ok(Some(mut verified)) => {
+                    let mut response = redirect(&return_to);
+                    if verified.legacy || verified.should_rotate {
+                        let cookie = match rotate_session_on_worker(
+                            state,
+                            &auth,
+                            &mut verified.user,
+                        )
+                        .await
+                        {
+                            Ok(cookie) => cookie,
+                            Err(err) => {
+                                tracing::error!("migrate login session failed: {err}");
+                                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                            }
+                        };
+                        set_session_cookie(&mut response, &cookie);
+                    }
+                    return response;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::error!("load login session failed: {err}");
+                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                }
             }
         }
     }
@@ -109,101 +135,6 @@ fn login_return_to(uri: &str) -> String {
         })
         .unwrap_or_else(|| "/status".into());
     sanitize_return_to(&return_to)
-}
-
-fn login_page(
-    mode: &str,
-    passkeys_enabled: bool,
-    magic_link_enabled: bool,
-    return_to: &str,
-) -> Response<Body> {
-    let start_url = format!(
-        "/api/auth/login?start=1&return_to={}",
-        urlencoding::encode(return_to)
-    );
-    let start_url = html_attr(&start_url);
-    let return_to = html_attr(return_to);
-    let primary = match mode {
-        "oidc" => format!(r#"<a class="btn primary" href="{start_url}">Continue with SSO</a>"#),
-        "basic" => format!(
-            r#"<form class="login-form" method="post" action="/api/auth/local/login">
-<input type="hidden" name="return_to" value="{return_to}">
-<label><span>Username</span><input name="username" autocomplete="username" required></label>
-<label><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
-<label><span>TOTP code</span><input name="totp" inputmode="numeric" pattern="[0-9]{{6}}" autocomplete="one-time-code" placeholder="000000"></label>
-<button class="btn primary" type="submit">Sign in</button>
-</form>"#
-        ),
-        "trusted-proxy" => {
-            format!(
-                r#"<a class="btn primary" href="{return_to}">Continue through trusted proxy</a>"#
-            )
-        }
-        _ => format!(r#"<a class="btn primary" href="{return_to}">Continue</a>"#),
-    };
-    let passkey = if passkeys_enabled {
-        r#"<a class="btn" href="/api/auth/passkey/login">Use passkey</a>"#
-    } else {
-        ""
-    };
-    let magic_link = if magic_link_enabled {
-        format!(
-            r#"<form class="login-form" method="post" action="/api/auth/magic/request">
-<input type="hidden" name="return_to" value="{return_to}">
-<label><span>Username</span><input name="username" autocomplete="username" required></label>
-<button class="btn" type="submit">Use magic link</button>
-</form>"#
-        )
-    } else {
-        String::new()
-    };
-    let author_link = author_link_html();
-    let html = format!(
-        r#"<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>klaxond login</title><link rel="stylesheet" href="/ui/style.css"></head>
-<body><main class="auth-login"><section class="card auth-login-card">
-<div class="login-brand">
-<img class="login-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
-<div class="login-brand-text"><h1>klaxond</h1><span>notification daemon</span></div>
-<span class="login-version">v{version}</span>
-</div>
-<h2>Sign in</h2>
-<p class="login-note">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
-<div class="login-actions">{primary}{passkey}{magic_link}</div>
-<nav class="login-legal" aria-label="Legal links">
-<a href="/legal/privacy?from=login">Privacy</a>
-<a href="/legal/accessibility?from=login">Accessibility</a>
-<a href="/legal/terms?from=login">Terms</a>
-<a href="/legal/cookies?from=login">Cookies</a>
-<a href="/legal/notice?from=login">Legal notice</a>
-</nav>
-<p class="muted login-byline">by {author_link}</p>
-</section></main></body></html>"#,
-        version = crate::config::VERSION
-    );
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Cache-Control", "no-store")
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(Body::from(html))
-        .unwrap()
-}
-
-fn author_link_html() -> String {
-    format!(
-        r#"<a href="{}" target="_blank" rel="noopener">{}</a>"#,
-        html_attr(crate::config::AUTHOR_URL),
-        html_attr(crate::config::AUTHOR_NAME)
-    )
-}
-
-fn html_attr(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
 }
 
 pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
@@ -288,6 +219,11 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
         sudo_until: 0,
         via_authorization: false,
         second_factor: String::new(),
+        session_id_hash: String::new(),
+        session_family_hash: String::new(),
+        session_created_at: 0,
+        provider_issuer: identity.assurance.issuer,
+        provider_session_id: identity.assurance.provider_session_id.unwrap_or_default(),
     };
     let cfg_all = state.cfg().auth;
     if let Some(location) = redirect_location_after_primary(
@@ -299,7 +235,13 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
     ) {
         return redirect(&location);
     }
-    let cookie = issue_session(state, &cfg_all, &mut user);
+    let cookie = match issue_session_on_worker(state, &cfg_all, &mut user).await {
+        Ok(cookie) => cookie,
+        Err(err) => {
+            tracing::error!("persist OIDC session failed: {err}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     let mut resp = redirect(if return_to.is_empty() {
         "/"
     } else {

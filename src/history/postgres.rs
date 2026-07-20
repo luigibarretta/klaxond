@@ -1,12 +1,20 @@
+use super::RuntimeAuthState;
 use super::{DeliveryEntry, DeliveryPage, RepeatCandidate, RepeatDecision, RepeatState};
 use anyhow::{Context, Result, bail};
 use postgres::{Client, NoTls};
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
+mod auth_state;
+mod rate_limit;
 mod repeat;
+mod session;
+mod session_locks;
 mod storage;
+mod worker_rate_limit;
 mod worker_repeat;
+mod worker_session;
 
 use self::storage::{
     count as postgres_count, export_all as postgres_export_all, insert as postgres_insert,
@@ -52,6 +60,12 @@ enum PostgresCommand {
         state: RepeatState,
         reply: mpsc::Sender<Result<()>>,
     },
+    ImportAuthState {
+        state: RuntimeAuthState,
+        reply: mpsc::Sender<Result<()>>,
+    },
+    Session(worker_session::SessionCommand),
+    RateLimit(worker_rate_limit::RateLimitCommand),
 }
 
 impl PostgresWorker {
@@ -174,6 +188,27 @@ impl PostgresWorker {
                             );
                             let _ = reply.send(result);
                         }
+                        PostgresCommand::ImportAuthState { state, reply } => {
+                            let result = postgres_with_retry(
+                                &worker_url,
+                                create_schema,
+                                &mut client,
+                                |client| auth_state::import(client, &state),
+                            );
+                            let _ = reply.send(result);
+                        }
+                        PostgresCommand::Session(command) => worker_session::execute(
+                            command,
+                            &worker_url,
+                            create_schema,
+                            &mut client,
+                        ),
+                        PostgresCommand::RateLimit(command) => worker_rate_limit::execute(
+                            command,
+                            &worker_url,
+                            create_schema,
+                            &mut client,
+                        ),
                     }
                 }
             })
@@ -221,11 +256,30 @@ impl PostgresWorker {
             .recv()
             .context("receive postgres history export response")?
     }
+
+    pub(super) fn import_runtime_auth_state(&self, state: &RuntimeAuthState) -> Result<()> {
+        let (reply, result) = mpsc::channel();
+        self.tx
+            .send(PostgresCommand::ImportAuthState {
+                state: state.clone(),
+                reply,
+            })
+            .context("send postgres auth state import request")?;
+        result
+            .recv()
+            .context("receive postgres auth state import response")?
+    }
 }
 
 fn connect_postgres(url: &str, create_schema: bool) -> Result<Client> {
-    let mut client =
-        Client::connect(url, NoTls).with_context(|| "connect postgres history database")?;
+    let mut config = url
+        .parse::<postgres::Config>()
+        .with_context(|| "parse postgres history database URL")?;
+    config.connect_timeout(Duration::from_secs(5));
+    let mut client = config
+        .connect(NoTls)
+        .with_context(|| "connect postgres history database")?;
+    client.batch_execute("SET statement_timeout = '10s'; SET lock_timeout = '5s';")?;
     if create_schema {
         migrate_postgres(&mut client)?;
     } else {

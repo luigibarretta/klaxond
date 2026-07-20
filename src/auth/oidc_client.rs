@@ -39,6 +39,23 @@ pub(super) async fn client_for(
     Ok(client)
 }
 
+pub(super) async fn cached_client_for(
+    state: &AppState,
+    config: &OidcClientConfig,
+) -> Result<PreparedAsyncOidcClient, auth_modules::oidc::OidcError> {
+    let generation = state.oidc_config_generation.load(Ordering::Relaxed);
+    let cached = state.oidc_provider.lock().await;
+    let cached = cached
+        .as_ref()
+        .ok_or_else(|| auth_modules::oidc::OidcError::new("OIDC provider is not prepared"))?;
+    if cached.generation != generation || cached.config != *config {
+        return Err(auth_modules::oidc::OidcError::new(
+            "OIDC provider cache does not match the active configuration",
+        ));
+    }
+    Ok(cached.client.clone())
+}
+
 pub async fn warm(state: &AppState) {
     let runtime = state.cfg();
     if runtime.auth.mode != "oidc" {

@@ -221,7 +221,13 @@ fn issue_totp_step_up_session(state: &AppState, token: &str, user_sub: &str) -> 
         Ok(finished) => finished,
         Err(err) => return text(StatusCode::UNAUTHORIZED, &err),
     };
-    let cookie = auth::issue_session_cookie(state, &mut user);
+    let cookie = match auth::issue_session_cookie(state, &mut user) {
+        Ok(cookie) => cookie,
+        Err(err) => {
+            tracing::error!("persist TOTP step-up session failed: {err}");
+            return text(StatusCode::SERVICE_UNAVAILABLE, "session store unavailable");
+        }
+    };
     let mut resp = json_response(json!({"ok": true, "user": user, "return_to": return_to}));
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         resp.headers_mut().insert(SET_COOKIE, value);

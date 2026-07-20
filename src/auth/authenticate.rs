@@ -1,6 +1,6 @@
 use super::basic::authenticate_basic;
 use super::local::{authenticate_ldap_basic, authenticate_trusted_proxy};
-use super::session::{cookie_values, issue_session, verify_session};
+use super::session::{cookie_values, rotate_session_on_worker, verify_session};
 use super::step_up::redirect_location_after_primary;
 use super::tokens::{authenticate_api_token, bearer_token, required_scope, viewer_allows_scope};
 use super::{AUTH_SESSION_COOKIE, AuthOutcome, User, auth_required, is_ui_fetch, redirect};
@@ -29,8 +29,13 @@ pub async fn authenticate(
         return authenticate_api_token(state, &token, method, path);
     }
 
-    if let Some(outcome) = authenticate_session(state, &cfg, headers, method, path) {
-        return outcome;
+    match authenticate_session(state, &cfg, headers, method, path).await {
+        Ok(Some(outcome)) => return outcome,
+        Ok(None) => {}
+        Err(err) => {
+            tracing::error!("persistent session authentication failed: {err}");
+            return AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response());
+        }
     }
 
     let outcome = authenticate_interactive_mode(state, &cfg, headers, path, peer).await;
@@ -49,30 +54,42 @@ fn anonymous_user() -> User {
         sudo_until: 0,
         via_authorization: false,
         second_factor: String::new(),
+        session_id_hash: String::new(),
+        session_family_hash: String::new(),
+        session_created_at: 0,
+        provider_issuer: String::new(),
+        provider_session_id: String::new(),
     }
 }
 
-fn authenticate_session(
+async fn authenticate_session(
     state: &AppState,
     cfg: &AuthConfig,
     headers: &HeaderMap,
     method: &Method,
     path: &str,
-) -> Option<AuthOutcome> {
+) -> Result<Option<AuthOutcome>, String> {
     if let Some(cookie) = headers.get(COOKIE).and_then(|v| v.to_str().ok()) {
         for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
-            if let Some(mut user) = verify_session(state, value) {
-                let refresh_cookie = ensure_session_security_fields(state, cfg, &mut user);
-                return Some(authorize_interactive_user(
+            if let Some(verified) = verify_session(state, value).await? {
+                let mut user = verified.user;
+                let refresh_cookie = ensure_session_security_fields(
+                    state,
+                    cfg,
+                    &mut user,
+                    verified.legacy || verified.should_rotate,
+                )
+                .await?;
+                return Ok(Some(authorize_interactive_user(
                     user,
                     refresh_cookie,
                     method,
                     path,
-                ));
+                )));
             }
         }
     }
-    None
+    Ok(None)
 }
 
 async fn authenticate_interactive_mode(
@@ -84,11 +101,11 @@ async fn authenticate_interactive_mode(
 ) -> AuthOutcome {
     match cfg.mode.as_str() {
         "basic" => {
-            let outcome = authenticate_basic(state, cfg, headers, path).await;
+            let outcome = authenticate_basic(state, cfg, headers, path, peer).await;
             ui_fetch_login_on_unauthorized(outcome, headers, path)
         }
         "ldap" => {
-            let outcome = authenticate_ldap_basic(state, cfg, headers, path).await;
+            let outcome = authenticate_ldap_basic(state, cfg, headers, path, peer).await;
             ui_fetch_login_on_unauthorized(outcome, headers, path)
         }
         "trusted-proxy" => trusted_proxy_with_step_up(state, cfg, headers, path, peer),
@@ -170,16 +187,21 @@ fn authorize_authenticated_outcome(
     }
 }
 
-fn ensure_session_security_fields(
+async fn ensure_session_security_fields(
     state: &AppState,
     cfg: &AuthConfig,
     user: &mut User,
-) -> Option<String> {
-    let needs_refresh = user.csrf.is_empty();
+    force_rotation: bool,
+) -> Result<Option<String>, String> {
+    let needs_refresh = force_rotation || user.csrf.is_empty();
     if user.csrf.is_empty() {
         user.csrf = format!("klx_csrf_{}", token_urlsafe(24));
     }
-    needs_refresh.then(|| issue_session(state, cfg, user))
+    if needs_refresh {
+        rotate_session_on_worker(state, cfg, user).await.map(Some)
+    } else {
+        Ok(None)
+    }
 }
 
 fn authorize_interactive_user(

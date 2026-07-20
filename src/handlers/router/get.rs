@@ -41,7 +41,7 @@ pub(super) async fn handle_get(
     if let Some(resp) = public_get_response(state, path, headers) {
         return resp;
     }
-    if let Some(resp) = auth_get_response(state, path, full_path, authed_user) {
+    if let Some(resp) = auth_get_response(state, path, full_path, authed_user).await {
         return resp;
     }
     if let Some(resp) = config_get_response(state, path).await {
@@ -82,7 +82,7 @@ fn public_get_response(
     }
 }
 
-fn auth_get_response(
+async fn auth_get_response(
     state: &AppState,
     path: &str,
     full_path: &str,
@@ -95,7 +95,7 @@ fn auth_get_response(
             let Some(token) = path_id(path, "/api/auth/magic/callback/") else {
                 return Some(text(StatusCode::NOT_FOUND, "not found"));
             };
-            Some(auth::magic_link_callback(state, &token))
+            Some(auth::magic_link_callback(state, &token).await)
         }
         "/api/auth/password-policy" => Some(password_policy_response()),
         "/api/auth/tokens" => Some(auth_tokens_response(state)),

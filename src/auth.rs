@@ -11,10 +11,12 @@ use serde_json::Value;
 use auth_modules::audit::AuthAuditKind;
 
 mod authenticate;
+mod backchannel_logout;
 mod basic;
-mod blocking;
+pub(crate) mod blocking;
 mod local;
 mod login;
+mod login_page;
 mod magic_link;
 mod oidc_client;
 mod payload;
@@ -22,7 +24,7 @@ mod rate_limit;
 mod session;
 mod step_up;
 #[cfg(test)]
-mod test_support;
+pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -32,6 +34,7 @@ mod totp_handlers;
 mod totp_replay;
 
 pub use authenticate::authenticate;
+pub use backchannel_logout::backchannel_logout;
 pub use local::{ldap_login_enabled, local_login, sudo};
 pub use login::{login, oidc_callback};
 pub use magic_link::{
@@ -48,9 +51,11 @@ pub use tokens::{public_token, required_scope, scopes_allow, token_hash};
 pub use totp_handlers::{totp_disable, totp_enable, totp_start};
 
 pub(in crate::auth) use payload::login_payload;
-use rate_limit::{
-    auth_rate_key, auth_rate_limited, clear_auth_failures, record_auth_audit_failure,
-    record_auth_failure,
+use rate_limit::record_auth_audit_failure;
+pub(crate) use rate_limit::{
+    AuthRateKeys, auth_rate_keys, auth_rate_limited, auth_rate_limited_on_worker,
+    clear_auth_failures, clear_auth_failures_on_worker, record_auth_failure,
+    record_auth_failure_on_worker,
 };
 
 pub const AUTH_SESSION_COOKIE: &str = "klaxond_session";
@@ -97,6 +102,16 @@ pub struct User {
     pub via_authorization: bool,
     #[serde(default)]
     pub second_factor: String,
+    #[serde(default, skip_serializing)]
+    pub session_id_hash: String,
+    #[serde(default, skip_serializing)]
+    pub session_family_hash: String,
+    #[serde(default, skip_serializing)]
+    pub session_created_at: i64,
+    #[serde(default, skip_serializing)]
+    pub provider_issuer: String,
+    #[serde(default, skip_serializing)]
+    pub provider_session_id: String,
 }
 
 pub enum AuthOutcome {

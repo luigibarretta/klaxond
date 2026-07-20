@@ -310,7 +310,8 @@ redirect_path = "/api/auth/callback"
 user_header = "X-Forwarded-User"
 email_header = "X-Forwarded-Email"
 groups_header = "X-Forwarded-Groups"
-trusted_cidrs = ["127.0.0.1/32", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
+# Add only actual reverse-proxy addresses/subnets, never a whole client LAN.
+trusted_cidrs = ["127.0.0.1/32", "::1/128"]
 
 [auth.webauthn]
 enabled = true

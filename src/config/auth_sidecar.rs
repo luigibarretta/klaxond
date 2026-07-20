@@ -12,26 +12,92 @@ pub(super) fn load_auth(paths: &Paths, seed: Option<&toml::Value>) -> Result<Aut
         if let Some(seed) = seed {
             out = merge_auth_toml(out, seed);
         }
-        if let Ok(sec) = std::env::var("AUTH_OIDC_CLIENT_SECRET")
-            && !sec.is_empty()
-        {
-            out.oidc.client_secret = sec;
-        }
-        if let Ok(hash) = std::env::var("AUTH_BASIC_PASSWORD_HASH")
-            && !hash.is_empty()
-        {
-            out.basic.password_hash = hash;
-        }
-        save_auth(paths, &out)?;
+        write_auth(paths, &out)?;
     }
     if normalize_auth_config(&mut out) {
         save_auth(paths, &out)?;
     }
+    apply_auth_env_overrides(&mut out)?;
     Ok(out)
 }
 
+fn apply_auth_env_overrides(auth: &mut AuthConfig) -> Result<()> {
+    if let Ok(secret) = std::env::var("AUTH_OIDC_CLIENT_SECRET")
+        && env_value_is_set(&secret)
+    {
+        auth.oidc.client_secret = secret;
+    }
+    if let Ok(hash) = std::env::var("AUTH_BASIC_PASSWORD_HASH")
+        && env_value_is_set(&hash)
+    {
+        auth.basic.password_hash = hash;
+    }
+    if let Ok(raw) = std::env::var("AUTH_TRUSTED_PROXY_CIDRS")
+        && !raw.trim().is_empty()
+    {
+        let cidrs = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value
+                    .parse::<ipnet::IpNet>()
+                    .map(|network| network.to_string())
+                    .map_err(|err| anyhow::anyhow!("invalid AUTH_TRUSTED_PROXY_CIDRS: {err}"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if cidrs.is_empty() {
+            anyhow::bail!("AUTH_TRUSTED_PROXY_CIDRS must contain at least one CIDR");
+        }
+        auth.trusted_proxy.trusted_cidrs = cidrs;
+    }
+    Ok(())
+}
+
 pub fn save_auth(paths: &Paths, auth: &AuthConfig) -> Result<()> {
+    write_auth(paths, &auth_for_persistence(paths, auth)?)
+}
+
+fn write_auth(paths: &Paths, auth: &AuthConfig) -> Result<()> {
     atomic_write_json(&paths.auth_config, auth)
+}
+
+fn auth_for_persistence(paths: &Paths, auth: &AuthConfig) -> Result<AuthConfig> {
+    let mut persisted = auth.clone();
+    let existing = if paths.auth_config.exists() {
+        Some(serde_json::from_slice::<AuthConfig>(&fs::read(
+            &paths.auth_config,
+        )?)?)
+    } else {
+        None
+    };
+    if env_override_is_set("AUTH_OIDC_CLIENT_SECRET") {
+        persisted.oidc.client_secret = existing
+            .as_ref()
+            .map(|auth| auth.oidc.client_secret.clone())
+            .unwrap_or_default();
+    }
+    if env_override_is_set("AUTH_BASIC_PASSWORD_HASH") {
+        persisted.basic.password_hash = existing
+            .as_ref()
+            .map(|auth| auth.basic.password_hash.clone())
+            .unwrap_or_default();
+    }
+    if env_override_is_set("AUTH_TRUSTED_PROXY_CIDRS") {
+        persisted.trusted_proxy.trusted_cidrs = existing
+            .as_ref()
+            .map(|auth| auth.trusted_proxy.trusted_cidrs.clone())
+            .unwrap_or_else(|| AuthConfig::default().trusted_proxy.trusted_cidrs);
+    }
+    Ok(persisted)
+}
+
+fn env_override_is_set(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| env_value_is_set(&value))
+}
+
+fn env_value_is_set(value: &str) -> bool {
+    !value.trim().is_empty()
 }
 
 fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {

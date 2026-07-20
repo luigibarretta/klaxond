@@ -1,4 +1,4 @@
-use super::session::{issue_session, sanitize_return_to};
+use super::session::{issue_session_on_worker, sanitize_return_to};
 use super::step_up::redirect_location_after_primary;
 use super::{
     AuthAuditKind, User, json_response, login_payload, record_auth_audit_failure, redirect,
@@ -41,7 +41,7 @@ pub fn magic_link_request(
         return (StatusCode::BAD_REQUEST, "username is required").into_response();
     }
     let return_to = sanitize_return_to(payload.return_to_or_status());
-    let rate_key = magic_link_rate_key(username, headers, peer);
+    let rate_key = magic_link_rate_key(state, username, headers, peer);
     let decision = state.auth_failures.record_attempt(
         &rate_key,
         GOLD_AUTH_SHORT_BURST_MAX,
@@ -77,7 +77,7 @@ pub fn magic_link_request(
     ))
 }
 
-pub fn magic_link_callback(state: &AppState, token: &str) -> Response<Body> {
+pub async fn magic_link_callback(state: &AppState, token: &str) -> Response<Body> {
     let cfg = state.cfg().auth;
     if !magic_link_enabled(&cfg) {
         return (StatusCode::NOT_FOUND, "magic link login is not configured").into_response();
@@ -97,7 +97,13 @@ pub fn magic_link_callback(state: &AppState, token: &str) -> Response<Body> {
     ) {
         return redirect(&location);
     }
-    let cookie = issue_session(state, &cfg, &mut user);
+    let cookie = match issue_session_on_worker(state, &cfg, &mut user).await {
+        Ok(cookie) => cookie,
+        Err(err) => {
+            tracing::error!("persist magic-link session failed: {err}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     let mut resp = redirect(&return_to);
     if let Ok(value) = HeaderValue::from_str(&cookie) {
         resp.headers_mut().insert(SET_COOKIE, value);
@@ -191,6 +197,11 @@ pub(super) fn consume_magic_link(
             sudo_until: 0,
             via_authorization: false,
             second_factor: String::new(),
+            session_id_hash: String::new(),
+            session_family_hash: String::new(),
+            session_created_at: 0,
+            provider_issuer: String::new(),
+            provider_session_id: String::new(),
         },
         challenge.return_to,
     ))
@@ -214,23 +225,14 @@ pub fn magic_link_callback_url(public_url: &str, token: &str) -> String {
     }
 }
 
-fn magic_link_rate_key(username: &str, headers: &HeaderMap, peer: SocketAddr) -> String {
+fn magic_link_rate_key(
+    state: &AppState,
+    username: &str,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+) -> String {
     let subject = username.trim().to_ascii_lowercase();
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .map(str::to_string)
-        .unwrap_or_else(|| peer.ip().to_string());
+    let ip = super::rate_limit::client_ip(state, headers, Some(peer));
     format!(
         "magic_link:{}:{ip}",
         if subject.is_empty() {

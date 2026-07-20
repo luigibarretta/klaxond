@@ -1,7 +1,7 @@
 use super::super::{json_body, json_response, text};
 use super::rate_limit::{
     clear_passkey_auth_failures, passkey_auth_rate_key, passkey_auth_rate_limited,
-    passkey_auth_rate_limited_response, record_passkey_auth_failure,
+    passkey_auth_rate_limited_response, passkey_auth_store_error, record_passkey_auth_failure,
 };
 use super::webauthn_config::webauthn_for_cfg;
 use crate::auth::{self, User};
@@ -12,6 +12,7 @@ use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::{Body, Bytes};
 use axum::http::header::SET_COOKIE;
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
+use axum::response::IntoResponse;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use webauthn_rs::prelude::{AuthenticationResult, Passkey, PublicKeyCredential};
@@ -40,19 +41,29 @@ pub(in crate::handlers) fn passkey_login_start(
         Ok(intent) => intent,
         Err((status, message)) => return text(status, &message),
     };
-    let rate_key = passkey_auth_rate_key("passkey", &intent.user_hint, headers, peer);
-    if passkey_auth_rate_limited(state, &rate_key) {
-        record_passkey_auth_failure(state, &rate_key, "rate_limited");
-        return passkey_auth_rate_limited_response();
+    let rate_key = passkey_auth_rate_key(state, "passkey", &intent.user_hint, headers, peer);
+    match passkey_auth_rate_limited(state, &rate_key) {
+        Ok(true) => {
+            let _ = record_passkey_auth_failure(state, &rate_key, "rate_limited");
+            return passkey_auth_rate_limited_response();
+        }
+        Ok(false) => {}
+        Err(err) => return passkey_auth_store_error("check", err),
     }
     if intent.user_hint.is_empty() {
-        record_passkey_auth_failure(state, &rate_key, "missing user");
+        if let Err(err) = record_passkey_auth_failure(state, &rate_key, "missing user") {
+            return passkey_auth_store_error("missing-user failure", err);
+        }
         return text(StatusCode::BAD_REQUEST, "user is required");
     }
     let cfg = state.cfg();
     let matching = matching_passkeys(&cfg, &intent);
     if matching.is_empty() {
-        record_passkey_auth_failure(state, &rate_key, "no passkey registered for user");
+        if let Err(err) =
+            record_passkey_auth_failure(state, &rate_key, "no passkey registered for user")
+        {
+            return passkey_auth_store_error("unknown-user failure", err);
+        }
         return text(StatusCode::NOT_FOUND, "no passkey registered for that user");
     }
     let webauthn = match webauthn_for_cfg(&cfg) {
@@ -63,7 +74,11 @@ pub(in crate::handlers) fn passkey_login_start(
     let (challenge, auth_state) = match webauthn.start_passkey_authentication(&creds) {
         Ok(v) => v,
         Err(err) => {
-            record_passkey_auth_failure(state, &rate_key, "passkey start failed");
+            if let Err(store_err) =
+                record_passkey_auth_failure(state, &rate_key, "passkey start failed")
+            {
+                return passkey_auth_store_error("start failure", store_err);
+            }
             return text(StatusCode::BAD_REQUEST, &err.to_string());
         }
     };
@@ -95,25 +110,37 @@ pub(in crate::handlers) fn passkey_login_finish(
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let unknown_rate_key = passkey_auth_rate_key("passkey", "", headers, peer);
-    if passkey_auth_rate_limited(state, &unknown_rate_key) {
-        record_passkey_auth_failure(state, &unknown_rate_key, "rate_limited");
-        return passkey_auth_rate_limited_response();
+    let unknown_rate_key = passkey_auth_rate_key(state, "passkey", "", headers, peer);
+    match passkey_auth_rate_limited(state, &unknown_rate_key) {
+        Ok(true) => {
+            let _ = record_passkey_auth_failure(state, &unknown_rate_key, "rate_limited");
+            return passkey_auth_rate_limited_response();
+        }
+        Ok(false) => {}
+        Err(err) => return passkey_auth_store_error("unknown-request check", err),
     }
     let login = match parse_login_finish_payload(&payload) {
         Ok(login) => login,
         Err((status, message)) => return text(status, &message),
     };
     let Some(pending) = take_pending_authentication(state, &login.request_id) else {
-        record_passkey_auth_failure(state, &unknown_rate_key, "unknown passkey request");
+        if let Err(err) =
+            record_passkey_auth_failure(state, &unknown_rate_key, "unknown passkey request")
+        {
+            return passkey_auth_store_error("unknown-request failure", err);
+        }
         return text(
             StatusCode::BAD_REQUEST,
             "unknown or expired passkey request",
         );
     };
-    if passkey_auth_rate_limited(state, &pending.rate_key) {
-        record_passkey_auth_failure(state, &pending.rate_key, "rate_limited");
-        return passkey_auth_rate_limited_response();
+    match passkey_auth_rate_limited(state, &pending.rate_key) {
+        Ok(true) => {
+            let _ = record_passkey_auth_failure(state, &pending.rate_key, "rate_limited");
+            return passkey_auth_rate_limited_response();
+        }
+        Ok(false) => {}
+        Err(err) => return passkey_auth_store_error("verification check", err),
     }
     let cfg = state.cfg();
     let webauthn = match webauthn_for_cfg(&cfg) {
@@ -123,7 +150,11 @@ pub(in crate::handlers) fn passkey_login_finish(
     let result = match webauthn.finish_passkey_authentication(&login.credential, &pending.state) {
         Ok(v) => v,
         Err(err) => {
-            record_passkey_auth_failure(state, &pending.rate_key, "passkey verification failed");
+            if let Err(store_err) =
+                record_passkey_auth_failure(state, &pending.rate_key, "passkey verification failed")
+            {
+                return passkey_auth_store_error("verification failure", store_err);
+            }
             return text(StatusCode::UNAUTHORIZED, &err.to_string());
         }
     };
@@ -232,7 +263,13 @@ fn finish_login_under_lock(
             let mut cfg = state.cfg();
             let Some(record) = matching_credential_mut(&mut cfg.auth.passkeys, &pending, &result)
             else {
-                record_passkey_auth_failure(state, &pending.rate_key, "passkey credential missing");
+                if let Err(err) = record_passkey_auth_failure(
+                    state,
+                    &pending.rate_key,
+                    "passkey credential missing",
+                ) {
+                    return passkey_auth_store_error("credential failure", err);
+                }
                 return text(StatusCode::UNAUTHORIZED, "passkey credential not found");
             };
             record.last_used_at = Some(crate::util::now_epoch_i64());
@@ -242,7 +279,13 @@ fn finish_login_under_lock(
                     match auth::finish_webauthn_step_up(state, token, &record.user_sub) {
                         Ok((user, return_to)) => (user, Some(return_to)),
                         Err(err) => {
-                            record_passkey_auth_failure(state, &pending.rate_key, "step-up failed");
+                            if let Err(store_err) = record_passkey_auth_failure(
+                                state,
+                                &pending.rate_key,
+                                "step-up failed",
+                            ) {
+                                return passkey_auth_store_error("step-up failure", store_err);
+                            }
                             return text(StatusCode::UNAUTHORIZED, &err);
                         }
                     }
@@ -264,7 +307,9 @@ fn finish_login_under_lock(
                 return text(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string());
             }
             state.replace_config(cfg);
-            clear_passkey_auth_failures(state, &pending.rate_key);
+            if let Err(err) = clear_passkey_auth_failures(state, &pending.rate_key) {
+                return passkey_auth_store_error("clear", err);
+            }
             if let Some(location) = primary_step_up {
                 return json_response(json!({"ok": true, "step_up": true, "return_to": location}));
             }
@@ -297,6 +342,11 @@ fn passkey_user(record: &PasskeyRecord) -> User {
         sudo_until: auth::sudo_until_deadline(),
         via_authorization: false,
         second_factor: String::new(),
+        session_id_hash: String::new(),
+        session_family_hash: String::new(),
+        session_created_at: 0,
+        provider_issuer: String::new(),
+        provider_session_id: String::new(),
     }
 }
 
@@ -305,7 +355,13 @@ fn passkey_login_response(
     user: &mut User,
     return_to: Option<&str>,
 ) -> Response<Body> {
-    let cookie = auth::issue_session_cookie(state, user);
+    let cookie = match auth::issue_session_cookie(state, user) {
+        Ok(cookie) => cookie,
+        Err(err) => {
+            tracing::error!("persist passkey session failed: {err}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     let mut body = json!({"ok": true, "user": user});
     if let Some(return_to) = return_to.filter(|value| !value.is_empty()) {
         body["return_to"] = json!(return_to);

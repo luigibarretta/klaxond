@@ -19,7 +19,7 @@ async fn basic_authorization_primary_auth_opens_interactive_step_up() {
     let headers = basic_headers("luigi", "correct horse battery staple");
 
     let AuthOutcome::Rejected(resp) =
-        super::basic::authenticate_basic(&state, &auth, &headers, "/status").await
+        super::basic::authenticate_basic(&state, &auth, &headers, "/status", None).await
     else {
         panic!("valid primary auth should require step-up before session issue");
     };

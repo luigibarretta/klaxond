@@ -93,6 +93,7 @@ fn all_runtime_operations_are_documented_in_openapi() {
         ("post", "/api/auth/magic/request"),
         ("get", "/api/auth/magic/callback/{token}"),
         ("get", "/api/auth/callback"),
+        ("post", "/api/auth/backchannel-logout"),
         ("post", "/api/auth/logout"),
         ("get", "/api/auth/me"),
         ("get", "/api/auth/password-policy"),

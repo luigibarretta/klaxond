@@ -1,6 +1,9 @@
 use super::verify_password;
 use crate::config::AuthConfig;
 use crate::state::AppState;
+use std::time::Duration;
+
+pub(crate) const AUTH_STORE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) async fn verify_password_on_worker(
     state: &AppState,
@@ -37,7 +40,7 @@ pub(super) async fn authenticate_ldap(
     .await?
 }
 
-async fn run<T, F>(state: &AppState, task: F) -> Result<T, String>
+pub(crate) async fn run<T, F>(state: &AppState, task: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> T + Send + 'static,
@@ -54,4 +57,23 @@ where
     })
     .await
     .map_err(|err| format!("authentication worker failed: {err}"))
+}
+
+pub(crate) async fn run_with_timeout<T, F>(
+    state: &AppState,
+    timeout: Duration,
+    task: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    tokio::time::timeout(timeout, run(state, task))
+        .await
+        .map_err(|_| {
+            format!(
+                "authentication worker timed out after {}s",
+                timeout.as_secs()
+            )
+        })?
 }

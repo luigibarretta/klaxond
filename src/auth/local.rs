@@ -1,13 +1,13 @@
 use super::basic::{challenge as basic_challenge, credentials as basic_credentials};
 use super::session::sanitize_return_to;
-use super::session::{issue_session, set_session_cookie};
+use super::session::{issue_session_on_worker, set_session_cookie};
 use super::step_up::{primary_step_up_response, redirect_location_after_primary};
 use super::totp_replay::consume_basic_totp;
 use super::{
-    AuthOutcome, User, auth_rate_key, auth_rate_limited,
+    AuthOutcome, User, auth_rate_keys, auth_rate_limited_on_worker,
     blocking::{authenticate_ldap, verify_password_on_worker},
-    clear_auth_failures, json_response, login_payload, record_auth_failure, redirect,
-    sudo_window_seconds,
+    clear_auth_failures_on_worker, json_response, login_payload, record_auth_failure_on_worker,
+    redirect, sudo_window_seconds,
 };
 use crate::config::AuthConfig;
 use crate::state::AppState;
@@ -21,35 +21,50 @@ use ipnet::IpNet;
 use serde_json::json;
 use std::net::{IpAddr, SocketAddr};
 
+mod sudo;
+pub use self::sudo::sudo;
+
 pub(super) async fn authenticate_ldap_basic(
     state: &AppState,
     cfg: &AuthConfig,
     headers: &HeaderMap,
     return_to: &str,
+    peer: Option<SocketAddr>,
 ) -> AuthOutcome {
     let Some((username, password)) = basic_credentials(headers) else {
         return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
     };
-    let rate_key = auth_rate_key("ldap", &username);
-    if auth_rate_limited(state, &rate_key) {
-        record_auth_failure(state, &rate_key, "auth.ldap", errors::RATE_LIMITED);
-        return AuthOutcome::Rejected(
-            (
-                StatusCode::TOO_MANY_REQUESTS,
-                "too many authentication failures",
-            )
-                .into_response(),
-        );
+    let rate_keys = auth_rate_keys(state, "ldap", &username, headers, peer);
+    match auth_rate_limited_on_worker(state, &rate_keys).await {
+        Ok(true) => {
+            let _ =
+                record_auth_failure_on_worker(state, &rate_keys, "auth.ldap", errors::RATE_LIMITED)
+                    .await;
+            return AuthOutcome::Rejected(rate_limited_response());
+        }
+        Ok(false) => {}
+        Err(err) => return AuthOutcome::Rejected(rate_store_error("LDAP check", err)),
     }
     let identity = match authenticate_ldap(state, cfg, &username, &password).await {
         Ok(identity) => identity,
         Err(err) => {
             tracing::warn!(?err, "LDAP Basic authentication failed");
-            record_auth_failure(state, &rate_key, "auth.ldap", "ldap authentication failed");
+            if let Err(err) = record_auth_failure_on_worker(
+                state,
+                &rate_keys,
+                "auth.ldap",
+                "ldap authentication failed",
+            )
+            .await
+            {
+                return AuthOutcome::Rejected(rate_store_error("LDAP failure", err));
+            }
             return AuthOutcome::Rejected(basic_challenge("klaxond ldap"));
         }
     };
-    clear_auth_failures(state, &rate_key);
+    if let Err(err) = clear_auth_failures_on_worker(state, &rate_keys).await {
+        return AuthOutcome::Rejected(rate_store_error("LDAP clear", err));
+    }
     let mut user = ldap_user(identity);
     user.sudo_until = now_epoch_i64() + sudo_window_seconds();
     if let Some(resp) = primary_step_up_response(
@@ -62,8 +77,13 @@ pub(super) async fn authenticate_ldap_basic(
     ) {
         return AuthOutcome::Rejected(resp);
     }
-    let cookie = issue_session(state, cfg, &mut user);
-    AuthOutcome::Authorized(user, Some(cookie))
+    match issue_session_on_worker(state, cfg, &mut user).await {
+        Ok(cookie) => AuthOutcome::Authorized(user, Some(cookie)),
+        Err(err) => {
+            tracing::error!("persist LDAP session failed: {err}");
+            AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response())
+        }
+    }
 }
 
 pub(super) fn authenticate_trusted_proxy(
@@ -99,6 +119,11 @@ pub(super) fn authenticate_trusted_proxy(
             sudo_until: 0,
             via_authorization: false,
             second_factor: String::new(),
+            session_id_hash: String::new(),
+            session_family_hash: String::new(),
+            session_created_at: 0,
+            provider_issuer: String::new(),
+            provider_session_id: String::new(),
         },
         None,
     )
@@ -108,7 +133,12 @@ pub fn ldap_login_enabled(cfg: &AuthConfig) -> bool {
     cfg.mode == "ldap" && cfg.ldap.to_auth_modules_config().is_some()
 }
 
-pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
+pub async fn local_login(
+    state: &AppState,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+    body: Bytes,
+) -> Response<Body> {
     let cfg = state.cfg().auth;
     if !matches!(cfg.mode.as_str(), "basic" | "ldap") {
         return (
@@ -121,14 +151,20 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
     let username = payload.username().trim();
     let password = payload.password();
     let code = payload.totp();
-    let rate_key = auth_rate_key("login", username);
-    if auth_rate_limited(state, &rate_key) {
-        record_auth_failure(state, &rate_key, "auth.login", errors::RATE_LIMITED);
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            "too many authentication failures",
-        )
-            .into_response();
+    let rate_keys = auth_rate_keys(state, "login", username, headers, Some(peer));
+    match auth_rate_limited_on_worker(state, &rate_keys).await {
+        Ok(true) => {
+            let _ = record_auth_failure_on_worker(
+                state,
+                &rate_keys,
+                "auth.login",
+                errors::RATE_LIMITED,
+            )
+            .await;
+            return rate_limited_response();
+        }
+        Ok(false) => {}
+        Err(err) => return rate_store_error("local login check", err),
     }
     let return_to = sanitize_return_to(payload.return_to_or_status());
     let mut user = if cfg.mode == "ldap" {
@@ -136,7 +172,16 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
             Ok(identity) => ldap_user(identity),
             Err(err) => {
                 tracing::warn!(?err, "LDAP login failed");
-                record_auth_failure(state, &rate_key, "auth.ldap", "ldap authentication failed");
+                if let Err(store_err) = record_auth_failure_on_worker(
+                    state,
+                    &rate_keys,
+                    "auth.ldap",
+                    "ldap authentication failed",
+                )
+                .await
+                {
+                    return rate_store_error("LDAP login failure", store_err);
+                }
                 return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
             }
         }
@@ -145,24 +190,32 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
             || cfg.basic.password_hash.is_empty()
             || !verify_password_on_worker(state, password, &cfg.basic.password_hash).await
         {
-            record_auth_failure(
+            if let Err(err) = record_auth_failure_on_worker(
                 state,
-                &rate_key,
+                &rate_keys,
                 "auth.login",
                 "invalid username or password",
-            );
+            )
+            .await
+            {
+                return rate_store_error("local login failure", err);
+            }
             return (StatusCode::UNAUTHORIZED, "invalid username or password").into_response();
         }
         if cfg.basic.totp_enabled {
             match consume_basic_totp(state, code) {
                 Ok(true) => {}
                 Ok(false) => {
-                    record_auth_failure(
+                    if let Err(err) = record_auth_failure_on_worker(
                         state,
-                        &rate_key,
+                        &rate_keys,
                         "auth.login",
                         "invalid or replayed TOTP code",
-                    );
+                    )
+                    .await
+                    {
+                        return rate_store_error("local TOTP failure", err);
+                    }
                     return (
                         StatusCode::UNAUTHORIZED,
                         "TOTP code required, invalid, or already used",
@@ -190,9 +243,16 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
             } else {
                 String::new()
             },
+            session_id_hash: String::new(),
+            session_family_hash: String::new(),
+            session_created_at: 0,
+            provider_issuer: String::new(),
+            provider_session_id: String::new(),
         }
     };
-    clear_auth_failures(state, &rate_key);
+    if let Err(err) = clear_auth_failures_on_worker(state, &rate_keys).await {
+        return rate_store_error("local login clear", err);
+    }
     let primary = if user.mode == "ldap" {
         PrimaryAuthMethod::Ldap
     } else {
@@ -207,83 +267,18 @@ pub async fn local_login(state: &AppState, body: Bytes) -> Response<Body> {
             redirect(&location)
         };
     }
-    let cookie = issue_session(state, &cfg, &mut user);
+    let cookie = match issue_session_on_worker(state, &cfg, &mut user).await {
+        Ok(cookie) => cookie,
+        Err(err) => {
+            tracing::error!("persist local session failed: {err}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     let mut resp = if payload.wants_json(&body) {
         json_response(json!({"ok": true, "return_to": return_to, "csrf": user.csrf}))
     } else {
         redirect(&return_to)
     };
-    set_session_cookie(&mut resp, &cookie);
-    resp
-}
-
-pub async fn sudo(state: &AppState, body: Bytes, user: Option<&User>) -> Response<Body> {
-    let Some(user) = user else {
-        return (StatusCode::UNAUTHORIZED, "authentication required").into_response();
-    };
-    if !matches!(user.mode.as_str(), "basic" | "ldap" | "magic_link") {
-        return (
-            StatusCode::BAD_REQUEST,
-            "sudo reauth is available only for local or LDAP login",
-        )
-            .into_response();
-    }
-    let cfg = state.cfg().auth;
-    let payload = login_payload(&body);
-    let password = payload.password();
-    let code = payload.totp();
-    let rate_key = auth_rate_key("sudo", &user.sub);
-    if auth_rate_limited(state, &rate_key) {
-        record_auth_failure(state, &rate_key, "auth.sudo", errors::RATE_LIMITED);
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            "too many authentication failures",
-        )
-            .into_response();
-    }
-    if user.mode == "ldap" {
-        if let Err(err) = authenticate_ldap(state, &cfg, &user.sub, password).await {
-            tracing::warn!(?err, "LDAP sudo reauth failed");
-            record_auth_failure(state, &rate_key, "auth.sudo", "ldap reauth failed");
-            return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
-        }
-    } else {
-        if cfg.basic.password_hash.is_empty()
-            || !verify_password_on_worker(state, password, &cfg.basic.password_hash).await
-        {
-            record_auth_failure(state, &rate_key, "auth.sudo", "invalid password");
-            return (StatusCode::UNAUTHORIZED, "invalid password").into_response();
-        }
-        if cfg.basic.totp_enabled {
-            match consume_basic_totp(state, code) {
-                Ok(true) => {}
-                Ok(false) => {
-                    record_auth_failure(
-                        state,
-                        &rate_key,
-                        "auth.sudo",
-                        "invalid or replayed TOTP code",
-                    );
-                    return (
-                        StatusCode::UNAUTHORIZED,
-                        "TOTP code required, invalid, or already used",
-                    )
-                        .into_response();
-                }
-                Err(err) => {
-                    tracing::error!("persist sudo TOTP replay counter failed: {err}");
-                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                }
-            }
-        }
-    }
-    clear_auth_failures(state, &rate_key);
-    let mut refreshed = user.clone();
-    refreshed.sudo_until = now_epoch_i64() + sudo_window_seconds();
-    let cookie = issue_session(state, &cfg, &mut refreshed);
-    let mut resp = json_response(
-        json!({"ok": true, "sudo_until": refreshed.sudo_until, "csrf": refreshed.csrf}),
-    );
     set_session_cookie(&mut resp, &cookie);
     resp
 }
@@ -300,7 +295,25 @@ fn ldap_user(identity: auth_modules::ldap::LdapIdentity) -> User {
         sudo_until: 0,
         via_authorization: false,
         second_factor: String::new(),
+        session_id_hash: String::new(),
+        session_family_hash: String::new(),
+        session_created_at: 0,
+        provider_issuer: String::new(),
+        provider_session_id: String::new(),
     }
+}
+
+pub(super) fn rate_limited_response() -> Response<Body> {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        "too many authentication failures",
+    )
+        .into_response()
+}
+
+pub(super) fn rate_store_error(operation: &str, err: String) -> Response<Body> {
+    tracing::error!("persistent authentication rate-limit {operation} failed: {err}");
+    StatusCode::SERVICE_UNAVAILABLE.into_response()
 }
 
 fn cidr_match(ip: IpAddr, cidrs: &[String]) -> bool {

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.14.27 — 2026-07-20
+
+- Spostate le sessioni browser su record opachi persistenti in SQLite o
+  PostgreSQL, con idle timeout, durata assoluta, rotazione atomica, limite per
+  utente e revoca dell'intera famiglia al logout.
+- Aggiunto OIDC Back-Channel Logout replay-safe con revoca per issuer, subject e
+  session ID; discovery e refresh provider ora usano il client asincrono
+  preparato di `auth-modules`.
+- Persistiti lockout e rate state account con chiavi HMAC; i limiti burst per IP
+  restano intenzionalmente in memoria.
+- Resa atomica la migrazione dello stato auth tra backend history e protetto il
+  cambio backend runtime con rollback della configurazione in caso di errore.
+- Resa esplicita la trust boundary dei reverse proxy: il default accetta solo
+  loopback e `AUTH_TRUSTED_PROXY_CIDRS` consente override deploy-time senza
+  sovrascrivere i valori persistiti.
+
 ## 0.14.26 — 2026-07-06
 
 - Rimossa la costante runtime hardcoded della versione: login page, status,

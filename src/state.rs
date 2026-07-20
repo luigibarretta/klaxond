@@ -14,7 +14,10 @@ pub use self::types::{
     Suppression,
 };
 use crate::config::{Paths, RuntimeConfig, load_runtime_config};
-use crate::history::{DeliveryEntry, DeliveryPage, HistoryStore, RepeatSuppressionSummary};
+use crate::history::{
+    DeliveryEntry, DeliveryPage, HistoryStore, RepeatSuppressionSummary,
+    snapshot_runtime_auth_state,
+};
 use crate::util::tmp_path;
 use anyhow::{Context, Result};
 use fs2::FileExt;
@@ -40,6 +43,7 @@ pub struct AppState {
     pub session_key: Arc<Vec<u8>>,
     pub cascade_runtime_enabled: Arc<AtomicBool>,
     pub history: Arc<RwLock<Arc<HistoryStore>>>,
+    pub(crate) auth_store_transition: Arc<RwLock<()>>,
     pub delivery_log: Arc<Mutex<DeliveryLog>>,
     pub suppressions: Arc<Mutex<Vec<Suppression>>>,
     pub ack_suppressions: Arc<Mutex<HashMap<String, f64>>>,
@@ -83,6 +87,7 @@ impl AppState {
             session_key: Arc::new(session_key),
             cascade_runtime_enabled: Arc::new(AtomicBool::new(cascade_runtime_enabled)),
             history: Arc::new(RwLock::new(history)),
+            auth_store_transition: Arc::new(RwLock::new(())),
             delivery_log: Arc::new(Mutex::new(DeliveryLog::with_capacity(50))),
             suppressions: Arc::new(Mutex::new(Vec::new())),
             ack_suppressions: Arc::new(Mutex::new(HashMap::new())),
@@ -113,12 +118,7 @@ impl AppState {
     }
 
     pub fn try_replace_config(&self, cfg: RuntimeConfig) -> Result<(), String> {
-        self.replace_history_store_if_needed(&cfg)?;
-        self.cascade_runtime_enabled
-            .store(cfg.cascade_default, Ordering::Relaxed);
-        let oidc_changed = replace_runtime_config(&self.config, cfg);
-        self.mark_oidc_config_change(oidc_changed);
-        Ok(())
+        self.commit_config_replacement(cfg, true, || Ok(()), || Ok(()))
     }
 
     pub fn replace_config(&self, cfg: RuntimeConfig) {
@@ -128,10 +128,7 @@ impl AppState {
     }
 
     pub fn try_replace_config_preserving_runtime(&self, cfg: RuntimeConfig) -> Result<(), String> {
-        self.replace_history_store_if_needed(&cfg)?;
-        let oidc_changed = replace_runtime_config(&self.config, cfg);
-        self.mark_oidc_config_change(oidc_changed);
-        Ok(())
+        self.commit_config_replacement(cfg, false, || Ok(()), || Ok(()))
     }
 
     pub fn replace_config_preserving_runtime(&self, cfg: RuntimeConfig) {
@@ -140,14 +137,60 @@ impl AppState {
         }
     }
 
-    fn replace_history_store_if_needed(&self, cfg: &RuntimeConfig) -> Result<(), String> {
+    pub(crate) fn try_replace_config_with_commit<R>(
+        &self,
+        cfg: RuntimeConfig,
+        commit: impl FnOnce() -> Result<R, String>,
+        rollback: impl FnOnce() -> Result<(), String>,
+    ) -> Result<R, String> {
+        self.commit_config_replacement(cfg, true, commit, rollback)
+    }
+
+    fn commit_config_replacement<R>(
+        &self,
+        cfg: RuntimeConfig,
+        update_cascade_runtime: bool,
+        commit: impl FnOnce() -> Result<R, String>,
+        rollback: impl FnOnce() -> Result<(), String>,
+    ) -> Result<R, String> {
+        let mut rollback = Some(rollback);
         let current = self.with_cfg(|current| current.history.clone());
         if current == cfg.history {
-            return Ok(());
+            let result = commit().map_err(|err| rollback_after(err, &mut rollback))?;
+            self.apply_runtime_config(cfg, update_cascade_runtime);
+            return Ok(result);
         }
-        let store = HistoryStore::open(&cfg.history).map_err(|err| err.to_string())?;
+        let _transition = write_lock(&self.auth_store_transition, "auth store transition");
+        let current_store = self.history_store();
+        let auth_state = snapshot_runtime_auth_state(&current_store)
+            .map_err(|err| format!("snapshot authentication state: {err}"))?;
+        let result = commit().map_err(|err| rollback_after(err, &mut rollback))?;
+        let store = HistoryStore::open(&cfg.history).map_err(|err| {
+            rollback_after(
+                format!("open replacement history store: {err}"),
+                &mut rollback,
+            )
+        })?;
+        store
+            .import_runtime_auth_state(&auth_state)
+            .map_err(|err| {
+                rollback_after(
+                    format!("copy authentication state to replacement history store: {err}"),
+                    &mut rollback,
+                )
+            })?;
         *write_lock(&self.history, "history store") = Arc::new(store);
-        Ok(())
+        self.apply_runtime_config(cfg, update_cascade_runtime);
+        Ok(result)
+    }
+
+    fn apply_runtime_config(&self, cfg: RuntimeConfig, update_cascade_runtime: bool) {
+        if update_cascade_runtime {
+            self.cascade_runtime_enabled
+                .store(cfg.cascade_default, Ordering::Relaxed);
+        }
+        let oidc_changed = replace_runtime_config(&self.config, cfg);
+        self.mark_oidc_config_change(oidc_changed);
     }
 
     fn mark_oidc_config_change(&self, changed: bool) {
@@ -158,6 +201,12 @@ impl AppState {
 
     pub(crate) fn history_store(&self) -> Arc<HistoryStore> {
         read_lock(&self.history, "history store").clone()
+    }
+
+    pub(crate) fn with_auth_store<R>(&self, f: impl FnOnce(&HistoryStore) -> R) -> R {
+        let _transition = read_lock(&self.auth_store_transition, "auth store transition");
+        let store = self.history_store();
+        f(&store)
     }
 
     pub fn with_config_write_lock<R>(&self, f: impl FnOnce() -> R) -> Result<R, String> {
@@ -267,6 +316,19 @@ impl AppState {
     pub fn metric_set(&self, name: &str, labels: &[(&str, &str)], value: f64) {
         let key = metric_key(name, labels);
         lock_mutex(&self.metrics.gauges, "metrics gauges").insert(key, value);
+    }
+}
+
+fn rollback_after<F>(error: String, rollback: &mut Option<F>) -> String
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    let Some(rollback) = rollback.take() else {
+        return error;
+    };
+    match rollback() {
+        Ok(()) => error,
+        Err(rollback_error) => format!("{error}; rollback failed: {rollback_error}"),
     }
 }
 

@@ -87,6 +87,82 @@ fn history_store_reopens_when_runtime_config_changes() {
 }
 
 #[test]
+fn history_store_switch_preserves_runtime_auth_state() {
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let state = AppState::new(paths).unwrap();
+    let now = crate::util::now_epoch_i64();
+    let session = crate::history::AuthSessionRecord {
+        id_hash: "session-hash".to_string(),
+        family_hash: "session-family".to_string(),
+        user_json: "{}".to_string(),
+        user_sub: "alice".to_string(),
+        auth_mode: "oidc".to_string(),
+        provider_issuer: Some("https://idp.example.test".to_string()),
+        provider_session_id: Some("provider-session".to_string()),
+        created_at: now,
+        last_seen_at: now,
+        last_rotated_at: now,
+        expires_at: now + 3600,
+        revoked_at: None,
+    };
+    state
+        .history_store()
+        .create_auth_session(&session, None, 3, now)
+        .unwrap();
+    for _ in 0..10 {
+        state
+            .history_store()
+            .record_auth_failure("rate-key-hash", now)
+            .unwrap();
+    }
+
+    let mut cfg = state.cfg();
+    cfg.history.sqlite_path = tmp.path().join("replacement.db");
+    state.try_replace_config(cfg).unwrap();
+
+    assert!(
+        state
+            .history_store()
+            .auth_session("session-hash", now, 1800)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        state
+            .history_store()
+            .auth_rate_limited("rate-key-hash", now)
+            .unwrap()
+    );
+}
+
+#[test]
+fn failed_config_commit_keeps_the_active_history_store() {
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let state = AppState::new(paths).unwrap();
+    let original_history = state.cfg().history;
+    let replacement = tmp.path().join("failed-replacement.db");
+    let mut cfg = state.cfg();
+    cfg.history.sqlite_path = replacement.clone();
+    let rollback_called = std::cell::Cell::new(false);
+
+    let result: Result<(), String> = state.try_replace_config_with_commit(
+        cfg,
+        || Err("persist failed".to_string()),
+        || {
+            rollback_called.set(true);
+            Ok(())
+        },
+    );
+
+    assert_eq!(result.unwrap_err(), "persist failed");
+    assert!(rollback_called.get());
+    assert_eq!(state.cfg().history, original_history);
+    assert!(!replacement.exists());
+}
+
+#[test]
 fn oidc_provider_generation_tracks_only_provider_inputs() {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(temp_paths(&tmp)).unwrap();

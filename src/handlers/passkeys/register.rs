@@ -9,6 +9,7 @@ use axum::body::{Body, Bytes};
 use axum::http::HeaderValue;
 use axum::http::header::SET_COOKIE;
 use axum::http::{Response, StatusCode};
+use axum::response::IntoResponse;
 use serde_json::{Value, json};
 use webauthn_rs::prelude::{CredentialID, Passkey, RegisterPublicKeyCredential, Uuid};
 
@@ -231,7 +232,13 @@ fn passkey_step_up_response(
         Ok(finished) => finished,
         Err(err) => return text(StatusCode::UNAUTHORIZED, &err),
     };
-    let cookie = auth::issue_session_cookie(state, &mut user);
+    let cookie = match auth::issue_session_cookie(state, &mut user) {
+        Ok(cookie) => cookie,
+        Err(err) => {
+            tracing::error!("persist passkey step-up session failed: {err}");
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
+    };
     let mut resp = json_response(json!({
         "ok": true,
         "passkey": public_passkey(record),

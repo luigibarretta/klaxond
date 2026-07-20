@@ -84,7 +84,7 @@ pub struct PendingPasskeyRegistration {
 pub struct PendingPasskeyAuthentication {
     pub ts: f64,
     pub user_sub: String,
-    pub rate_key: String,
+    pub(crate) rate_key: crate::auth::AuthRateKeys,
     pub step_up: Option<String>,
     pub state: PasskeyAuthentication,
 }

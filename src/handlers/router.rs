@@ -54,7 +54,10 @@ pub async fn dispatch(
         return auth::oidc_callback(&state, headers, &full_path).await;
     }
     if method == Method::POST && path == "/api/auth/logout" {
-        return auth::api_logout(&headers);
+        return auth::api_logout(&state, &headers).await;
+    }
+    if method == Method::POST && path == "/api/auth/backchannel-logout" {
+        return auth::backchannel_logout(&state, body).await;
     }
 
     let mut authed_user: Option<User> = None;
@@ -128,16 +131,42 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
     } = req;
     let body_len = body.len();
     let resp = match path {
-        "/api/auth/local/login" => auth::local_login(state, body).await,
-        "/api/auth/reauth" => auth::sudo(state, body, authed_user.as_ref()).await,
+        "/api/auth/local/login" => auth::local_login(state, headers, peer, body).await,
+        "/api/auth/reauth" => auth::sudo(state, headers, peer, body, authed_user.as_ref()).await,
         "/api/auth/magic/request" => auth::magic_link_request(state, headers, peer, body),
-        "/api/auth/passkey/login/options" => passkey_login_start(state, headers, peer, body),
-        "/api/auth/passkey/login/verify" => passkey_login_finish(state, headers, peer, body),
-        "/api/auth/step-up/passkey/register/options" => passkey_step_up_register_start(state, body),
-        "/api/auth/step-up/passkey/register/verify" => passkey_register_finish(state, body),
-        "/api/auth/step-up/totp/setup/start" => step_up_totp_setup_start(state, body),
-        "/api/auth/step-up/totp/setup/confirm" => step_up_totp_setup_confirm(state, body),
-        "/api/auth/step-up/totp/verify" => step_up_totp_verify(state, body),
+        "/api/auth/passkey/login/options" => {
+            let headers = headers.clone();
+            auth_blocking_response(state, move |state| {
+                passkey_login_start(state, &headers, peer, body)
+            })
+            .await
+        }
+        "/api/auth/passkey/login/verify" => {
+            let headers = headers.clone();
+            auth_blocking_response(state, move |state| {
+                passkey_login_finish(state, &headers, peer, body)
+            })
+            .await
+        }
+        "/api/auth/step-up/passkey/register/options" => {
+            auth_blocking_response(state, move |state| {
+                passkey_step_up_register_start(state, body)
+            })
+            .await
+        }
+        "/api/auth/step-up/passkey/register/verify" => {
+            auth_blocking_response(state, move |state| passkey_register_finish(state, body)).await
+        }
+        "/api/auth/step-up/totp/setup/start" => {
+            auth_blocking_response(state, move |state| step_up_totp_setup_start(state, body)).await
+        }
+        "/api/auth/step-up/totp/setup/confirm" => {
+            auth_blocking_response(state, move |state| step_up_totp_setup_confirm(state, body))
+                .await
+        }
+        "/api/auth/step-up/totp/verify" => {
+            auth_blocking_response(state, move |state| step_up_totp_verify(state, body)).await
+        }
         "/api/client-log" => client_log_response(body, authed_user.as_ref()),
         "/api/auth/config" => update_auth_config(state, body, authed_user.as_ref(), peer, headers),
         "/api/auth/tokens" => create_auth_token(state, body, authed_user.as_ref()),
@@ -145,9 +174,15 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
         "/api/auth/totp/setup/confirm" => auth::totp_enable(state, body),
         "/api/auth/totp/disable" => auth::totp_disable(state),
         "/api/auth/passkey/register/options" => {
-            passkey_register_start(state, body, authed_user.as_ref())
+            let user = authed_user.clone();
+            auth_blocking_response(state, move |state| {
+                passkey_register_start(state, body, user.as_ref())
+            })
+            .await
         }
-        "/api/auth/passkey/register/verify" => passkey_register_finish(state, body),
+        "/api/auth/passkey/register/verify" => {
+            auth_blocking_response(state, move |state| passkey_register_finish(state, body)).await
+        }
         "/api/cascade/toggle" => cascade_toggle(state, body),
         "/api/render-config" => update_render_config(state, body),
         "/api/cascade-config" => update_cascade_config(state, body),
@@ -158,7 +193,7 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
         "/api/ntfy-topics" => update_ntfy_topics(state, body),
         "/api/inhibition-rules" => update_inhibition_rules(state, body),
         "/api/config/import-preview" => config_import_preview_response(state, body),
-        "/api/config/restore" => restore_config(state, body, authed_user.as_ref()),
+        "/api/config/restore" => restore_config(state, body, authed_user.as_ref()).await,
         "/api/ingest-auth" => update_ingest_auth(state, body),
         "/api/schedules" => update_schedules(state, body),
         "/api/acks/clear" => clear_acks(state, body),
@@ -171,6 +206,24 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
     };
     record_admin_mutation_audit(path, resp.status(), authed_user.as_ref(), body_len);
     resp
+}
+
+async fn auth_blocking_response<F>(state: &AppState, task: F) -> Response<Body>
+where
+    F: FnOnce(&AppState) -> Response<Body> + Send + 'static,
+{
+    let state_for_task = state.clone();
+    match auth::blocking::run_with_timeout(state, auth::blocking::AUTH_STORE_TIMEOUT, move || {
+        task(&state_for_task)
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(err) => {
+            tracing::error!("authentication storage worker failed: {err}");
+            StatusCode::SERVICE_UNAVAILABLE.into_response()
+        }
+    }
 }
 
 async fn handle_delete(state: &AppState, path: &str, authed_user: Option<User>) -> Response<Body> {

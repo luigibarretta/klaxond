@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.14.26
+  version: 0.14.27
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -523,7 +523,7 @@ paths:
           description: JSON login response for fetch requests.
           headers:
             Set-Cookie:
-              description: Signed `klaxond_session` cookie.
+              description: Opaque, server-backed `klaxond_session` cookie.
               schema:
                 type: string
           content:
@@ -650,6 +650,31 @@ paths:
                     type: boolean
         "4XX":
           $ref: "#/components/responses/ClientError"
+  /api/auth/backchannel-logout:
+    post:
+      tags: [Auth]
+      operationId: oidcBackchannelLogout
+      summary: Revoke OIDC browser sessions from a provider logout token.
+      description: Validates a signed OpenID Connect Back-Channel Logout token with the prepared provider keys, rejects replayed token identifiers and revokes matching persistent sessions.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [logout_token]
+              properties:
+                logout_token:
+                  type: string
+                  description: Signed OIDC Back-Channel Logout JWT.
+      responses:
+        "200":
+          description: Logout token accepted, including an idempotent replay.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: The prepared OIDC provider or persistent session store is unavailable.
   /api/auth/me:
     get:
       tags: [Auth]
@@ -1983,7 +2008,7 @@ components:
       type: apiKey
       in: cookie
       name: klaxond_session
-      description: Signed browser session cookie.
+      description: Opaque browser session cookie backed by the configured SQLite or PostgreSQL store.
     csrfHeader:
       type: apiKey
       in: header

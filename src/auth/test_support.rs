@@ -3,7 +3,7 @@ use crate::config::Paths;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-pub(super) fn temp_paths(tmp: &TempDir) -> Paths {
+pub(crate) fn temp_paths(tmp: &TempDir) -> Paths {
     let data = tmp.path();
     Paths {
         config: data.join("klaxond.toml"),
@@ -33,5 +33,10 @@ pub(super) fn test_user(mode: &str) -> User {
         sudo_until: 0,
         via_authorization: false,
         second_factor: String::new(),
+        session_id_hash: String::new(),
+        session_family_hash: String::new(),
+        session_created_at: 0,
+        provider_issuer: String::new(),
+        provider_session_id: String::new(),
     }
 }

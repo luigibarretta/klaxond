@@ -67,6 +67,18 @@ screen.
 The admin UI supports local username/password login backed by Argon2id,
 LDAP, optional TOTP/MFA, OIDC, trusted proxy headers, passkeys, magic links, API keys and PATs. The Authentication tab can also enable an MFA / step-up policy that requires a second factor after primary login and before the app session is issued. Browser
 sessions receive a CSRF token and every same-origin mutation must send it back.
+Session cookies are opaque and their hashed records are stored in the configured
+SQLite or PostgreSQL history backend. OIDC Back-Channel Logout revokes matching
+sessions and persists logout-token identifiers to prevent replay.
+Sessions use a 30-minute idle timeout, rotate hourly, are limited to three per
+user and have an eight-hour absolute lifetime.
+Account authentication failures and lockouts use the same persistent backend
+with hashed keys and transactional updates; bounded per-IP and magic-link burst
+limits remain in memory by design.
+`auth.trusted_proxy.trusted_cidrs` must contain only the addresses or narrow
+subnets of reverse proxies that are allowed to supply forwarded identity and
+client-IP headers. The default trusts loopback only; split-host deployments must
+set the frontend proxy address explicitly and must not use a whole client LAN.
 Sensitive browser actions also require a short local reauthentication window
 when using local username/password or LDAP login. Machine clients should use scoped
 Bearer tokens or explicit Basic auth headers; those paths are not gated by
@@ -127,6 +139,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/auth/login` | Public login page and OIDC start flow |
 | `GET` | `/api/auth/methods` | Public auth method availability using the shared method names |
 | `GET` | `/api/auth/password-policy` | Shared Argon2id password policy limits consumed by the UI |
+| `POST` | `/api/auth/backchannel-logout` | Validate an OIDC Back-Channel Logout token and revoke matching persistent sessions |
 | `POST` | `/api/auth/local/login` | Local username/password login; accepts optional TOTP code |
 | `POST` | `/api/auth/reauth` | Refresh the short reauthentication window for sensitive local-session actions |
 | `POST` | `/api/auth/totp/setup/start` | Generate a one-time TOTP setup secret and otpauth URI |
@@ -188,6 +201,7 @@ keeps deploy-time secret managers authoritative.
 | `TELEGRAM_BOT_TOKEN` | Telegram tier (also requires chat_id from TOML or env) |
 | `SMTP_USER`, `SMTP_PASSWORD` | SMTP tier |
 | `AUTH_SESSION_SECRET`, `AUTH_OIDC_CLIENT_SECRET`, `AUTH_BASIC_PASSWORD_HASH` | auth bootstrap/secrets |
+| `AUTH_TRUSTED_PROXY_CIDRS` | comma-separated addresses/subnets of actual reverse proxies |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | inbound webhook shared secrets |
 
 ### Delivery history storage
@@ -238,6 +252,16 @@ klaxond history-migrate \
   --from postgres --from-url postgres://klaxond:password@postgres-host:5432/klaxond \
   --to sqlite --to-url /data/klaxond.db
 ```
+
+The storage migration copies delivery history, repeat-suppression state,
+persistent browser sessions, consumed OIDC logout-token identifiers and active
+authentication lockouts.
+Stop writes to the source instance before running an explicit cross-backend
+migration, then switch every backend to the destination together. Repeated
+imports merge revocations, logout replay records and lockouts monotonically, but
+the command is not a live active/active replication mechanism. An in-process
+history-backend switch preserves runtime auth state under an exclusive cutover
+guard so the current browser session is not invalidated.
 
 ### Routing + policy — `klaxond.toml`
 
@@ -364,6 +388,7 @@ UI-saved values at runtime.
 | `PORT` | `[server].port` |
 | `AUTH_SESSION_SECRET` | `[auth].session_secret` or `auth-config.json` |
 | `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | `[auth.oidc].client_secret`, `[auth.basic].password_hash`, or `auth-config.json`; LDAP is configured through `[auth.ldap]` or `auth-config.json` |
+| `AUTH_TRUSTED_PROXY_CIDRS` | `[auth.trusted_proxy].trusted_cidrs` or `auth-config.json`; comma-separated and runtime-authoritative |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | `[ingest.secrets].<source>` |
 | `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | `[paths].render_config`, `[paths].ntfy_topics`, `[paths].dedup_config`, `[paths].auth_config` |
 | `AUTH_SESSION_KEY_PATH` / `KLAXOND_BACKUP_DIR` / `DEDUP_PENDING_DIR` / `BESZEL_DB_PATH` | `[paths].auth_session_key`, `[paths].backup_dir`, `[paths].dedup_pending_dir`, `[paths].beszel_db` |
@@ -613,6 +638,9 @@ cargo test
 npm run test:e2e
 docker buildx build --build-context auth-modules=../auth-modules -t klaxond:local .
 ```
+
+CI pins the shared `auth-modules` checkout to the reviewed commit recorded in
+`.gitea/workflows/build.yml`; dependency upgrades are explicit, tested changes.
 
 `npm run nasa:warn` runs a warning-only maintainability profile inspired by
 NASA/JPL rules. It reports files over 300 LOC, functions over 60 LOC and

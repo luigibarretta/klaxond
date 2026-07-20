@@ -34,6 +34,11 @@ pub(super) fn anonymous_user() -> User {
         sudo_until: 0,
         via_authorization: false,
         second_factor: String::new(),
+        session_id_hash: String::new(),
+        session_family_hash: String::new(),
+        session_created_at: 0,
+        provider_issuer: String::new(),
+        provider_session_id: String::new(),
     }
 }
 
