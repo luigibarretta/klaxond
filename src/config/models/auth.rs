@@ -42,7 +42,7 @@ pub struct BasicAuthConfig {
     pub totp_secret: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct OidcConfig {
     pub provider: String,
     pub issuer: String,
@@ -51,6 +51,21 @@ pub struct OidcConfig {
     pub scopes: String,
     pub required_group: String,
     pub redirect_path: String,
+}
+
+impl std::fmt::Debug for OidcConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OidcConfig")
+            .field("provider", &self.provider)
+            .field("issuer", &self.issuer)
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[REDACTED]")
+            .field("scopes", &self.scopes)
+            .field("required_group", &self.required_group)
+            .field("redirect_path", &self.redirect_path)
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -112,7 +112,7 @@ impl BasicAuthPatch {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Default, Deserialize)]
 struct OidcPatch {
     #[serde(default, deserialize_with = "optional_string")]
     provider: Option<String>,
@@ -128,6 +128,24 @@ struct OidcPatch {
     required_group: Option<String>,
     #[serde(default, deserialize_with = "optional_string")]
     redirect_path: Option<String>,
+}
+
+impl std::fmt::Debug for OidcPatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("OidcPatch")
+            .field("provider", &self.provider)
+            .field("issuer", &self.issuer)
+            .field("client_id", &self.client_id)
+            .field(
+                "client_secret",
+                &self.client_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("scopes", &self.scopes)
+            .field("required_group", &self.required_group)
+            .field("redirect_path", &self.redirect_path)
+            .finish()
+    }
 }
 
 impl OidcPatch {
