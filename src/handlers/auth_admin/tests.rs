@@ -65,6 +65,32 @@ fn auth_methods_payload_enables_configured_ldap() {
 }
 
 #[test]
+fn auth_settings_hide_totp_replay_counters() {
+    let mut auth = AuthConfig::default();
+    auth.basic.totp_last_counter = Some(42);
+    auth.totp_factors.push(crate::config::TotpRecord {
+        id: "totp-1".to_string(),
+        name: "Authenticator".to_string(),
+        user_sub: "user-1".to_string(),
+        user_name: "User".to_string(),
+        user_email: "user@example.test".to_string(),
+        secret: "SECRET".to_string(),
+        created_at: 1,
+        last_used_at: Some(2),
+        last_used_counter: Some(42),
+    });
+
+    let settings = redacted_auth_settings(&auth);
+
+    assert!(settings["basic"].get("totp_last_counter").is_none());
+    assert!(
+        settings["totp_factors"][0]
+            .get("last_used_counter")
+            .is_none()
+    );
+}
+
+#[test]
 fn auth_settings_patch_preserves_secret_sentinels_and_lenient_fields() {
     let mut auth = AuthConfig {
         mode: "oidc".to_string(),

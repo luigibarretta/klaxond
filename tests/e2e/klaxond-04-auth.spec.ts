@@ -211,10 +211,12 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
     const setupBody = await setup.json();
     expect(setupBody.secret).toMatch(/^[A-Z2-7]+$/);
     expect(setupBody.otpauth_uri).toContain("otpauth://totp/");
+    const totpAtOffset = (stepOffset = 0) =>
+      totp(setupBody.secret, Math.floor(Date.now() / 1000) + stepOffset * 30);
 
     const enable = await request.post("/api/auth/totp/setup/confirm", {
       headers: { Authorization: cleanupBearer },
-      data: { secret: setupBody.secret, code: totp(setupBody.secret) }
+      data: { secret: setupBody.secret, code: totpAtOffset(-1) }
     });
     await expect(enable).toBeOK();
 
@@ -230,7 +232,7 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
       data: {
         username: BASIC_USER,
         password: BASIC_PASSWORD,
-        totp: totp(setupBody.secret),
+        totp: totpAtOffset(),
         return_to: "/status"
       }
     });
@@ -256,13 +258,13 @@ test("local login supports TOTP, CSRF protection and sudo reauth", async ({ requ
 
     const badSudo = await request.post("/api/auth/reauth", {
       headers: { "X-Klaxond-CSRF": csrf },
-      data: { password: "wrong", totp: totp(setupBody.secret) }
+      data: { password: "wrong", totp: totpAtOffset(1) }
     });
     expect(badSudo.status()).toBe(401);
 
     const sudo = await request.post("/api/auth/reauth", {
       headers: { "X-Klaxond-CSRF": csrf },
-      data: { password: BASIC_PASSWORD, totp: totp(setupBody.secret) }
+      data: { password: BASIC_PASSWORD, totp: totpAtOffset(1) }
     });
     await expect(sudo).toBeOK();
     expect((await sudo.json()).sudo_until).toBeGreaterThan(Math.floor(Date.now() / 1000));

@@ -1,4 +1,4 @@
-use super::login::{callback_url, oidc_client_config};
+use super::login::{callback_url, oidc_client_config, oidc_redirect_uri};
 use super::magic_link::{
     MagicLinkError, consume_magic_link, issue_magic_link, magic_link_ttl_seconds,
 };
@@ -69,18 +69,20 @@ fn login_payload_preserves_form_and_json_compatibility() {
     assert!(payload.wants_json(&json));
 }
 
-#[test]
-fn invalid_basic_realm_does_not_panic_while_challenging() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+#[tokio::test]
+async fn invalid_basic_realm_does_not_panic_while_challenging() {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let state = {
+        let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+        AppState::new(temp_paths(&tmp)).unwrap()
+    };
     let mut auth = state.cfg().auth;
     auth.mode = "basic".to_string();
     auth.basic.realm = "bad\rrealm".to_string();
 
     let headers = HeaderMap::new();
     let AuthOutcome::Rejected(resp) =
-        super::local::authenticate_basic(&state, &auth, &headers, "/status")
+        super::basic::authenticate_basic(&state, &auth, &headers, "/status").await
     else {
         panic!("missing credentials should be rejected");
     };
@@ -116,6 +118,25 @@ fn oidc_callback_url_parser_rejects_malformed_uri() {
     assert!(callback_url("/api/auth/callback?code=abc&state=xyz").is_ok());
     assert!(callback_url("api/auth/callback?code=abc&state=xyz").is_err());
     assert!(callback_url("\0").is_err());
+}
+
+#[test]
+fn oidc_redirect_prefers_configured_public_origin_over_request_host() {
+    let tmp = TempDir::new().unwrap();
+    let state = {
+        let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+        AppState::new(temp_paths(&tmp)).unwrap()
+    };
+    let mut runtime = state.cfg();
+    runtime.public_url = "https://klaxond.example.test".to_string();
+    state.replace_config(runtime);
+    let mut headers = HeaderMap::new();
+    headers.insert(HOST, HeaderValue::from_static("attacker.example"));
+
+    assert_eq!(
+        oidc_redirect_uri(&state, &headers, "/api/auth/callback"),
+        "https://klaxond.example.test/api/auth/callback"
+    );
 }
 
 #[test]

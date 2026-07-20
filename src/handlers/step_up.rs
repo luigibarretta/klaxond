@@ -10,6 +10,9 @@ use axum::http::{HeaderValue, Response, StatusCode};
 use serde_json::{Value, json};
 use url::Url;
 
+#[cfg(test)]
+mod tests;
+
 const STEP_UP_TOTP_TTL_SECONDS: f64 = 600.0;
 
 pub(super) fn step_up_page() -> Response<Body> {
@@ -135,10 +138,11 @@ pub(super) fn step_up_totp_setup_confirm(state: &AppState, body: Bytes) -> Respo
             "unknown or expired TOTP setup request",
         );
     };
-    if !totp::verify_code(&pending.secret, code.trim(), now_epoch_i64()) {
+    let Some(counter) = totp::verify_code_counter(&pending.secret, code.trim(), now_epoch_i64())
+    else {
         return text(StatusCode::BAD_REQUEST, "invalid TOTP code");
-    }
-    complete_totp_setup(state, request_id, pending)
+    };
+    complete_totp_setup(state, request_id, pending, counter)
 }
 
 pub(super) fn step_up_totp_verify(state: &AppState, body: Bytes) -> Response<Body> {
@@ -152,19 +156,11 @@ pub(super) fn step_up_totp_verify(state: &AppState, body: Bytes) -> Response<Bod
         );
     };
     let code = payload.get("code").and_then(Value::as_str).unwrap_or("");
-    let Some(record) = state
-        .cfg()
-        .auth
-        .totp_factors
-        .into_iter()
-        .find(|record| record.user_sub == challenge.user.sub)
-    else {
-        return text(StatusCode::NOT_FOUND, "no TOTP factor registered for user");
-    };
-    if !totp::verify_code(&record.secret, code.trim(), now_epoch_i64()) {
-        return text(StatusCode::UNAUTHORIZED, "invalid TOTP code");
+    match consume_totp_factor(state, &challenge.user.sub, code.trim()) {
+        Ok(true) => complete_totp_step_up(state, &token, &challenge.user.sub),
+        Ok(false) => text(StatusCode::UNAUTHORIZED, "invalid or replayed TOTP code"),
+        Err(err) => text(StatusCode::INTERNAL_SERVER_ERROR, &err),
     }
-    complete_totp_step_up(state, &token, &record.user_sub)
 }
 
 fn totp_challenge_from_payload(
@@ -194,10 +190,11 @@ fn complete_totp_setup(
     state: &AppState,
     request_id: &str,
     pending: PendingTotpRegistration,
+    counter: u64,
 ) -> Response<Body> {
     let record = match state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
-        let record = totp_record(&pending);
+        let record = totp_record(&pending, counter);
         cfg.auth
             .totp_factors
             .retain(|existing| existing.user_sub != record.user_sub);
@@ -216,9 +213,6 @@ fn complete_totp_setup(
 }
 
 fn complete_totp_step_up(state: &AppState, token: &str, user_sub: &str) -> Response<Body> {
-    if let Err(err) = update_totp_last_used(state, user_sub) {
-        return text(StatusCode::INTERNAL_SERVER_ERROR, &err);
-    }
     issue_totp_step_up_session(state, token, user_sub)
 }
 
@@ -235,17 +229,29 @@ fn issue_totp_step_up_session(state: &AppState, token: &str, user_sub: &str) -> 
     resp
 }
 
-fn update_totp_last_used(state: &AppState, user_sub: &str) -> Result<(), String> {
+fn consume_totp_factor(state: &AppState, user_sub: &str, code: &str) -> Result<bool, String> {
     state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
-        for record in &mut cfg.auth.totp_factors {
-            if record.user_sub == user_sub {
-                record.last_used_at = Some(now_epoch_i64());
-            }
+        let Some(record) = cfg
+            .auth
+            .totp_factors
+            .iter_mut()
+            .find(|record| record.user_sub == user_sub)
+        else {
+            return Ok(false);
+        };
+        let now = now_epoch_i64();
+        let Some(counter) = totp::verify_code_counter(&record.secret, code, now) else {
+            return Ok(false);
+        };
+        if record.last_used_counter.is_some_and(|last| counter <= last) {
+            return Ok(false);
         }
+        record.last_used_counter = Some(counter);
+        record.last_used_at = Some(now);
         save_auth(&state.paths, &cfg.auth).map_err(|err| err.to_string())?;
         state.replace_config(cfg);
-        Ok(())
+        Ok(true)
     })?
 }
 
@@ -256,7 +262,7 @@ fn prune_totp_registrations(
     pending.retain(|_, registration| registration.ts >= cutoff);
 }
 
-fn totp_record(pending: &PendingTotpRegistration) -> TotpRecord {
+fn totp_record(pending: &PendingTotpRegistration, counter: u64) -> TotpRecord {
     TotpRecord {
         id: random_hex(8),
         name: pending.label.clone(),
@@ -266,6 +272,7 @@ fn totp_record(pending: &PendingTotpRegistration) -> TotpRecord {
         secret: pending.secret.clone(),
         created_at: now_epoch_i64(),
         last_used_at: Some(now_epoch_i64()),
+        last_used_counter: Some(counter),
     }
 }
 

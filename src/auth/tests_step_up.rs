@@ -8,16 +8,18 @@ use base64::Engine as _;
 use tempfile::TempDir;
 use url::Url;
 
-#[test]
-fn basic_authorization_primary_auth_opens_interactive_step_up() {
-    let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+#[tokio::test]
+async fn basic_authorization_primary_auth_opens_interactive_step_up() {
     let tmp = TempDir::new().unwrap();
-    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let state = {
+        let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+        AppState::new(temp_paths(&tmp)).unwrap()
+    };
     let auth = basic_auth_requiring_passkey_step_up();
     let headers = basic_headers("luigi", "correct horse battery staple");
 
     let AuthOutcome::Rejected(resp) =
-        super::local::authenticate_basic(&state, &auth, &headers, "/status")
+        super::basic::authenticate_basic(&state, &auth, &headers, "/status").await
     else {
         panic!("valid primary auth should require step-up before session issue");
     };
@@ -196,6 +198,7 @@ fn basic_auth_requiring_passkey_step_up() -> crate::config::AuthConfig {
             realm: "klaxond".to_string(),
             totp_enabled: false,
             totp_secret: String::new(),
+            totp_last_counter: None,
         },
         step_up: crate::config::AuthStepUpConfig {
             required_after_primary: true,

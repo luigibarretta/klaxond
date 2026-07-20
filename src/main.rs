@@ -25,9 +25,11 @@ async fn main() -> Result<()> {
 
     let paths = Paths::from_env().resolve_from_config()?;
     let state = AppState::new(paths)?;
+    klaxond::auth::warm_oidc_provider(&state).await;
     klaxond::dedup::restore_pending(&state).await;
     spawn_scheduler(state.clone());
     spawn_shutdown_flush(state.clone());
+    klaxond::auth::spawn_oidc_provider_refresh(state.clone());
 
     let port = state.with_cfg(|cfg| cfg.port);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

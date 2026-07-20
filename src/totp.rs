@@ -16,6 +16,10 @@ pub fn verify_code(secret: &str, code: &str, now: i64) -> bool {
     auth_modules::totp::verify_code(secret, code, now)
 }
 
+pub fn verify_code_counter(secret: &str, code: &str, now: i64) -> Option<u64> {
+    auth_modules::totp::verify_code_counter(secret, code, now)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -47,5 +51,6 @@ mod tests {
         assert!(verify_code(secret, "359152", step_seconds));
         assert!(!verify_code(secret, "969429", step_seconds));
         assert!(!verify_code(secret, "not-a-code", step_seconds));
+        assert_eq!(verify_code_counter(secret, "287082", step_seconds), Some(1));
     }
 }

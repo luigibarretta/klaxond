@@ -27,14 +27,15 @@ pub fn totp_enable(state: &AppState, body: Bytes) -> Response<Body> {
     if !totp::is_valid_secret(&secret) {
         return (StatusCode::BAD_REQUEST, "invalid TOTP secret").into_response();
     }
-    if !totp::verify_code(&secret, code, now_epoch_i64()) {
+    let Some(counter) = totp::verify_code_counter(&secret, code, now_epoch_i64()) else {
         return (StatusCode::BAD_REQUEST, "invalid TOTP code").into_response();
-    }
+    };
     state
         .with_config_write_lock(|| {
             let mut cfg = state.cfg();
             cfg.auth.basic.totp_enabled = true;
             cfg.auth.basic.totp_secret = secret.clone();
+            cfg.auth.basic.totp_last_counter = Some(counter);
             if let Err(err) = save_auth(&state.paths, &cfg.auth) {
                 return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
             }
@@ -50,6 +51,7 @@ pub fn totp_disable(state: &AppState) -> Response<Body> {
             let mut cfg = state.cfg();
             cfg.auth.basic.totp_enabled = false;
             cfg.auth.basic.totp_secret.clear();
+            cfg.auth.basic.totp_last_counter = None;
             if let Err(err) = save_auth(&state.paths, &cfg.auth) {
                 return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response();
             }

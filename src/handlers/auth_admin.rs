@@ -56,6 +56,9 @@ pub(super) fn redacted_auth_settings(auth_cfg: &AuthConfig) -> Value {
     {
         settings["basic"]["totp_secret"] = json!("***SET***");
     }
+    if let Some(basic) = settings["basic"].as_object_mut() {
+        basic.remove("totp_last_counter");
+    }
     if !settings["oidc"]["client_secret"]
         .as_str()
         .unwrap_or("")

@@ -70,7 +70,11 @@ sessions receive a CSRF token and every same-origin mutation must send it back.
 Sensitive browser actions also require a short local reauthentication window
 when using local username/password or LDAP login. Machine clients should use scoped
 Bearer tokens or explicit Basic auth headers; those paths are not gated by
-browser CSRF/sudo prompts.
+browser CSRF/sudo prompts. Argon2id and LDAP checks run on a bounded blocking
+worker pool, accepted TOTP counters are persisted to reject replay, and OIDC
+login/callback operations reuse a discovery-backed provider client refreshed on
+a bounded schedule. Set `KLAXOND_PUBLIC_URL` to the canonical HTTPS origin so
+the OIDC provider can be prepared before the public listener starts.
 
 ### API contract
 

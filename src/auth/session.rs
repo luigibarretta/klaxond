@@ -72,7 +72,7 @@ pub(super) fn verify_session(state: &AppState, cookie_value: &str) -> Option<Use
     }
     let bytes = b64url_decode_padded(body).ok()?;
     let user: User = serde_json::from_slice(&bytes).ok()?;
-    if user.exp > 0 && user.exp < now_epoch_i64() {
+    if user.exp > 0 && user.exp <= now_epoch_i64() {
         return None;
     }
     Some(user)

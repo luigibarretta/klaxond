@@ -85,3 +85,42 @@ fn history_store_reopens_when_runtime_config_changes() {
     assert_eq!(deliveries.len(), 1);
     assert_eq!(deliveries[0].title, "Next DB");
 }
+
+#[test]
+fn oidc_provider_generation_tracks_only_provider_inputs() {
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let initial = state
+        .oidc_config_generation
+        .load(std::sync::atomic::Ordering::Relaxed);
+
+    let mut unrelated = state.cfg();
+    unrelated.port += 1;
+    state.try_replace_config(unrelated).unwrap();
+    assert_eq!(
+        state
+            .oidc_config_generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        initial
+    );
+
+    let mut public_origin = state.cfg();
+    public_origin.public_url = "https://klaxond.example.test".to_string();
+    state.try_replace_config(public_origin).unwrap();
+    assert_eq!(
+        state
+            .oidc_config_generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        initial + 1
+    );
+
+    let mut provider = state.cfg();
+    provider.auth.oidc.issuer = "https://idp.example.test/application/o/klaxond/".to_string();
+    state.try_replace_config(provider).unwrap();
+    assert_eq!(
+        state
+            .oidc_config_generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+        initial + 2
+    );
+}

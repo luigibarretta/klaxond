@@ -1,4 +1,5 @@
-use super::local::{authenticate_basic, authenticate_ldap_basic, authenticate_trusted_proxy};
+use super::basic::authenticate_basic;
+use super::local::{authenticate_ldap_basic, authenticate_trusted_proxy};
 use super::session::{cookie_values, issue_session, verify_session};
 use super::step_up::redirect_location_after_primary;
 use super::tokens::{authenticate_api_token, bearer_token, required_scope, viewer_allows_scope};
@@ -83,7 +84,7 @@ async fn authenticate_interactive_mode(
 ) -> AuthOutcome {
     match cfg.mode.as_str() {
         "basic" => {
-            let outcome = authenticate_basic(state, cfg, headers, path);
+            let outcome = authenticate_basic(state, cfg, headers, path).await;
             ui_fetch_login_on_unauthorized(outcome, headers, path)
         }
         "ldap" => {

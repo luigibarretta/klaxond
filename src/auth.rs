@@ -11,9 +11,12 @@ use serde_json::Value;
 use auth_modules::audit::AuthAuditKind;
 
 mod authenticate;
+mod basic;
+mod blocking;
 mod local;
 mod login;
 mod magic_link;
+mod oidc_client;
 mod payload;
 mod rate_limit;
 mod session;
@@ -26,6 +29,7 @@ mod tests;
 mod tests_step_up;
 mod tokens;
 mod totp_handlers;
+mod totp_replay;
 
 pub use authenticate::authenticate;
 pub use local::{ldap_login_enabled, local_login, sudo};
@@ -33,6 +37,8 @@ pub use login::{login, oidc_callback};
 pub use magic_link::{
     magic_link_callback, magic_link_callback_url, magic_link_enabled, magic_link_request,
 };
+pub(crate) use oidc_client::OidcProviderCache;
+pub use oidc_client::{spawn_refresh as spawn_oidc_provider_refresh, warm as warm_oidc_provider};
 pub use session::{api_logout, issue_session_cookie};
 pub(crate) use step_up::{
     StepUpChallenge, finish_totp_step_up, finish_webauthn_step_up, pending_step_up_challenge,

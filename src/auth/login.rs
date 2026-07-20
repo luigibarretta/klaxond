@@ -1,3 +1,4 @@
+use super::oidc_client::client_for;
 use super::session::{
     cookie_values, issue_session, sanitize_return_to, set_session_cookie, verify_session,
 };
@@ -5,7 +6,7 @@ use super::step_up::redirect_location_after_primary;
 use super::{AUTH_SESSION_COOKIE, User, magic_link_enabled, redirect};
 use crate::state::{AppState, PendingOidcState, lock_mutex};
 use crate::util::token_urlsafe;
-use auth_modules::oidc::{OidcClientConfig, async_client as oidc_client};
+use auth_modules::oidc::OidcClientConfig;
 use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::Body;
 use axum::http::header::{COOKIE, HOST};
@@ -57,28 +58,20 @@ async fn oidc_login_redirect(state: &AppState, headers: HeaderMap, uri: &str) ->
             .into_response();
     }
     let return_to = login_return_to(uri);
-    let host = headers
-        .get(HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let scheme = if headers
-        .get("X-Forwarded-Proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("https")
-        == "https"
-    {
-        "https"
-    } else {
-        "http"
-    };
-    let redirect_uri = format!("{scheme}://{host}{}", cfg.redirect_path);
+    let redirect_uri = oidc_redirect_uri(state, &headers, &cfg.redirect_path);
     let state_token = token_urlsafe(24);
-    let flow = match oidc_client::authorization_url(
-        &oidc_client_config(&cfg, &redirect_uri),
-        &state_token,
-    )
-    .await
-    {
+    let client_config = oidc_client_config(&cfg, &redirect_uri);
+    let client = match client_for(state, &client_config).await {
+        Ok(client) => client,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("OIDC discovery failed: {err}"),
+            )
+                .into_response();
+        }
+    };
+    let flow = match client.authorization_url(&client_config, &state_token) {
         Ok(flow) => flow,
         Err(err) => {
             return (
@@ -238,28 +231,26 @@ pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> R
         }
     };
     let return_to = sanitize_return_to(&pending.return_to);
-    let host = headers
-        .get(HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let scheme = if headers
-        .get("X-Forwarded-Proto")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("https")
-        == "https"
-    {
-        "https"
-    } else {
-        "http"
+    let redirect_uri = oidc_redirect_uri(state, &headers, &cfg.redirect_path);
+    let client_config = oidc_client_config(&cfg, &redirect_uri);
+    let client = match client_for(state, &client_config).await {
+        Ok(client) => client,
+        Err(err) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                format!("OIDC provider unavailable: {err}"),
+            )
+                .into_response();
+        }
     };
-    let redirect_uri = format!("{scheme}://{host}{}", cfg.redirect_path);
-    let identity = match oidc_client::exchange_code(
-        &oidc_client_config(&cfg, &redirect_uri),
-        &code,
-        &pending.nonce,
-        &pending.code_verifier,
-    )
-    .await
+    let identity = match client
+        .exchange_code(
+            &client_config,
+            &code,
+            &pending.nonce,
+            &pending.code_verifier,
+        )
+        .await
     {
         Ok(identity) => identity,
         Err(err) => {
@@ -345,4 +336,35 @@ pub(super) fn oidc_client_config(
 
 fn exact_oidc_issuer(value: &str) -> String {
     value.trim().to_string()
+}
+
+pub(super) fn oidc_redirect_uri(
+    state: &AppState,
+    headers: &HeaderMap,
+    redirect_path: &str,
+) -> String {
+    let public_url = state.with_cfg(|cfg| cfg.public_url.clone());
+    if let Ok(url) = Url::parse(&public_url)
+        && matches!(url.scheme(), "http" | "https")
+        && url.host_str().is_some()
+    {
+        return format!("{}{}", public_url.trim_end_matches('/'), redirect_path);
+    }
+
+    tracing::warn!("KLAXOND_PUBLIC_URL is not configured; deriving OIDC callback from request");
+    let host = headers
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let scheme = if headers
+        .get("X-Forwarded-Proto")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("https")
+        == "https"
+    {
+        "https"
+    } else {
+        "http"
+    };
+    format!("{scheme}://{host}{redirect_path}")
 }

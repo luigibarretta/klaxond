@@ -21,10 +21,10 @@ use fs2::FileExt;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
 use self::metrics::metric_key;
 use self::session::load_or_create_session_key;
@@ -47,6 +47,8 @@ pub struct AppState {
     pub rendered_images: Arc<Mutex<HashMap<String, RenderedImage>>>,
     pub metrics: Arc<Metrics>,
     pub dedup: Arc<AsyncMutex<DedupQueues>>,
+    pub(crate) oidc_provider: Arc<AsyncMutex<Option<crate::auth::OidcProviderCache>>>,
+    pub(crate) oidc_config_generation: Arc<AtomicU64>,
     pub oidc_states: Arc<Mutex<HashMap<String, PendingOidcState>>>,
     pub step_up_states: Arc<Mutex<HashMap<String, PendingStepUpState>>>,
     pub magic_links: Arc<Mutex<HashMap<String, PendingMagicLink>>>,
@@ -54,6 +56,7 @@ pub struct AppState {
     pub passkey_authentications: Arc<Mutex<HashMap<String, PendingPasskeyAuthentication>>>,
     pub totp_registrations: Arc<Mutex<HashMap<String, PendingTotpRegistration>>>,
     pub auth_failures: auth_modules::rate_limit::InMemoryRateLimiter,
+    pub auth_blocking_slots: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -87,6 +90,8 @@ impl AppState {
             rendered_images: Arc::new(Mutex::new(HashMap::new())),
             metrics: Arc::new(Metrics::default()),
             dedup: Arc::new(AsyncMutex::new(queues)),
+            oidc_provider: Arc::new(AsyncMutex::new(None)),
+            oidc_config_generation: Arc::new(AtomicU64::new(0)),
             oidc_states: Arc::new(Mutex::new(HashMap::new())),
             step_up_states: Arc::new(Mutex::new(HashMap::new())),
             magic_links: Arc::new(Mutex::new(HashMap::new())),
@@ -94,6 +99,7 @@ impl AppState {
             passkey_authentications: Arc::new(Mutex::new(HashMap::new())),
             totp_registrations: Arc::new(Mutex::new(HashMap::new())),
             auth_failures: auth_modules::rate_limit::InMemoryRateLimiter::default(),
+            auth_blocking_slots: Arc::new(Semaphore::new(8)),
         })
     }
 
@@ -110,7 +116,8 @@ impl AppState {
         self.replace_history_store_if_needed(&cfg)?;
         self.cascade_runtime_enabled
             .store(cfg.cascade_default, Ordering::Relaxed);
-        *write_lock(&self.config, "config") = cfg;
+        let oidc_changed = replace_runtime_config(&self.config, cfg);
+        self.mark_oidc_config_change(oidc_changed);
         Ok(())
     }
 
@@ -122,7 +129,8 @@ impl AppState {
 
     pub fn try_replace_config_preserving_runtime(&self, cfg: RuntimeConfig) -> Result<(), String> {
         self.replace_history_store_if_needed(&cfg)?;
-        *write_lock(&self.config, "config") = cfg;
+        let oidc_changed = replace_runtime_config(&self.config, cfg);
+        self.mark_oidc_config_change(oidc_changed);
         Ok(())
     }
 
@@ -140,6 +148,12 @@ impl AppState {
         let store = HistoryStore::open(&cfg.history).map_err(|err| err.to_string())?;
         *write_lock(&self.history, "history store") = Arc::new(store);
         Ok(())
+    }
+
+    fn mark_oidc_config_change(&self, changed: bool) {
+        if changed {
+            self.oidc_config_generation.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     pub(crate) fn history_store(&self) -> Arc<HistoryStore> {
@@ -254,6 +268,13 @@ impl AppState {
         let key = metric_key(name, labels);
         lock_mutex(&self.metrics.gauges, "metrics gauges").insert(key, value);
     }
+}
+
+fn replace_runtime_config(config: &RwLock<RuntimeConfig>, cfg: RuntimeConfig) -> bool {
+    let mut current = write_lock(config, "config");
+    let oidc_changed = current.auth.oidc != cfg.auth.oidc || current.public_url != cfg.public_url;
+    *current = cfg;
+    oidc_changed
 }
 
 fn prepare_runtime_dirs(paths: &Paths) -> Result<()> {

@@ -40,9 +40,11 @@ pub struct BasicAuthConfig {
     pub totp_enabled: bool,
     #[serde(default)]
     pub totp_secret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub totp_last_counter: Option<u64>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct OidcConfig {
     pub provider: String,
     pub issuer: String,
@@ -162,6 +164,8 @@ pub struct TotpRecord {
     pub created_at: i64,
     #[serde(default)]
     pub last_used_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_counter: Option<u64>,
 }
 
 impl Default for WebauthnConfig {
@@ -310,6 +314,7 @@ impl Default for AuthConfig {
                 realm: "klaxond".to_string(),
                 totp_enabled: false,
                 totp_secret: String::new(),
+                totp_last_counter: None,
             },
             oidc: OidcConfig {
                 provider: "authentik".to_string(),
