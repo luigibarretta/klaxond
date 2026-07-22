@@ -51,6 +51,8 @@ pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<
                             }
                         };
                         set_session_cookie(&mut response, &cookie);
+                    } else if let Some(cookie) = verified.replacement_cookie {
+                        set_session_cookie(&mut response, &cookie);
                     }
                     return response;
                 }

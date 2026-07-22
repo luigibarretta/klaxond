@@ -13,12 +13,16 @@ use constant_time_eq::constant_time_eq;
 use serde_json::json;
 use std::net::IpAddr;
 
-const SESSION_TOKEN_PREFIX: &str = "klx_sess_";
+mod token;
+
+pub(super) use token::persistent_session_hash;
+use token::{new_session_token, rotated_session_token};
 
 pub(super) struct VerifiedSession {
     pub user: User,
     pub legacy: bool,
     pub should_rotate: bool,
+    pub replacement_cookie: Option<String>,
 }
 
 fn same_site_header(value: SameSitePolicy) -> &'static str {
@@ -149,9 +153,11 @@ fn issue_session_with_expiry(
     if user.mode == "oidc" && user.provider_issuer.is_empty() {
         user.provider_issuer = cfg.oidc.issuer.trim().to_string();
     }
-    let token = format!("{SESSION_TOKEN_PREFIX}{}", token_urlsafe(32));
-    let id_hash = hash_token(&token);
     let previous_hash = (!user.session_id_hash.is_empty()).then_some(user.session_id_hash.as_str());
+    let token = previous_hash.map_or_else(new_session_token, |predecessor_hash| {
+        rotated_session_token(state, predecessor_hash)
+    });
+    let id_hash = hash_token(&token);
     let family_hash = if previous_hash.is_some() && !user.session_family_hash.is_empty() {
         user.session_family_hash.clone()
     } else {
@@ -232,6 +238,7 @@ pub(super) async fn verify_session(
             user,
             legacy: true,
             should_rotate: false,
+            replacement_cookie: None,
         }),
     )
 }
@@ -243,11 +250,28 @@ async fn verify_persistent_session(
     let now = now_epoch_i64();
     let policy = SessionPolicy::gold_standard();
     let idle_timeout_seconds = i64::try_from(policy.idle_timeout.as_secs()).unwrap_or(i64::MAX);
+    let replacement_token = rotated_session_token(state, &id_hash);
+    let replacement_hash = hash_token(&replacement_token);
     let state_for_store = state.clone();
-    let record = run_with_timeout(state, AUTH_STORE_TIMEOUT, move || {
-        state_for_store
-            .with_auth_store(|store| store.auth_session(&id_hash, now, idle_timeout_seconds))
-            .map_err(|err| err.to_string())
+    let predecessor_hash = id_hash.clone();
+    let (record, recovered_rotation) = run_with_timeout(state, AUTH_STORE_TIMEOUT, move || {
+        state_for_store.with_auth_store(|store| {
+            if let Some(record) = store
+                .auth_session(&predecessor_hash, now, idle_timeout_seconds)
+                .map_err(|err| err.to_string())?
+            {
+                return Ok::<_, String>((Some(record), false));
+            }
+            let successor = store
+                .auth_session_rotation_successor(
+                    &predecessor_hash,
+                    &replacement_hash,
+                    now,
+                    idle_timeout_seconds,
+                )
+                .map_err(|err| err.to_string())?;
+            Ok::<_, String>((successor, true))
+        })
     })
     .await??;
     let Some(record) = record else {
@@ -268,6 +292,10 @@ async fn verify_persistent_session(
         should_rotate: policy.should_rotate(record.last_rotated_at, now),
         user,
         legacy: false,
+        replacement_cookie: recovered_rotation.then(|| {
+            let remaining = record.expires_at.saturating_sub(now);
+            session_cookie(state, &replacement_token, remaining.max(0) as u64)
+        }),
     }))
 }
 
@@ -283,19 +311,6 @@ fn verify_legacy_session(state: &AppState, cookie_value: &str) -> Option<User> {
         return None;
     }
     Some(user)
-}
-
-pub(super) fn persistent_session_hash(cookie_value: &str) -> Option<String> {
-    let token = cookie_value.strip_prefix(SESSION_TOKEN_PREFIX)?;
-    if token.len() < 32
-        || token.len() > 128
-        || !token
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-    {
-        return None;
-    }
-    Some(hash_token(cookie_value))
 }
 
 pub(super) fn cookie_values<'a>(cookie: &'a str, name: &str) -> Vec<&'a str> {

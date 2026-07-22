@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Resa race-safe la rotazione delle sessioni persistenti: richieste browser
+  concorrenti riusano lo stesso successore entro una grace window breve senza
+  indebolire logout, revoca di famiglia o scadenze.
+
 ## 0.14.27 — 2026-07-20
 
 - Spostate le sessioni browser su record opachi persistenti in SQLite o

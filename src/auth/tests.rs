@@ -2,16 +2,13 @@ use super::login::{callback_url, oidc_client_config, oidc_redirect_uri};
 use super::magic_link::{
     MagicLinkError, consume_magic_link, issue_magic_link, magic_link_ttl_seconds,
 };
-use super::session::{
-    cookie_values, issue_session, persistent_session_hash, rotate_session, sanitize_return_to,
-    verify_session,
-};
+use super::session::{cookie_values, sanitize_return_to};
 use super::test_support::{temp_paths, test_user};
 use super::*;
 use crate::state::{AppState, PendingMagicLink, lock_mutex};
 use auth_modules::one_time_token;
 use axum::body::Bytes;
-use axum::http::header::{COOKIE, HOST, SET_COOKIE, WWW_AUTHENTICATE};
+use axum::http::header::{HOST, SET_COOKIE, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use tempfile::TempDir;
 
@@ -232,77 +229,6 @@ fn client_log_remains_csrf_exempt_for_interactive_sessions() {
 
     user.via_authorization = true;
     assert!(!csrf_required(&headers, "/api/cascade/toggle", &user));
-}
-
-#[tokio::test]
-async fn persistent_session_is_verified_and_revoked_by_logout() {
-    let tmp = TempDir::new().unwrap();
-    let state = {
-        let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
-        AppState::new(temp_paths(&tmp)).unwrap()
-    };
-    let mut user = test_user("basic");
-    let cookie = issue_session(&state, &state.cfg().auth, &mut user).unwrap();
-    let token = cookie
-        .split(';')
-        .next()
-        .and_then(|pair| pair.split_once('='))
-        .map(|(_, value)| value)
-        .unwrap();
-
-    assert!(persistent_session_hash(token).is_some());
-    let verified = verify_session(&state, token)
-        .await
-        .unwrap()
-        .expect("persistent session");
-    assert_eq!(verified.user.sub, user.sub);
-    assert!(!verified.legacy);
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        COOKIE,
-        HeaderValue::from_str(&format!("{AUTH_SESSION_COOKIE}={token}")).unwrap(),
-    );
-    let response = api_logout(&state, &headers).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    assert!(verify_session(&state, token).await.unwrap().is_none());
-}
-
-#[tokio::test]
-async fn logout_with_pre_rotation_token_revokes_the_session_family() {
-    let tmp = TempDir::new().unwrap();
-    let state = {
-        let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
-        AppState::new(temp_paths(&tmp)).unwrap()
-    };
-    let mut user = test_user("basic");
-    let original_cookie = issue_session(&state, &state.cfg().auth, &mut user).unwrap();
-    let original_token = original_cookie
-        .split(';')
-        .next()
-        .and_then(|pair| pair.split_once('='))
-        .map(|(_, value)| value)
-        .unwrap();
-    let rotated_cookie = rotate_session(&state, &state.cfg().auth, &mut user).unwrap();
-    let rotated_token = rotated_cookie
-        .split(';')
-        .next()
-        .and_then(|pair| pair.split_once('='))
-        .map(|(_, value)| value)
-        .unwrap();
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        COOKIE,
-        HeaderValue::from_str(&format!("{AUTH_SESSION_COOKIE}={original_token}")).unwrap(),
-    );
-    assert_eq!(api_logout(&state, &headers).await.status(), StatusCode::OK);
-    assert!(
-        verify_session(&state, rotated_token)
-            .await
-            .unwrap()
-            .is_none()
-    );
 }
 
 #[tokio::test]

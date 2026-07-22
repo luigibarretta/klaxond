@@ -73,6 +73,7 @@ async fn authenticate_session(
         for value in cookie_values(cookie, AUTH_SESSION_COOKIE).into_iter().rev() {
             if let Some(verified) = verify_session(state, value).await? {
                 let mut user = verified.user;
+                let replacement_cookie = verified.replacement_cookie;
                 let refresh_cookie = ensure_session_security_fields(
                     state,
                     cfg,
@@ -82,7 +83,7 @@ async fn authenticate_session(
                 .await?;
                 return Ok(Some(authorize_interactive_user(
                     user,
-                    refresh_cookie,
+                    refresh_cookie.or(replacement_cookie),
                     method,
                     path,
                 )));

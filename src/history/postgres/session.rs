@@ -1,70 +1,12 @@
 use super::session_locks::{lock_oidc_users, lock_provider_session, lock_user};
 use crate::history::session::{SESSION_TOUCH_INTERVAL_SECONDS, session_is_valid};
 use crate::history::{AuthSessionRecord, OidcLogoutResult, OidcLogoutTokenRecord};
-use anyhow::{Result, bail};
+use anyhow::Result;
 use postgres::{Client, Transaction};
 
-pub(super) fn create(
-    client: &mut Client,
-    record: &AuthSessionRecord,
-    replace_id_hash: Option<&str>,
-    max_concurrent: usize,
-    now: i64,
-) -> Result<()> {
-    let mut tx = client.transaction()?;
-    lock_provider_session(
-        &mut tx,
-        record.provider_issuer.as_deref(),
-        record.provider_session_id.as_deref(),
-    )?;
-    lock_user(&mut tx, &record.user_sub)?;
-    if let Some(previous) = replace_id_hash {
-        let predecessor = select_for_update(&mut tx, previous)?;
-        let valid_predecessor = predecessor.as_ref().is_some_and(|predecessor| {
-            predecessor.family_hash == record.family_hash
-                && predecessor.user_sub == record.user_sub
-                && session_is_valid(predecessor, now, i64::MAX)
-        });
-        if !valid_predecessor {
-            bail!("session rotation predecessor is not active in the same family");
-        }
-    }
-    tx.execute(
-        r#"
-INSERT INTO klaxond_auth_sessions (
-  id_hash, family_hash, user_json, user_sub, auth_mode, provider_issuer,
-  provider_session_id, created_at, last_seen_at, last_rotated_at, expires_at, revoked_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-"#,
-        &[
-            &record.id_hash,
-            &record.family_hash,
-            &record.user_json,
-            &record.user_sub,
-            &record.auth_mode,
-            &record.provider_issuer,
-            &record.provider_session_id,
-            &record.created_at,
-            &record.last_seen_at,
-            &record.last_rotated_at,
-            &record.expires_at,
-            &record.revoked_at,
-        ],
-    )?;
-    if let Some(previous) = replace_id_hash {
-        tx.execute(
-            "UPDATE klaxond_auth_sessions SET revoked_at = $1 WHERE id_hash = $2 AND revoked_at IS NULL",
-            &[&now, &previous],
-        )?;
-    }
-    prune_concurrent(&mut tx, record, max_concurrent.max(1), now)?;
-    tx.execute(
-        "DELETE FROM klaxond_auth_sessions WHERE expires_at <= $1 AND expires_at < $2",
-        &[&now, &now.saturating_sub(86_400)],
-    )?;
-    tx.commit()?;
-    Ok(())
-}
+mod rotation;
+
+pub(super) use rotation::{create, lookup_rotation_successor};
 
 pub(super) fn lookup(
     client: &mut Client,
@@ -97,13 +39,7 @@ FOR UPDATE
         tx.commit()?;
         return Ok(None);
     }
-    if now.saturating_sub(record.last_seen_at) >= SESSION_TOUCH_INTERVAL_SECONDS {
-        tx.execute(
-            "UPDATE klaxond_auth_sessions SET last_seen_at = $1 WHERE id_hash = $2 AND revoked_at IS NULL",
-            &[&now, &id_hash],
-        )?;
-        record.last_seen_at = now;
-    }
+    touch(&mut tx, &mut record, now)?;
     tx.commit()?;
     Ok(Some(record))
 }
@@ -321,6 +257,17 @@ FOR UPDATE
             &[&id_hash],
         )?
         .map(|row| session_from_row(&row)))
+}
+
+fn touch(tx: &mut Transaction<'_>, record: &mut AuthSessionRecord, now: i64) -> Result<()> {
+    if now.saturating_sub(record.last_seen_at) >= SESSION_TOUCH_INTERVAL_SECONDS {
+        tx.execute(
+            "UPDATE klaxond_auth_sessions SET last_seen_at = $1 WHERE id_hash = $2 AND revoked_at IS NULL",
+            &[&now, &record.id_hash],
+        )?;
+        record.last_seen_at = now;
+    }
+    Ok(())
 }
 
 fn prune_concurrent(

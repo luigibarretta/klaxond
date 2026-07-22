@@ -112,6 +112,49 @@ fn postgres_concurrent_session_creation_enforces_global_limit() {
 
 #[test]
 #[ignore = "requires KLAXOND_TEST_POSTGRES_URL"]
+fn postgres_rotation_retry_is_idempotent_only_inside_grace_window() {
+    let _guard = postgres_test_guard();
+    let url = std::env::var("KLAXOND_TEST_POSTGRES_URL")
+        .expect("KLAXOND_TEST_POSTGRES_URL is required for this ignored test");
+    let store = HistoryStore::open(&postgres_cfg(url)).unwrap();
+    let unique = crate::util::token_urlsafe(12);
+    let mut original = auth_session(&format!("postgres-grace-old-{unique}"), "basic", 1_000);
+    original.family_hash = format!("postgres-grace-family-{unique}");
+    original.user_sub = format!("postgres-grace-user-{unique}");
+    store
+        .create_auth_session(&original, None, 3, 1_000)
+        .unwrap();
+    let mut replacement = original.clone();
+    replacement.id_hash = format!("postgres-grace-new-{unique}");
+    replacement.last_rotated_at = 1_100;
+    replacement.last_seen_at = 1_100;
+
+    store
+        .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_100)
+        .unwrap();
+    store
+        .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_101)
+        .expect("same postgres rotation should be idempotent during the grace window");
+    assert!(
+        store
+            .auth_session_rotation_successor(
+                &original.id_hash,
+                &replacement.id_hash,
+                1_101,
+                10_000,
+            )
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_111)
+            .is_err()
+    );
+}
+
+#[test]
+#[ignore = "requires KLAXOND_TEST_POSTGRES_URL"]
 fn postgres_oidc_logout_serializes_with_session_rotation() {
     let _guard = postgres_test_guard();
     let url = std::env::var("KLAXOND_TEST_POSTGRES_URL")

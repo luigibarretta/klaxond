@@ -18,6 +18,13 @@ pub(super) enum SessionCommand {
         idle_timeout_seconds: i64,
         reply: mpsc::Sender<Result<Option<AuthSessionRecord>>>,
     },
+    LookupRotationSuccessor {
+        predecessor_hash: String,
+        successor_hash: String,
+        now: i64,
+        idle_timeout_seconds: i64,
+        reply: mpsc::Sender<Result<Option<AuthSessionRecord>>>,
+    },
     Revoke {
         id_hash: String,
         now: i64,
@@ -76,6 +83,24 @@ pub(super) fn execute(
         } => {
             let result = postgres_with_retry(url, create_schema, client, |client| {
                 session::lookup(client, &id_hash, now, idle_timeout_seconds)
+            });
+            let _ = reply.send(result);
+        }
+        SessionCommand::LookupRotationSuccessor {
+            predecessor_hash,
+            successor_hash,
+            now,
+            idle_timeout_seconds,
+            reply,
+        } => {
+            let result = postgres_with_retry(url, create_schema, client, |client| {
+                session::lookup_rotation_successor(
+                    client,
+                    &predecessor_hash,
+                    &successor_hash,
+                    now,
+                    idle_timeout_seconds,
+                )
             });
             let _ = reply.send(result);
         }
@@ -163,6 +188,25 @@ impl PostgresWorker {
                 reply,
             },
             "session lookup",
+        )
+    }
+
+    pub(in crate::history) fn auth_session_rotation_successor(
+        &self,
+        predecessor_hash: &str,
+        successor_hash: &str,
+        now: i64,
+        idle_timeout_seconds: i64,
+    ) -> Result<Option<AuthSessionRecord>> {
+        self.session_request(
+            |reply| SessionCommand::LookupRotationSuccessor {
+                predecessor_hash: predecessor_hash.to_string(),
+                successor_hash: successor_hash.to_string(),
+                now,
+                idle_timeout_seconds,
+                reply,
+            },
+            "session rotation successor lookup",
         )
     }
 

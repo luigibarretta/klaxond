@@ -70,6 +70,38 @@ fn sqlite_rotation_requires_active_family_and_family_logout_uses_revoked_row() {
     store
         .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_100)
         .unwrap();
+    store
+        .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_101)
+        .expect("the same rotation must be idempotent inside the concurrency grace window");
+    assert!(
+        store
+            .auth_session_rotation_successor(
+                &original.id_hash,
+                &replacement.id_hash,
+                1_101,
+                10_000,
+            )
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .auth_session_rotation_successor(
+                &original.id_hash,
+                &replacement.id_hash,
+                1_111,
+                10_000,
+            )
+            .unwrap()
+            .is_none(),
+        "the predecessor must not recover the successor after the grace window"
+    );
+    assert!(
+        store
+            .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_111)
+            .is_err(),
+        "an idempotent rotation retry must expire with the grace window"
+    );
 
     let invalid = auth_session("rotation-invalid", "basic", 1_200);
     assert!(
