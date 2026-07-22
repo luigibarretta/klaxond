@@ -1,14 +1,14 @@
 import {
   $, J, applyTablePager, escapeHtml, fetchError, markTabDirty, notifyError,
-  notifySuccess, queryGet, setInlineStatus, tr,
+  notifySuccess, notifyValidationError, queryGet, setInlineStatus, tr,
 } from "./app.js";
+import { GROUPING_DURATIONS, REPEAT_DURATIONS, durationOptions } from "./app-duration-options.js";
+import { collectNoiseRules, renderNoiseRules } from "./app-noise-rules.js";
 
 const SOURCES = [
   "grafana", "beszel", "healthchecks", "wud", "authentik", "shelfmark",
   "prowlarr", "decypharr",
 ];
-const GROUPING_DURATIONS = [5, 15, 30, 60, 90, 120, 300, 600, 900, 1800, 3600];
-const REPEAT_DURATIONS = [300, 900, 1800, 3600, 7200, 21600, 43200, 86400, 172800, 604800];
 const SOURCE_HELP = Object.fromEntries(SOURCES.map(source => [source, `dedup.source_${source}`]));
 const SOURCE_IDENTITY = Object.fromEntries(SOURCES.map(source => [source, `dedup.identity_${source}`]));
 
@@ -44,6 +44,7 @@ export function renderDedupCards() {
     card.querySelector(".d-mode")?.addEventListener("change", () => syncCardMode(card));
     syncCardMode(card);
   });
+  renderNoiseRules(dedupData, sources);
   renderRecentSuppressions();
 }
 
@@ -121,26 +122,10 @@ function syncCardMode(card) {
 
 function setFeatureEnabled(feature, enabled) {
   if (!feature) return;
-  feature.classList.toggle("disabled", !enabled);
+  feature.hidden = !enabled;
   feature.querySelectorAll("select, input").forEach(control => {
     control.disabled = !enabled;
   });
-}
-
-function durationOptions(current, presets) {
-  const values = presets.includes(Number(current))
-    ? presets
-    : [...presets, Number(current)].filter(value => Number.isFinite(value) && value > 0).sort((a, b) => a - b);
-  return values.map(value => (
-    `<option value="${value}" ${value === Number(current) ? "selected" : ""}>${escapeHtml(durationLabel(value))}</option>`
-  )).join("");
-}
-
-function durationLabel(seconds) {
-  if (seconds % 86400 === 0) return tr("dedup.duration_days", { count: seconds / 86400 });
-  if (seconds % 3600 === 0) return tr("dedup.duration_hours", { count: seconds / 3600 });
-  if (seconds % 60 === 0) return tr("dedup.duration_minutes", { count: seconds / 60 });
-  return tr("dedup.duration_seconds", { count: seconds });
 }
 
 function renderRecentSuppressions() {
@@ -156,9 +141,10 @@ function renderRecentSuppressions() {
         <td>${escapeHtml(formatTimestamp(entry.last_delivered_at))}</td>
         <td>${escapeHtml(formatTimestamp(entry.last_suppressed_at))}</td>
         <td>${escapeHtml(String(entry.suppressed_count || 0))}</td>
+        <td>${escapeHtml(entry.matched_rule || tr("dedup.source_default"))}</td>
         <td>${escapeHtml(formatNextAllowed(entry.next_allowed_at))}</td>
       </tr>`).join("")
-    : `<tr><td colspan="7" class="muted">${escapeHtml(tr("dedup.no_recent_suppressed"))}</td></tr>`;
+    : `<tr><td colspan="8" class="muted">${escapeHtml(tr("dedup.no_recent_suppressed"))}</td></tr>`;
   applyTablePager("t-repeat-suppressed", { reset: true });
 }
 
@@ -174,9 +160,17 @@ function formatNextAllowed(epochSeconds) {
     : new Date(epochSeconds * 1000).toLocaleString(document.documentElement.lang || "en");
 }
 
-$("#dedup-save")?.addEventListener("click", saveNoiseControl);
+document.querySelectorAll("[data-dedup-save]").forEach(button => {
+  button.addEventListener("click", saveNoiseControl);
+});
 
 async function saveNoiseControl() {
+  const selective = collectNoiseRules(SOURCES);
+  if (selective.error) {
+    notifyValidationError("dedup-save", selective.error, $("#dedup-status"));
+    selective.element?.querySelector("input, select")?.focus();
+    return;
+  }
   const settings = {};
   document.querySelectorAll("#dedup-cards [data-src]").forEach(card => {
     const mode = card.querySelector(".d-mode").value;
@@ -190,6 +184,7 @@ async function saveNoiseControl() {
       repeat_suppression_enabled: repeat,
       repeat_window_s: Number(card.querySelector(".d-repeat-window").value) || 7200,
       repeat_override_critical: card.querySelector(".d-repeat-override").checked,
+      rules: selective.bySource[card.dataset.src] || [],
     };
   });
   setInlineStatus("#dedup-status", tr("status.saving"));

@@ -33,11 +33,23 @@ pub async fn deliver(
         policy.mode,
         policy.tiers.len()
     );
-    let repeat_reservation =
-        match repeat::reserve(state, &cfg, source, severity, &parts, &policy, with_cascade).await {
-            repeat::RepeatGate::Deliver(reservation) => reservation,
-            repeat::RepeatGate::Suppress => return (true, "repeat-suppressed".to_string()),
-        };
+    let repeat_reservation = match repeat::reserve(
+        state,
+        &cfg,
+        repeat::RepeatRequest {
+            source,
+            severity,
+            parts: &parts,
+            labels: &labels,
+            policy: &policy,
+            with_cascade,
+        },
+    )
+    .await
+    {
+        repeat::RepeatGate::Deliver(reservation) => reservation,
+        repeat::RepeatGate::Suppress => return (true, "repeat-suppressed".to_string()),
+    };
 
     attach_rendered_image(state, &cfg, &mut parts).await;
 

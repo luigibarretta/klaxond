@@ -54,6 +54,16 @@ pub(super) fn dedup_from_toml(seed: Option<&toml::Value>) -> HashMap<String, Ded
                 if let Some(v) = t.get("repeat_override_critical").and_then(|v| v.as_bool()) {
                     s.repeat_override_critical = v;
                 }
+                if let Some(value) = t.get("rules") {
+                    match value.clone().try_into() {
+                        Ok(rules) => s.rules = rules,
+                        Err(error) => tracing::warn!(
+                            source = *src,
+                            %error,
+                            "ignoring invalid TOML noise-control rules"
+                        ),
+                    }
+                }
             }
         }
     }
@@ -75,4 +85,5 @@ pub fn save_dedup(paths: &Paths, settings: &HashMap<String, DedupSetting>) -> Re
 
 fn normalize_setting(setting: &mut DedupSetting) {
     setting.repeat_window_s = setting.repeat_window_s.clamp(60, 604_800);
+    setting.rules.iter_mut().for_each(|rule| rule.normalize());
 }

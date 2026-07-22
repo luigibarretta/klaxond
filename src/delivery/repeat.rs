@@ -1,4 +1,4 @@
-use crate::config::{DedupSetting, DeliveryPolicy, RuntimeConfig, default_tiers};
+use crate::config::{DeliveryPolicy, RuntimeConfig, default_tiers};
 use crate::history::HistoryStore;
 use crate::history::{RepeatCandidate, RepeatDecision, RepeatSuppressionReason};
 use crate::parsers::Parts;
@@ -7,6 +7,10 @@ use crate::util::{now_epoch, token_urlsafe};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Duration;
+
+mod matcher;
+
+use self::matcher::{RepeatPolicy, select_policy};
 
 pub(super) enum RepeatGate {
     Deliver(Option<RepeatReservation>),
@@ -19,28 +23,48 @@ pub(super) struct RepeatReservation {
     store: Arc<HistoryStore>,
 }
 
+pub(super) struct RepeatRequest<'a> {
+    pub source: &'a str,
+    pub severity: &'a str,
+    pub parts: &'a Parts,
+    pub labels: &'a std::collections::HashMap<String, String>,
+    pub policy: &'a DeliveryPolicy,
+    pub with_cascade: bool,
+}
+
 pub(super) async fn reserve(
     state: &AppState,
     cfg: &RuntimeConfig,
-    source: &str,
-    severity: &str,
-    parts: &Parts,
-    policy: &DeliveryPolicy,
-    with_cascade: bool,
+    request: RepeatRequest<'_>,
 ) -> RepeatGate {
-    let Some(setting) = enabled_setting(cfg, source, severity) else {
+    let RepeatPolicy::Suppress {
+        window_s,
+        matched_by,
+    } = select_policy(
+        cfg,
+        request.source,
+        request.severity,
+        request.parts,
+        request.labels,
+    )
+    else {
         return RepeatGate::Deliver(None);
     };
 
-    let fingerprint = fingerprint(source, severity, parts);
+    let fingerprint = fingerprint(request.source, request.severity, request.parts);
     let store = state.history_store();
     let mut candidate = repeat_candidate(
         fingerprint.clone(),
-        source,
-        severity,
-        parts,
-        setting.repeat_window_s,
-        reservation_ttl_s(cfg, severity, policy, with_cascade, parts),
+        &request,
+        window_s,
+        reservation_ttl_s(
+            cfg,
+            request.severity,
+            request.policy,
+            request.with_cascade,
+            request.parts,
+        ),
+        &matched_by,
     );
     loop {
         candidate.now = now_epoch();
@@ -63,6 +87,7 @@ pub(super) async fn reserve(
                     reason,
                     last_delivered_at,
                     suppressed_count,
+                    &matched_by,
                 );
                 return RepeatGate::Suppress;
             }
@@ -71,7 +96,9 @@ pub(super) async fn reserve(
             }
             Err(err) => {
                 tracing::error!(
-                    "repeat suppression check failed for {source}/{severity}; delivering fail-open: {err}"
+                    "repeat suppression check failed for {}/{}; delivering fail-open: {err}",
+                    request.source,
+                    request.severity
                 );
                 state.metric_inc(
                     "klaxond_repeat_suppression_errors_total",
@@ -82,17 +109,6 @@ pub(super) async fn reserve(
             }
         }
     }
-}
-
-fn enabled_setting<'a>(
-    cfg: &'a RuntimeConfig,
-    source: &str,
-    severity: &str,
-) -> Option<&'a DedupSetting> {
-    cfg.dedup.get(source).filter(|setting| {
-        setting.repeat_suppression_enabled
-            && (severity != "critical" || setting.repeat_override_critical)
-    })
 }
 
 pub(super) fn complete(
@@ -121,21 +137,21 @@ pub(super) fn complete(
 
 fn repeat_candidate(
     fingerprint: String,
-    source: &str,
-    severity: &str,
-    parts: &Parts,
+    request: &RepeatRequest<'_>,
     window_s: u64,
     reservation_ttl_s: f64,
+    matched_by: &str,
 ) -> RepeatCandidate {
     RepeatCandidate {
         fingerprint,
-        source: source.to_string(),
-        severity: severity.to_string(),
-        title: parts.title.chars().take(200).collect(),
+        source: request.source.to_string(),
+        severity: request.severity.to_string(),
+        title: request.parts.title.chars().take(200).collect(),
         now: now_epoch(),
         window_s,
         reservation_token: token_urlsafe(18),
         reservation_ttl_s,
+        matched_rule: (matched_by != "source default").then(|| matched_by.to_string()),
     }
 }
 
@@ -145,6 +161,7 @@ fn log_suppression(
     reason: RepeatSuppressionReason,
     last_delivered_at: Option<f64>,
     suppressed_count: u64,
+    matched_by: &str,
 ) {
     let reason_label = match reason {
         RepeatSuppressionReason::RecentDelivery => "cooldown",
@@ -155,6 +172,7 @@ fn log_suppression(
         reason = reason_label,
         last_delivered_at,
         suppressed_count,
+        matched_by,
         "repeat notification suppressed"
     );
     state.log_delivery(

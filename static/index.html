@@ -140,14 +140,17 @@ Optional shared secret per ingest source. When configured, the emitter MUST pres
 <thead><tr><th>#</th><th data-i18n-html="delivery.match_header">Match (label = value, prefix <code>re:</code> for regex)</th><th data-i18n="delivery.policy">Policy</th><th></th></tr></thead> <tbody></tbody> </table> <div class="row"> <button id="btn-rule-add" data-i18n="delivery.add_rule">+ Add rule</button> <button id="btn-delivery-save" class="primary" data-i18n="delivery.save">Save delivery config</button>
 <span id="delivery-status" class="muted"></span> </div> </section> <section id="tab-grouping" class="tabpane"> <h2 data-i18n="dedup.title">Notification noise control</h2>
 <p class="muted" data-i18n-html="dedup.desc1">Configure each source independently. <b>Burst grouping</b> waits briefly and combines concurrent events before sending. <b>Repeat suppression</b> sends the first notification immediately, then suppresses identical rendered notifications during the cooldown.</p>
-<div class="notice warn"><span data-i18n-html="dedup.critical_notice"><b>Critical notifications are protected by default:</b> they bypass both controls unless explicitly enabled per source.</span></div>
-<div id="dedup-cards"></div> <div class="row noise-save-row"> <button id="dedup-save" class="primary" data-i18n="common.save">Save</button>
+<div class="notice warn"><span data-i18n-html="dedup.critical_notice"><b>Critical notifications are protected by default:</b> they bypass both controls unless explicitly enabled per source or selective rule.</span></div>
+<div class="noise-rules-heading"> <div> <h3 data-i18n="dedup.rules_title">Selective rules</h3> <p class="muted" data-i18n="dedup.rules_desc">First matching rule wins. Use a rule to suppress only matching repeats or to always deliver an exception; unmatched notifications use the source defaults below.</p> </div> <button type="button" id="dedup-rule-add" class="btn" data-i18n="dedup.rule_add">+ Add rule</button> </div>
+<div id="dedup-rules" class="noise-rules-list"></div> <div class="row noise-save-row"> <button id="dedup-save" class="primary" data-dedup-save data-i18n="common.save">Save</button>
 <span id="dedup-status" class="muted" role="status" aria-live="polite"></span> <small class="muted" data-i18n="dedup.pending_note">Pending grouping counts are refreshed when this page opens.</small> </div>
+<h3 data-i18n="dedup.source_defaults">Source defaults</h3> <div id="dedup-cards"></div>
+<div class="row noise-save-row noise-save-row-secondary"> <button type="button" class="primary" data-dedup-save data-i18n="common.save">Save</button> </div>
 <h3 data-i18n="dedup.recent_suppressed">Recently suppressed repeats</h3>
 <p class="muted" data-i18n="dedup.recent_suppressed_desc">Persistent cooldown activity from the selected history database.</p>
 <div class="table-scroll"><table id="t-repeat-suppressed"><thead><tr>
 <th data-i18n="common.source">Source</th><th data-i18n="common.severity">Severity</th><th data-i18n="common.title">Title</th>
-<th data-i18n="dedup.last_sent">Last sent</th><th data-i18n="dedup.last_suppressed">Last suppressed</th><th data-i18n="dedup.suppressed_count">Count</th><th data-i18n="dedup.next_allowed">Next allowed</th>
+<th data-i18n="dedup.last_sent">Last sent</th><th data-i18n="dedup.last_suppressed">Last suppressed</th><th data-i18n="dedup.suppressed_count">Count</th><th data-i18n="dedup.rule">Rule</th><th data-i18n="dedup.next_allowed">Next allowed</th>
 </tr></thead><tbody></tbody></table></div>
 </section> <section id="tab-auth" class="tabpane"> <h2 data-i18n="auth.title">Authentication</h2> <p class="muted">
 <span data-i18n-html="auth.desc_before_user">Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user:</span> <code id="auth-current-user">—</code>. </p> <h3 data-i18n="common.mode">Mode</h3> <div class="card">

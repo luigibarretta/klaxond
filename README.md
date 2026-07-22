@@ -365,6 +365,15 @@ The reverse path is the UI **Full export** button. It exports
 and `auth-config.json`; bind-mount those files in compose when you want the
 same settings managed declaratively.
 
+Noise control also supports ordered selective rules per source. Rules can match
+the rendered title, body, alert name, or an arbitrary normalized label using an
+exact value, case-insensitive substring, or Rust regular expression. The first
+matching rule either suppresses identical repeats for its own cooldown or
+bypasses suppression and always delivers; unmatched notifications retain the
+source-wide behavior. Critical notifications require an explicit per-rule
+opt-in. See the commented `[[dedup.grafana.rules]]` example in
+`klaxond.default.toml`.
+
 Every compose env var that changes application behavior has at least one
 TOML or JSON equivalent. `KLAXOND_CONFIG` is the only bootstrap-only exception:
 it selects the TOML file itself, so it cannot live inside that same TOML file.

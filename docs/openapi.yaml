@@ -1642,7 +1642,8 @@ paths:
       summary: Return notification noise-control settings and activity.
       description: |
         Returns per-source burst-grouping and repeat-suppression settings,
-        live pending grouping counts, and recent persistent cooldown activity.
+        ordered selective matching rules, live pending grouping counts, and
+        recent persistent cooldown activity.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -1660,9 +1661,9 @@ paths:
       operationId: updateDedupConfig
       summary: Replace notification noise-control settings.
       description: |
-        Persists per-source burst grouping and repeat suppression to the
-        dedup sidecar. Fields unknown to older clients remain backward
-        compatible; repeat suppression is disabled by default.
+        Persists per-source burst grouping, repeat suppression and ordered
+        selective matching rules to the dedup sidecar. Fields omitted by older
+        clients are preserved; repeat suppression is disabled by default.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -2153,6 +2154,7 @@ components:
         - repeat_suppression_enabled
         - repeat_window_s
         - repeat_override_critical
+        - rules
       properties:
         enabled:
           type: boolean
@@ -2183,6 +2185,65 @@ components:
         repeat_override_critical:
           type: boolean
           description: When true, repeated critical notifications can also be suppressed.
+        rules:
+          type: array
+          maxItems: 50
+          description: |
+            Ordered selective overrides for this source. The first enabled
+            matching rule wins; unmatched notifications use the source-wide
+            repeat-suppression setting.
+          items:
+            $ref: "#/components/schemas/NoiseControlRule"
+    NoiseControlRule:
+      type: object
+      required:
+        - name
+        - enabled
+        - field
+        - label
+        - operator
+        - pattern
+        - case_sensitive
+        - action
+        - cooldown_s
+        - include_critical
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+        enabled:
+          type: boolean
+        field:
+          type: string
+          enum: [title_or_body, title, body, alertname, label]
+        label:
+          type: string
+          maxLength: 128
+          description: Required only when `field` is `label`; otherwise normalized to an empty string.
+        operator:
+          type: string
+          enum: [exact, contains, regex]
+        pattern:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Exact value, substring or Rust-regex expression according to `operator`.
+        case_sensitive:
+          type: boolean
+          description: Matching is case-insensitive by default, including regex matching.
+        action:
+          type: string
+          enum: [suppress, bypass]
+          description: Suppress identical repeats for the rule cooldown, or bypass repeat suppression and always deliver.
+        cooldown_s:
+          type: integer
+          minimum: 60
+          maximum: 604800
+          description: Effective only for the `suppress` action.
+        include_critical:
+          type: boolean
+          description: Explicit opt-in to suppress matching critical notifications.
     NoiseControlSettingPatch:
       type: object
       properties:
@@ -2205,6 +2266,11 @@ components:
           maximum: 604800
         repeat_override_critical:
           type: boolean
+        rules:
+          type: array
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/NoiseControlRule"
     NoiseControlSettings:
       type: object
       additionalProperties:
@@ -2234,6 +2300,8 @@ components:
         - title
         - last_suppressed_at
         - suppressed_count
+        - cooldown_s
+        - matched_rule
       properties:
         source:
           type: string
@@ -2252,6 +2320,13 @@ components:
         suppressed_count:
           type: integer
           minimum: 1
+        cooldown_s:
+          type: integer
+          minimum: 0
+          description: Effective cooldown selected when the notification was evaluated.
+        matched_rule:
+          type: [string, "null"]
+          description: Selective rule name, or null when the source default applied.
         next_allowed_at:
           type: [number, "null"]
           format: double

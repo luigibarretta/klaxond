@@ -80,6 +80,45 @@ host = ["TOML dashboard", "/d/toml"]
     );
 }
 
+#[test]
+fn selective_noise_rules_load_from_toml() {
+    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    clear_runtime_env();
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let config: toml::Value = toml::from_str(
+        r#"
+[dedup.grafana]
+repeat_suppression_enabled = true
+
+[[dedup.grafana.rules]]
+name = "Filesystem alerts"
+field = "label"
+label = "alertname"
+operator = "regex"
+pattern = "^Filesystem.*"
+action = "suppress"
+cooldown_s = 14400
+include_critical = true
+"#,
+    )
+    .unwrap();
+    save_toml(&paths, &config).unwrap();
+
+    let cfg = load_runtime_config(&paths).unwrap();
+    let rules = &cfg.dedup["grafana"].rules;
+
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].name, "Filesystem alerts");
+    assert_eq!(rules[0].field, NoiseMatchField::Label);
+    assert_eq!(rules[0].label, "alertname");
+    assert_eq!(rules[0].operator, NoiseMatchOperator::Regex);
+    assert_eq!(rules[0].pattern, "^Filesystem.*");
+    assert_eq!(rules[0].action, NoiseRuleAction::Suppress);
+    assert_eq!(rules[0].cooldown_s, 14_400);
+    assert!(rules[0].include_critical);
+}
+
 fn save_stale_sidecars(paths: &Paths) {
     save_ntfy_topics(
         paths,
@@ -115,6 +154,7 @@ fn save_stale_sidecars(paths: &Paths) {
                 repeat_suppression_enabled: true,
                 repeat_window_s: 7_200,
                 repeat_override_critical: false,
+                rules: Vec::new(),
             },
         )]),
     )

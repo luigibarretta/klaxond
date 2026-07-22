@@ -109,7 +109,9 @@ SET source = $2,
     severity = $3,
     title = $4,
     last_suppressed_at = $5,
-    suppressed_count = $6
+    suppressed_count = $6,
+    cooldown_s = $7,
+    matched_rule = $8
 WHERE fingerprint = $1
 "#,
         &[
@@ -119,6 +121,8 @@ WHERE fingerprint = $1
             &candidate.title,
             &candidate.now,
             &(suppressed_count as i64),
+            &(candidate.window_s as i64),
+            &candidate.matched_rule,
         ],
     )?;
     Ok(RepeatDecision::Suppress {
@@ -133,15 +137,18 @@ fn reserve_delivery(tx: &mut Transaction<'_>, candidate: &RepeatCandidate) -> Re
         r#"
 INSERT INTO klaxond_repeat_state (
   fingerprint, source, severity, title, last_delivered_at,
-  last_suppressed_at, suppressed_count, reserved_until, reservation_token
+  last_suppressed_at, suppressed_count, reserved_until, reservation_token,
+  cooldown_s, matched_rule
 )
-VALUES ($1, $2, $3, $4, NULL, NULL, 0, $5, $6)
+VALUES ($1, $2, $3, $4, NULL, NULL, 0, $5, $6, $7, $8)
 ON CONFLICT(fingerprint) DO UPDATE SET
   source = excluded.source,
   severity = excluded.severity,
   title = excluded.title,
   reserved_until = excluded.reserved_until,
-  reservation_token = excluded.reservation_token
+  reservation_token = excluded.reservation_token,
+  cooldown_s = excluded.cooldown_s,
+  matched_rule = excluded.matched_rule
 "#,
         &[
             &candidate.fingerprint,
@@ -150,6 +157,8 @@ ON CONFLICT(fingerprint) DO UPDATE SET
             &candidate.title,
             &candidate.reservation_until(),
             &candidate.reservation_token,
+            &(candidate.window_s as i64),
+            &candidate.matched_rule,
         ],
     )?;
     Ok(())
@@ -189,7 +198,7 @@ pub(super) fn recent_suppressions(client: &mut Client, limit: usize) -> Result<V
     let rows = client.query(
         r#"
 SELECT fingerprint, source, severity, title, last_delivered_at,
-       last_suppressed_at, suppressed_count
+       last_suppressed_at, suppressed_count, cooldown_s, matched_rule
 FROM klaxond_repeat_state
 WHERE last_suppressed_at IS NOT NULL
 ORDER BY last_suppressed_at DESC
@@ -211,7 +220,7 @@ pub(super) fn export_all(client: &mut Client) -> Result<Vec<RepeatState>> {
     let rows = client.query(
         r#"
 SELECT fingerprint, source, severity, title, last_delivered_at,
-       last_suppressed_at, suppressed_count
+       last_suppressed_at, suppressed_count, cooldown_s, matched_rule
 FROM klaxond_repeat_state
 ORDER BY fingerprint
 "#,
@@ -225,9 +234,10 @@ pub(super) fn import(client: &mut Client, state: &RepeatState) -> Result<()> {
         r#"
 INSERT INTO klaxond_repeat_state (
   fingerprint, source, severity, title, last_delivered_at,
-  last_suppressed_at, suppressed_count, reserved_until, reservation_token
+  last_suppressed_at, suppressed_count, cooldown_s, matched_rule,
+  reserved_until, reservation_token
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, 0, '')
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 0, '')
 ON CONFLICT(fingerprint) DO UPDATE SET
   source = excluded.source,
   severity = excluded.severity,
@@ -243,7 +253,9 @@ ON CONFLICT(fingerprint) DO UPDATE SET
   suppressed_count = GREATEST(
     klaxond_repeat_state.suppressed_count,
     excluded.suppressed_count
-  )
+  ),
+  cooldown_s = excluded.cooldown_s,
+  matched_rule = excluded.matched_rule
 "#,
         &[
             &state.fingerprint,
@@ -253,6 +265,8 @@ ON CONFLICT(fingerprint) DO UPDATE SET
             &state.last_delivered_at,
             &state.last_suppressed_at,
             &(state.suppressed_count as i64),
+            &(state.cooldown_s as i64),
+            &state.matched_rule,
         ],
     )?;
     Ok(())
@@ -267,5 +281,7 @@ fn row_to_state(row: postgres::Row) -> RepeatState {
         last_delivered_at: row.get(4),
         last_suppressed_at: row.get(5),
         suppressed_count: row.get::<_, i64>(6).max(0) as u64,
+        cooldown_s: row.get::<_, i64>(7).max(0) as u64,
+        matched_rule: row.get(8),
     }
 }

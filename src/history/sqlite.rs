@@ -77,7 +77,9 @@ CREATE TABLE IF NOT EXISTS klaxond_repeat_state (
   last_suppressed_at REAL,
   suppressed_count INTEGER NOT NULL DEFAULT 0,
   reserved_until REAL NOT NULL DEFAULT 0,
-  reservation_token TEXT NOT NULL DEFAULT ''
+  reservation_token TEXT NOT NULL DEFAULT '',
+  cooldown_s INTEGER NOT NULL DEFAULT 0,
+  matched_rule TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_klaxond_repeat_suppressed_desc
@@ -136,6 +138,14 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_auth_rate_limits_updated
         conn.execute_batch(
             "ALTER TABLE klaxond_auth_sessions ADD COLUMN family_hash TEXT NOT NULL DEFAULT '';",
         )?;
+    }
+    if !sqlite_column_exists(conn, "klaxond_repeat_state", "cooldown_s")? {
+        conn.execute_batch(
+            "ALTER TABLE klaxond_repeat_state ADD COLUMN cooldown_s INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    if !sqlite_column_exists(conn, "klaxond_repeat_state", "matched_rule")? {
+        conn.execute_batch("ALTER TABLE klaxond_repeat_state ADD COLUMN matched_rule TEXT;")?;
     }
     conn.execute(
         "UPDATE klaxond_auth_sessions SET family_hash = id_hash WHERE family_hash = ''",

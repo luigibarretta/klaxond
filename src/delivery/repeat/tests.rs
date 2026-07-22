@@ -1,4 +1,4 @@
-use super::{RepeatGate, fingerprint, repeat_candidate, reservation_ttl_s, reserve};
+use super::{RepeatGate, RepeatRequest, fingerprint, repeat_candidate, reservation_ttl_s, reserve};
 use crate::config::{DeliveryPolicy, NtfyTopic, Tier};
 use crate::delivery::tests::support::test_state;
 use crate::parsers::{Parts, action};
@@ -110,13 +110,21 @@ async fn in_flight_duplicate_takes_over_after_first_delivery_fails() {
     };
     let fingerprint = fingerprint("grafana", "warning", &rendered);
     let store = state.history_store();
+    let labels = std::collections::HashMap::new();
+    let request = RepeatRequest {
+        source: "grafana",
+        severity: "warning",
+        parts: &rendered,
+        labels: &labels,
+        policy: &policy,
+        with_cascade: false,
+    };
     let initial = repeat_candidate(
         fingerprint.clone(),
-        "grafana",
-        "warning",
-        &rendered,
+        &request,
         7_200,
         120.0,
+        "source default",
     );
     let initial_token = initial.reservation_token.clone();
     assert!(matches!(
@@ -124,9 +132,7 @@ async fn in_flight_duplicate_takes_over_after_first_delivery_fails() {
         crate::history::RepeatDecision::Deliver { .. }
     ));
 
-    let waiting = reserve(
-        &state, &cfg, "grafana", "warning", &rendered, &policy, false,
-    );
+    let waiting = reserve(&state, &cfg, request);
     let release = async {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         store

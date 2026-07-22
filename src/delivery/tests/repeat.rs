@@ -1,6 +1,8 @@
 use super::super::deliver;
 use super::support::{http_response, sample_parts, spawn_http_once, test_state};
-use crate::config::NtfyTopic;
+use crate::config::{
+    NoiseControlRule, NoiseMatchField, NoiseMatchOperator, NoiseRuleAction, NtfyTopic,
+};
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -90,4 +92,59 @@ async fn failed_delivery_releases_repeat_reservation_for_retry() {
 
     assert_eq!(retried, (true, "ntfy".to_string()));
     request_rx.await.expect("retry ntfy request");
+}
+
+#[tokio::test]
+async fn selective_rule_suppresses_matching_repeat_when_source_default_is_disabled() {
+    let (_tmp, state) = test_state();
+    let (base, request_rx) = spawn_http_once(http_response("text/plain", b"ok")).await;
+    let mut cfg = state.cfg();
+    cfg.ntfy_url = base;
+    cfg.ntfy_topics = vec![NtfyTopic {
+        name: "warning-topic".into(),
+        token: "secret-token".into(),
+        handles: vec!["warning".into()],
+    }];
+    cfg.dedup.get_mut("grafana").unwrap().rules = vec![NoiseControlRule {
+        name: "Grafana test noise".into(),
+        enabled: true,
+        field: NoiseMatchField::Title,
+        label: String::new(),
+        operator: NoiseMatchOperator::Contains,
+        pattern: "test alert".into(),
+        case_sensitive: false,
+        action: NoiseRuleAction::Suppress,
+        cooldown_s: 21_600,
+        include_critical: false,
+    }];
+    state.replace_config(cfg);
+
+    let first = deliver(
+        &state,
+        "warning",
+        sample_parts(),
+        true,
+        HashMap::new(),
+        "grafana",
+    )
+    .await;
+    assert_eq!(first, (true, "ntfy".to_string()));
+    request_rx.await.expect("first ntfy request");
+
+    let repeated = deliver(
+        &state,
+        "warning",
+        sample_parts(),
+        true,
+        HashMap::new(),
+        "grafana",
+    )
+    .await;
+    assert_eq!(repeated, (true, "repeat-suppressed".to_string()));
+    let recent = state.recent_repeat_suppressions(10);
+    assert_eq!(recent[0].cooldown_s, 21_600);
+    assert_eq!(
+        recent[0].matched_rule.as_deref(),
+        Some("Grafana test noise")
+    );
 }

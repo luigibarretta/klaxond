@@ -32,7 +32,7 @@ pub(in crate::delivery) fn test_state() -> (TempDir, AppState) {
     (tmp, state)
 }
 
-pub(super) fn sample_parts() -> Parts {
+pub(in crate::delivery) fn sample_parts() -> Parts {
     Parts {
         title: "Test alert".into(),
         body: "alert body".into(),

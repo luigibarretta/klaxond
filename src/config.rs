@@ -25,8 +25,9 @@ pub use defaults::{
 };
 pub use models::{
     AuthConfig, AuthStepUpConfig, AuthToken, BasicAuthConfig, DedupSetting, DeliveryConfig,
-    DeliveryPolicy, DeliveryRule, HistoryConfig, InhibitionRule, LdapConfig, NtfyTopic, OidcConfig,
-    PasskeyRecord, RuntimeConfig, Schedule, Tier, TotpRecord, TrustedProxyConfig, WebauthnConfig,
+    DeliveryPolicy, DeliveryRule, HistoryConfig, InhibitionRule, LdapConfig, NoiseControlRule,
+    NoiseMatchField, NoiseMatchOperator, NoiseRuleAction, NtfyTopic, OidcConfig, PasskeyRecord,
+    RuntimeConfig, Schedule, Tier, TotpRecord, TrustedProxyConfig, WebauthnConfig,
 };
 pub use ntfy_topics::save_ntfy_topics;
 pub use paths::Paths;

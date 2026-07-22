@@ -46,13 +46,18 @@ fn suppression_json(
     entry: crate::history::RepeatSuppressionSummary,
 ) -> Value {
     let next_allowed_at = entry.last_delivered_at.and_then(|last_delivered_at| {
-        cfg.dedup
-            .get(&entry.source)
-            .filter(|setting| {
-                setting.repeat_suppression_enabled
-                    && (entry.severity != "critical" || setting.repeat_override_critical)
-            })
-            .map(|setting| last_delivered_at + setting.repeat_window_s as f64)
+        let cooldown_s = (entry.cooldown_s > 0)
+            .then_some(entry.cooldown_s)
+            .or_else(|| {
+                cfg.dedup
+                    .get(&entry.source)
+                    .filter(|setting| {
+                        setting.repeat_suppression_enabled
+                            && (entry.severity != "critical" || setting.repeat_override_critical)
+                    })
+                    .map(|setting| setting.repeat_window_s)
+            })?;
+        Some(last_delivered_at + cooldown_s as f64)
     });
     json!({
         "source": entry.source,
@@ -61,6 +66,8 @@ fn suppression_json(
         "last_delivered_at": entry.last_delivered_at,
         "last_suppressed_at": entry.last_suppressed_at,
         "suppressed_count": entry.suppressed_count,
+        "cooldown_s": entry.cooldown_s,
+        "matched_rule": entry.matched_rule,
         "next_allowed_at": next_allowed_at,
     })
 }

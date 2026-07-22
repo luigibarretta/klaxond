@@ -155,6 +155,7 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
             "repeat_suppression_enabled": d.repeat_suppression_enabled,
             "repeat_window_s": d.repeat_window_s,
             "repeat_override_critical": d.repeat_override_critical,
+            "rules": d.rules,
         })).unwrap_or_else(|| json!({
             "enabled": false,
             "window_s": 0,
@@ -163,6 +164,7 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
             "repeat_suppression_enabled": false,
             "repeat_window_s": 0,
             "repeat_override_critical": false,
+            "rules": [],
         })),
     }))
 }

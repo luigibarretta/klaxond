@@ -48,6 +48,7 @@ fn repeat_candidate(now: f64, token: &str) -> RepeatCandidate {
         window_s: 7_200,
         reservation_token: token.to_string(),
         reservation_ttl_s: 120.0,
+        matched_rule: Some("test rule".into()),
     }
 }
 
@@ -142,6 +143,45 @@ fn sqlite_history_migration_is_idempotent() {
 }
 
 #[test]
+fn sqlite_repeat_state_migrates_selective_rule_columns() {
+    let tmp = TempDir::new().unwrap();
+    let path = tmp.path().join("history.db");
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(
+        r#"
+CREATE TABLE klaxond_repeat_state (
+  fingerprint TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  last_delivered_at REAL,
+  last_suppressed_at REAL,
+  suppressed_count INTEGER NOT NULL DEFAULT 0,
+  reserved_until REAL NOT NULL DEFAULT 0,
+  reservation_token TEXT NOT NULL DEFAULT ''
+);
+"#,
+    )
+    .unwrap();
+    drop(conn);
+
+    let store = HistoryStore::open(&sqlite_cfg(path.clone(), 0)).unwrap();
+    drop(store);
+
+    let conn = rusqlite::Connection::open(path).unwrap();
+    let mut statement = conn
+        .prepare("PRAGMA table_info(klaxond_repeat_state)")
+        .unwrap();
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert!(columns.iter().any(|column| column == "cooldown_s"));
+    assert!(columns.iter().any(|column| column == "matched_rule"));
+}
+
+#[test]
 fn sqlite_history_migration_requires_existing_source() {
     let tmp = TempDir::new().unwrap();
     let src = sqlite_cfg(tmp.path().join("missing.db"), 0);
@@ -189,6 +229,8 @@ fn sqlite_repeat_suppression_reserves_completes_and_expires() {
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0].title, "Host down");
     assert_eq!(recent[0].suppressed_count, 1);
+    assert_eq!(recent[0].cooldown_s, 7_200);
+    assert_eq!(recent[0].matched_rule.as_deref(), Some("test rule"));
 
     assert_eq!(
         store

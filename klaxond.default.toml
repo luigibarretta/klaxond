@@ -178,8 +178,13 @@ ttl_seconds = 1800
 # Critical notifications bypass repeat suppression unless
 # repeat_override_critical=true.
 #
+# Optional selective rules are evaluated in order before the source-wide
+# repeat setting. A matching `suppress` rule uses its own cooldown; a matching
+# `bypass` rule always delivers. If no rule matches, the source-wide setting
+# above remains the fallback. Matching is case-insensitive by default.
+#
 # These settings are bootstrapped to /data/dedup-config.json on first run.
-# UI edits in the Grouping tab persist there and override these defaults.
+# UI edits in Noise control persist there and override these defaults.
 
 [dedup.wud]
 enabled           = true
@@ -189,6 +194,18 @@ override_critical = false
 repeat_suppression_enabled = false
 repeat_window_s = 7200
 repeat_override_critical = false
+
+# [[dedup.grafana.rules]]
+# name = "Suppress noisy filesystem alerts"
+# enabled = true
+# field = "label"            # title_or_body | title | body | alertname | label
+# label = "alertname"        # required only for field=label
+# operator = "regex"         # exact | contains | regex
+# pattern = "^(Disk|Filesystem).*"
+# case_sensitive = false
+# action = "suppress"        # suppress | bypass (always deliver)
+# cooldown_s = 7200
+# include_critical = false
 
 [dedup.healthchecks]
 enabled           = false

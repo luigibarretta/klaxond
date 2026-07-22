@@ -87,6 +87,8 @@ fn postgres_repeat_import_preserves_non_null_timestamps() {
         last_delivered_at: Some(100.0),
         last_suppressed_at: Some(101.0),
         suppressed_count: 2,
+        cooldown_s: 7_200,
+        matched_rule: Some("postgres test".into()),
     };
     store.import_repeat_state(&populated).unwrap();
     store

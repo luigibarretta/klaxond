@@ -157,7 +157,19 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
             override_critical: true,
             repeat_suppression_enabled: true,
             repeat_window_s: 7200,
-            repeat_override_critical: false
+            repeat_override_critical: false,
+            rules: [{
+              name: "E2E filesystem noise",
+              enabled: true,
+              field: "label",
+              label: "alertname",
+              operator: "regex",
+              pattern: "^(Disk|Filesystem)",
+              case_sensitive: false,
+              action: "suppress",
+              cooldown_s: 21600,
+              include_critical: false
+            }]
           }
         }
       }
@@ -172,7 +184,13 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
       override_critical: true,
       repeat_suppression_enabled: true,
       repeat_window_s: 7200,
-      repeat_override_critical: false
+      repeat_override_critical: false,
+      rules: [expect.objectContaining({
+        name: "E2E filesystem noise",
+        field: "label",
+        operator: "regex",
+        cooldown_s: 21600
+      })]
     });
 
     const deliveryUpdate = await request.post("/api/delivery-config", {
@@ -246,7 +264,19 @@ test("noise-control page configures grouping and repeat suppression with human d
             override_critical: false,
             repeat_suppression_enabled: true,
             repeat_window_s: 7200,
-            repeat_override_critical: false
+            repeat_override_critical: false,
+            rules: [{
+              name: "Filesystem repeats",
+              enabled: true,
+              field: "title_or_body",
+              label: "",
+              operator: "contains",
+              pattern: "filesystem",
+              case_sensitive: false,
+              action: "suppress",
+              cooldown_s: 7200,
+              include_critical: false
+            }]
           }
         }
       }
@@ -261,7 +291,24 @@ test("noise-control page configures grouping and repeat suppression with human d
     await expect(grafana.locator(".d-window")).toHaveValue("300");
     await expect(grafana.locator(".d-repeat-window")).toHaveValue("7200");
     await expect(grafana.locator(".d-repeat-window option:checked")).toHaveText("2 hours");
+    const selectiveRules = page.locator("#dedup-rules [data-noise-rule]");
+    await expect(selectiveRules).toHaveCount(1);
+    await expect(selectiveRules.first().locator('[data-rule-field="name"]')).toHaveValue("Filesystem repeats");
+    await expect(selectiveRules.first().locator('[data-rule-field="pattern"]')).toHaveValue("filesystem");
     await expect(page.locator("#t-repeat-suppressed")).toBeVisible();
+
+    await page.locator("#dedup-rule-add").click();
+    const bypassRule = selectiveRules.last();
+    await bypassRule.locator('[data-rule-field="name"]').fill("Never suppress database alerts");
+    await bypassRule.locator('[data-rule-field="field"]').selectOption("label");
+    await expect(bypassRule.locator("[data-rule-label-name]")).toBeVisible();
+    await bypassRule.locator('[data-rule-field="label"]').fill("alertname");
+    await bypassRule.locator('[data-rule-field="operator"]').selectOption("regex");
+    await bypassRule.locator('[data-rule-field="pattern"]').fill("^Database.*");
+    await bypassRule.locator('[data-rule-field="action"]').selectOption("bypass");
+    await expect(bypassRule.locator("[data-rule-cooldown]")).toBeHidden();
+    await bypassRule.locator('[data-rule-action="up"]').click();
+    await expect(selectiveRules.first().locator('[data-rule-field="name"]')).toHaveValue("Never suppress database alerts");
 
     await grafana.locator(".d-mode").selectOption("suppress");
     await grafana.locator(".d-repeat-window").selectOption("21600");
@@ -274,12 +321,24 @@ test("noise-control page configures grouping and repeat suppression with human d
       enabled: false,
       strategy: "none",
       repeat_suppression_enabled: true,
-      repeat_window_s: 21600
+      repeat_window_s: 21600,
+      rules: [
+        expect.objectContaining({
+          name: "Never suppress database alerts",
+          field: "label",
+          label: "alertname",
+          operator: "regex",
+          pattern: "^Database.*",
+          action: "bypass"
+        }),
+        expect.objectContaining({ name: "Filesystem repeats", action: "suppress", cooldown_s: 7200 })
+      ]
     });
 
     await page.locator('[data-language-option="it"]').click();
     await expect(page.locator("#tab-grouping h2")).toHaveText("Controllo rumore notifiche");
     await expect(grafana.locator(".d-repeat-window option:checked")).toHaveText("6 ore");
+    await expect(selectiveRules.first().locator('[data-rule-field="action"] option:checked')).toHaveText("Invia sempre");
 
     await page.setViewportSize({ width: 375, height: 812 });
     await page.reload();
@@ -287,7 +346,7 @@ test("noise-control page configures grouping and repeat suppression with human d
     const layout = await page.evaluate(() => ({
       viewport: window.innerWidth,
       body: document.documentElement.scrollWidth,
-      cardsFit: [...document.querySelectorAll<HTMLElement>(".noise-card")]
+      cardsFit: [...document.querySelectorAll<HTMLElement>(".noise-card, .noise-rule")]
         .every(card => card.getBoundingClientRect().right <= window.innerWidth + 1)
     }));
     expect(layout.body).toBeLessThanOrEqual(layout.viewport);

@@ -6,7 +6,9 @@ fn dedup_config_request_applies_known_sources_and_preserves_leniency() {
         DedupConfigRequest::from_value(dedup_request_payload()).expect("dedup settings request");
 
     let current = default_dedup();
-    let settings = request.into_settings(default_dedup(), &current);
+    let settings = request
+        .into_settings(default_dedup(), &current)
+        .expect("valid settings");
 
     let grafana = settings.get("grafana").expect("grafana settings");
     assert!(grafana.enabled);
@@ -83,7 +85,9 @@ fn legacy_dedup_update_preserves_repeat_suppression_fields() {
         setting.repeat_override_critical = true;
     }
 
-    let settings = request.into_settings(default_dedup(), &current);
+    let settings = request
+        .into_settings(default_dedup(), &current)
+        .expect("valid settings");
 
     for source in ["grafana", "wud"] {
         let setting = settings.get(source).expect("known source");
@@ -91,6 +95,48 @@ fn legacy_dedup_update_preserves_repeat_suppression_fields() {
         assert_eq!(setting.repeat_window_s, 21_600);
         assert!(setting.repeat_override_critical);
     }
+}
+
+#[test]
+fn selective_noise_rules_are_normalized_validated_and_preserved() {
+    let request = DedupConfigRequest::from_value(json!({
+        "settings": {
+            "grafana": {
+                "rules": [{
+                    "name": "  Disk noise  ",
+                    "enabled": true,
+                    "field": "label",
+                    "label": " instance ",
+                    "operator": "regex",
+                    "pattern": " ^nas-[0-9]+$ ",
+                    "case_sensitive": false,
+                    "action": "suppress",
+                    "cooldown_s": 999999,
+                    "include_critical": false
+                }]
+            }
+        }
+    }))
+    .expect("noise rule request");
+
+    let settings = request
+        .into_settings(default_dedup(), &default_dedup())
+        .expect("valid noise rule");
+    let rule = &settings["grafana"].rules[0];
+    assert_eq!(rule.name, "Disk noise");
+    assert_eq!(rule.label, "instance");
+    assert_eq!(rule.pattern, "^nas-[0-9]+$");
+    assert_eq!(rule.cooldown_s, 604_800);
+
+    let invalid = DedupConfigRequest::from_value(json!({
+        "settings": {"grafana": {"rules": [{
+            "name": "broken", "pattern": "(", "operator": "regex"
+        }]}}
+    }))
+    .unwrap()
+    .into_settings(default_dedup(), &default_dedup())
+    .unwrap_err();
+    assert!(invalid.contains("invalid regex"));
 }
 
 #[test]

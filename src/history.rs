@@ -26,7 +26,7 @@ use sqlite::{
     sqlite_page, sqlite_prune, validate_sqlite_schema,
 };
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeliveryEntry {

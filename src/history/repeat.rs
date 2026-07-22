@@ -12,6 +12,7 @@ pub struct RepeatCandidate {
     pub window_s: u64,
     pub reservation_token: String,
     pub reservation_ttl_s: f64,
+    pub matched_rule: Option<String>,
 }
 
 impl RepeatCandidate {
@@ -51,6 +52,10 @@ pub struct RepeatState {
     pub last_delivered_at: Option<f64>,
     pub last_suppressed_at: Option<f64>,
     pub suppressed_count: u64,
+    #[serde(default)]
+    pub cooldown_s: u64,
+    #[serde(default)]
+    pub matched_rule: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -61,6 +66,8 @@ pub struct RepeatSuppressionSummary {
     pub last_delivered_at: Option<f64>,
     pub last_suppressed_at: f64,
     pub suppressed_count: u64,
+    pub cooldown_s: u64,
+    pub matched_rule: Option<String>,
 }
 
 impl RepeatState {
@@ -72,6 +79,8 @@ impl RepeatState {
             last_delivered_at: self.last_delivered_at,
             last_suppressed_at: self.last_suppressed_at?,
             suppressed_count: self.suppressed_count,
+            cooldown_s: self.cooldown_s,
+            matched_rule: self.matched_rule,
         })
     }
 }
