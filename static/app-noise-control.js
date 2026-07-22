@@ -1,5 +1,5 @@
 import {
-  $, J, applyTablePager, escapeHtml, fetchError, markTabDirty, notifyError,
+  $, J, applyTablePager, dirtyTabs, escapeHtml, fetchError, markTabDirty, notifyError,
   notifySuccess, notifyValidationError, queryGet, setInlineStatus, tr,
 } from "./app.js";
 import { GROUPING_DURATIONS, REPEAT_DURATIONS, durationOptions } from "./app-duration-options.js";
@@ -21,9 +21,11 @@ let dedupData = {
 };
 
 export async function loadDedup() {
+  if (dirtyTabs.has("grouping")) return;
   try {
     dedupData = await queryGet("dedup-config", "/api/dedup-config");
     renderDedupCards();
+    markTabDirty("grouping", false);
   } catch (error) {
     const cards = $("#dedup-cards");
     if (cards) {

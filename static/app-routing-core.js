@@ -142,6 +142,10 @@ export function updateTabAccessibleLabel(tab) {
 
 export function markTabDirty(tabId, dirty = true) {
   if (dirty) dirtyTabs.add(tabId); else dirtyTabs.delete(tabId);
+  const readOnly = document.body.classList.contains("viewer-readonly");
+  document.querySelectorAll(`[data-enable-when-dirty="${tabId}"]`).forEach(button => {
+    button.disabled = !dirty || readOnly;
+  });
   const tab = document.querySelector(`.tab[data-tab="${tabId}"]`);
   if (!tab) return;
   let dot = tab.querySelector(".tab-dirty");

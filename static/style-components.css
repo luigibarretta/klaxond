@@ -266,6 +266,8 @@ button {
 button:hover { background: var(--hover-bg); }
 button.primary { background: var(--accent); border-color: var(--accent); }
 button.primary:hover { background: var(--accent-hover); }
+button:disabled { opacity: 0.48; cursor: not-allowed; }
+button.primary:disabled:hover { background: var(--accent); }
 button.danger { background: var(--red); border-color: var(--red); color: white; }
 label { display: block; margin: 8px 0; }
 input[type=text], input[type=url], input[type=number], input[type=password], input[type=search], select, textarea {
@@ -326,4 +328,3 @@ tr.deliv-detail .deliv-detail-cell {
 .deliv-detail-cell .kv-v { flex: 1 1 auto; word-break: break-word; }
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-

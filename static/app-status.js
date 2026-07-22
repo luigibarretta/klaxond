@@ -1,5 +1,5 @@
 import {
-  $, $$, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
+  $, $$, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, dirtyTabs, errorText,
   escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
   markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setCurrentUser, setInlineStatus, setLocalTotpEnabled,
@@ -103,12 +103,13 @@ export function applyReadOnlyViewerMode(user = {}) {
     "#btn-cascade-toggle", "#cfg-import-apply", "#inhib-add", "#inhib-save", "#inhib-clear-all",
     "#sched-add", "#sched-save", "#btn-rc-add", "#btn-rc-save", "#ntfy-topic-add",
     "#ntfy-topics-save", "#btn-routing-save", "#btn-cas-add", "#btn-cas-save",
-    "#btn-pol-add", "#btn-rule-add", "#btn-delivery-save", "#dedup-save", "#auth-save",
+    "#btn-pol-add", "#btn-rule-add", "#btn-delivery-save", "[data-dedup-save]", "#auth-save",
     "#token-create", "#passkey-register", "#totp-start", "#totp-enable", "#totp-disable", "#btn-preview", "#inhib-test-run", "#btn-test-fire",
     "button.danger", "[data-clear-suppression]", "[data-clear-ack]", "[data-del]", "[data-revoke]", "[data-passkey-del]", "button[data-act]"
   ];
   document.querySelectorAll(writeSelectors.join(",")).forEach(el => {
-    el.disabled = readOnly;
+    const dirtyTab = el.dataset.enableWhenDirty;
+    el.disabled = readOnly || Boolean(dirtyTab && !dirtyTabs.has(dirtyTab));
     if (readOnly) el.title = tr("auth.viewer_readonly");
   });
 }

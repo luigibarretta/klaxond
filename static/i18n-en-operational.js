@@ -141,6 +141,7 @@ export const EN_OPERATIONAL_MESSAGES = {
   "dedup.repeat_override_title": "Critical notifications bypass repeat suppression by default.",
   "dedup.repeat_identity": "Repeat identity: source + severity + rendered title, body, priority and tags. Ephemeral action URLs are ignored.",
   "dedup.source_defaults": "Source defaults",
+  "dedup.save": "Save noise control",
   "dedup.rules_title": "Selective rules",
   "dedup.rules_desc": "First matching rule wins. Suppress only matching repeats or always deliver an exception; unmatched notifications use the source defaults below.",
   "dedup.rule_add": "+ Add rule",

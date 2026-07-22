@@ -141,6 +141,7 @@ export const IT_OPERATIONAL_MESSAGES = {
   "dedup.repeat_override_title": "Le notifiche critical bypassano la soppressione delle ripetizioni per impostazione predefinita.",
   "dedup.repeat_identity": "Identità ripetizione: sorgente + severità + titolo, corpo, priorità e tag renderizzati. Gli URL temporanei delle azioni sono ignorati.",
   "dedup.source_defaults": "Impostazioni predefinite per sorgente",
+  "dedup.save": "Salva controllo rumore",
   "dedup.rules_title": "Regole selettive",
   "dedup.rules_desc": "Vince la prima regola corrispondente. Sopprimi solo le ripetizioni desiderate oppure crea un'eccezione da inviare sempre; per le altre notifiche valgono le impostazioni della sorgente qui sotto.",
   "dedup.rule_add": "+ Aggiungi regola",

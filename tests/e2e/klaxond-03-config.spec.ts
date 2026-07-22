@@ -265,18 +265,7 @@ test("noise-control page configures grouping and repeat suppression with human d
             repeat_suppression_enabled: true,
             repeat_window_s: 7200,
             repeat_override_critical: false,
-            rules: [{
-              name: "Filesystem repeats",
-              enabled: true,
-              field: "title_or_body",
-              label: "",
-              operator: "contains",
-              pattern: "filesystem",
-              case_sensitive: false,
-              action: "suppress",
-              cooldown_s: 7200,
-              include_critical: false
-            }]
+            rules: []
           }
         }
       }
@@ -292,11 +281,20 @@ test("noise-control page configures grouping and repeat suppression with human d
     await expect(grafana.locator(".d-repeat-window")).toHaveValue("7200");
     await expect(grafana.locator(".d-repeat-window option:checked")).toHaveText("2 hours");
     const selectiveRules = page.locator("#dedup-rules [data-noise-rule]");
-    await expect(selectiveRules).toHaveCount(1);
-    await expect(selectiveRules.first().locator('[data-rule-field="name"]')).toHaveValue("Filesystem repeats");
-    await expect(selectiveRules.first().locator('[data-rule-field="pattern"]')).toHaveValue("filesystem");
+    const saveButtons = page.locator("[data-dedup-save]");
+    await expect(selectiveRules).toHaveCount(0);
+    await expect(page.locator(".noise-rules-empty")).toBeVisible();
     await expect(page.locator("#t-repeat-suppressed")).toBeVisible();
+    await expect(saveButtons).toHaveCount(2);
+    await expect(saveButtons.first()).toBeDisabled();
+    await expect(saveButtons.last()).toBeDisabled();
 
+    await page.locator("#dedup-rule-add").click();
+    await expect(saveButtons.first()).toBeEnabled();
+    await expect(saveButtons.last()).toBeEnabled();
+    const suppressRule = selectiveRules.last();
+    await suppressRule.locator('[data-rule-field="name"]').fill("Filesystem repeats");
+    await suppressRule.locator('[data-rule-field="pattern"]').fill("filesystem");
     await page.locator("#dedup-rule-add").click();
     const bypassRule = selectiveRules.last();
     await bypassRule.locator('[data-rule-field="name"]').fill("Never suppress database alerts");
@@ -314,6 +312,8 @@ test("noise-control page configures grouping and repeat suppression with human d
     await grafana.locator(".d-repeat-window").selectOption("21600");
     await page.locator("#dedup-save").click();
     await expect(page.locator(".toast-success").last()).toContainText("Noise controls saved");
+    await expect(saveButtons.first()).toBeDisabled();
+    await expect(saveButtons.last()).toBeDisabled();
 
     const saved = await request.get("/api/dedup-config");
     await expect(saved).toBeOK();

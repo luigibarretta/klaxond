@@ -132,9 +132,9 @@ function _clickPrimarySaveOnActiveTab() {
   if (!pane) return false;
   // Find the most likely "save" button — class=primary takes precedence,
   // then look for any button whose text starts with "Save".
-  const primary = pane.querySelector("button.primary");
+  const primary = pane.querySelector("button.primary:not(:disabled)");
   if (primary) { primary.click(); return true; }
-  for (const b of pane.querySelectorAll("button")) {
+  for (const b of pane.querySelectorAll("button:not(:disabled)")) {
     if ((b.textContent || "").trim().toLowerCase().startsWith("save")) {
       b.click(); return true;
     }
