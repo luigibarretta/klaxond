@@ -32,6 +32,12 @@ test("serves health and admin UI", async ({ page, request }) => {
     await expect(asset).toBeOK();
   }
 
+  const initialUi = await request.get("/status", { headers: { Accept: "text/html" } });
+  await expect(initialUi).toBeOK();
+  expect(await initialUi.text()).toContain(
+    '<span class="tab-label" data-i18n="tab.grouping">Noise control</span>'
+  );
+
   await page.goto("/");
   await expect(page).toHaveURL(/\/status$/);
   await expect(page.locator("h1")).toContainText("klaxond");
