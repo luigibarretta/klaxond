@@ -63,6 +63,50 @@ fn grafana_parser_matches_python_golden() {
 }
 
 #[test]
+fn grafana_grouped_alert_lists_per_instance_summaries() {
+    let (_tmp, cfg) = cfg();
+    let payload = json!({
+        "status": "firing",
+        "commonLabels": {
+            "alertname": "Trivy — new running services with fixable CRITICAL CVE",
+            "severity": "critical",
+            "component": "security"
+        },
+        "commonAnnotations": {},
+        "alerts": [
+            {
+                "labels": {"host": "it1-prd-dev-01", "service": "frontend"},
+                "annotations": {
+                    "summary": "frontend on it1-prd-dev-01 — app/frontend:v3 has 4 fixable CRITICAL CVEs"
+                }
+            },
+            {
+                "labels": {"host": "it1-prd-dns-01", "service": "wg-easy"},
+                "annotations": {
+                    "summary": "wg-easy on it1-prd-dns-01 — ghcr.io/wg-easy/wg-easy:15.3 has 1 fixable CRITICAL CVE"
+                }
+            }
+        ]
+    });
+
+    let parts = parse_grafana_payload(&payload, "critical", &cfg);
+
+    assert!(
+        parts
+            .body
+            .contains("• frontend on it1-prd-dev-01 — app/frontend:v3 has 4 fixable CRITICAL CVEs")
+    );
+    assert!(parts.body.contains(
+        "• wg-easy on it1-prd-dns-01 — ghcr.io/wg-easy/wg-easy:15.3 has 1 fixable CRITICAL CVE"
+    ));
+    assert!(
+        parts
+            .body
+            .contains("Affected: it1-prd-dev-01, it1-prd-dns-01")
+    );
+}
+
+#[test]
 fn healthchecks_resolved_parser_matches_python_golden() {
     let (_tmp, cfg) = cfg();
     let payload = json!({

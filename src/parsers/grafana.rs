@@ -126,6 +126,24 @@ fn grafana_body(input: GrafanaBodyInput<'_>) -> String {
     if !input.description.is_empty() && input.description != input.summary {
         body_parts.push(input.description.to_string());
     }
+    // Grafana removes annotations from commonAnnotations when grouped alert
+    // instances render different values (for example one Trivy service/image
+    // per instance). Preserve those actionable details as a compact list.
+    if input.summary.is_empty() {
+        let (summaries, omitted) = alert_summaries(input.payload, 12);
+        if !summaries.is_empty() {
+            body_parts.push(
+                summaries
+                    .into_iter()
+                    .map(|summary| format!("• {summary}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+            if omitted > 0 {
+                body_parts.push(format!("… and {omitted} more"));
+            }
+        }
+    }
     let affected = affected_hosts(input.payload);
     if affected.len() > 1 || (!affected.is_empty() && affected[0] != input.host) {
         body_parts.push(format!("Affected: {}", affected.join(", ")));
@@ -142,6 +160,26 @@ fn grafana_body(input: GrafanaBodyInput<'_>) -> String {
         body.push_str(&extra);
     }
     body
+}
+
+fn alert_summaries(payload: &Value, limit: usize) -> (Vec<String>, usize) {
+    let Some(alerts) = payload.get("alerts").and_then(|v| v.as_array()) else {
+        return (Vec::new(), 0);
+    };
+    let mut unique = Vec::new();
+    for alert in alerts {
+        let summary = alert
+            .get("annotations")
+            .and_then(|v| v.as_object())
+            .map(|annotations| object_scalar_cow(Some(annotations), "summary").into_owned())
+            .unwrap_or_default();
+        if !summary.is_empty() && !unique.contains(&summary) {
+            unique.push(summary);
+        }
+    }
+    let omitted = unique.len().saturating_sub(limit);
+    unique.truncate(limit);
+    (unique, omitted)
 }
 
 fn affected_hosts(payload: &Value) -> Vec<String> {

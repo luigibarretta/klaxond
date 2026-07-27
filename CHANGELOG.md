@@ -2,9 +2,14 @@
 
 ## Unreleased
 
+## 0.14.28 — 2026-07-27
+
 - Resa race-safe la rotazione delle sessioni persistenti: richieste browser
   concorrenti riusano lo stesso successore entro una grace window breve senza
   indebolire logout, revoca di famiglia o scadenze.
+- Le notifiche Grafana raggruppate conservano ora fino a 12 riepiloghi
+  per-istanza, così alert come Trivy elencano servizi, host, immagini e
+  vulnerabilità interessati invece di perdere le annotazioni non comuni.
 
 ## 0.14.27 — 2026-07-20
 
