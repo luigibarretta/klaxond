@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.14.31 — 2026-07-31
+
+- Add authenticated `/uptime-kuma/<severity>` ingestion with native Kuma status parsing.
+- Convert recovery heartbeats to `resolved`, enrich failures with sanitized monitor context,
+  and link notifications to both Uptime Kuma and the Power & UPS correlation timeline.
+
 ## 0.14.30 — 2026-07-31
 
 - Reso il timeout di ciascun tier Cascade configurabile dalla UI tra 1 e 60

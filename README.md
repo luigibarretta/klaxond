@@ -109,6 +109,7 @@ complete route list, schemas, auth requirements and response contracts.
 |---|---|---|
 | `POST` | `/webhook/<severity>` | Alertmanager / Grafana |
 | `POST` | `/beszel/<severity>` | Beszel UI webhook channel |
+| `POST` | `/uptime-kuma/<severity>` | Uptime Kuma webhook; heartbeat state overrides recovery severity |
 
 `<severity>` is one of `info`, `warning`, `critical`.
 

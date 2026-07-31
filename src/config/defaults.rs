@@ -5,6 +5,7 @@ pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",
     "healthchecks",
+    "uptime-kuma",
     "wud",
     "authentik",
     "shelfmark",

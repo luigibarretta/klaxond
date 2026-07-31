@@ -60,6 +60,7 @@ fn ingest_source(path: &str) -> Option<&'static str> {
         ("/webhook/", "grafana"),
         ("/beszel/", "beszel"),
         ("/healthchecks/", "healthchecks"),
+        ("/uptime-kuma/", "uptime-kuma"),
         ("/wud/", "wud"),
         ("/authentik/", "authentik"),
         ("/shelfmark/", "shelfmark"),

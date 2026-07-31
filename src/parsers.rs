@@ -8,6 +8,7 @@ mod core_sources;
 mod grafana;
 mod integrations;
 mod labels;
+mod uptime_kuma;
 
 pub use core_sources::{parse_beszel_payload, parse_healthchecks_payload, parse_pve_payload};
 pub use grafana::parse_grafana_payload;
@@ -16,6 +17,7 @@ pub use integrations::{
     parse_shelfmark_payload, parse_wud_payload, prowlarr_severity, shelfmark_severity,
 };
 pub use labels::normalize_labels;
+pub use uptime_kuma::parse_uptime_kuma_payload;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Parts {
@@ -73,6 +75,7 @@ pub fn parse_source(
             severity.to_string(),
             parse_healthchecks_payload(payload, severity, cfg),
         ),
+        "uptime-kuma" => parse_uptime_kuma_payload(payload, severity, cfg),
         "wud" => (
             severity.to_string(),
             parse_wud_payload(payload, severity, cfg),

@@ -94,6 +94,51 @@ fn beszel_authentik_and_pve_parsers_match_python_golden() {
 }
 
 #[test]
+fn uptime_kuma_parser_enriches_down_and_recovery_without_leaking_url_secrets() {
+    let (_tmp, cfg) = cfg();
+    let down_payload = json!({
+        "msg": "[NAS API] [Down] Connection refused",
+        "heartbeat": {
+            "status": 0,
+            "msg": "Connection refused",
+            "ping": 0,
+            "time": "2026-07-31 09:00:00"
+        },
+        "monitor": {
+            "name": "NAS API",
+            "type": "http",
+            "url": "https://user:password@nas.example/health?token=secret"
+        }
+    });
+    let (severity, down) = parse_source("uptime-kuma", &down_payload, "critical", &cfg);
+    assert_eq!(severity, "critical");
+    assert_eq!(down.title, "🚨 Kuma DOWN: NAS API");
+    assert!(down.body.contains("Connection refused"));
+    assert!(down.body.contains("Target: https://nas.example/health"));
+    assert!(down.body.contains("Power correlation:"));
+    assert!(!down.body.contains("password"));
+    assert!(!down.body.contains("secret"));
+    assert_eq!(down.priority, "urgent");
+    assert!(!down.skip_snooze);
+    assert_eq!(down.actions.len(), 2);
+
+    let (severity, up) = parse_source(
+        "uptime-kuma",
+        &json!({
+            "heartbeat": {"status": 1, "msg": "200 - OK", "ping": 8.4},
+            "monitor": {"name": "NAS API", "type": "http", "url": "https://nas.example/health"}
+        }),
+        "critical",
+        &cfg,
+    );
+    assert_eq!(severity, "resolved");
+    assert_eq!(up.title, "✅ Kuma UP: NAS API");
+    assert_eq!(up.priority, "low");
+    assert!(up.skip_snooze);
+    assert!(!up.body.contains("Power correlation:"));
+}
+
+#[test]
 fn shelfmark_and_decypharr_parsers_match_python_golden() {
     let (_tmp, cfg) = cfg();
 
