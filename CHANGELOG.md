@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.14.34 — 2026-07-31
+
+- Build each release image only once on `main`, publish it under the immutable
+  commit SHA, and promote that exact tested image to SemVer tags. Release tags
+  now fail closed when their source image was not produced by the main CI run.
+- Add npm dependency caching, bounded job timeouts, and cancellation of
+  superseded runs on the same ref.
+
 ## 0.14.33 — 2026-07-31
 
 - Normalize hyphens to underscores when deriving per-source ingest-secret
