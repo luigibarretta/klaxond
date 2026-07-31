@@ -7,6 +7,7 @@ pub const PUBLIC_ROUTES: &[PathPattern] = &[
     PathPattern::Prefix("/webhook/"),
     PathPattern::Prefix("/beszel/"),
     PathPattern::Prefix("/healthchecks/"),
+    PathPattern::Prefix("/uptime-kuma/"),
     PathPattern::Prefix("/wud/"),
     PathPattern::Prefix("/authentik/"),
     PathPattern::Prefix("/shelfmark/"),

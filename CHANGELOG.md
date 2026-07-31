@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.14.32 — 2026-07-31
+
+- Register `/uptime-kuma/*` as machine-to-machine ingress so requests bypass
+  interactive OIDC and reach the source-specific token verifier.
+
 ## 0.14.31 — 2026-07-31
 
 - Add authenticated `/uptime-kuma/<severity>` ingestion with native Kuma status parsing.
