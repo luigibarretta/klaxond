@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.14.33 — 2026-07-31
+
+- Normalize hyphens to underscores when deriving per-source ingest-secret
+  environment keys, so `uptime-kuma` is protected by
+  `KLAXOND_INGEST_SECRET_UPTIME_KUMA` instead of falling back to permissive mode.
+
 ## 0.14.32 — 2026-07-31
 
 - Register `/uptime-kuma/*` as machine-to-machine ingress so requests bypass

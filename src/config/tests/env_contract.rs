@@ -70,6 +70,10 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
         "KLAXOND_INGEST_SECRET_HEALTHCHECKS",
         "TOML [ingest.secrets].healthchecks",
     ),
+    (
+        "KLAXOND_INGEST_SECRET_UPTIME_KUMA",
+        "TOML [ingest.secrets].uptime-kuma",
+    ),
     ("KLAXOND_INGEST_SECRET_WUD", "TOML [ingest.secrets].wud"),
     (
         "KLAXOND_INGEST_SECRET_AUTHENTIK",

@@ -115,7 +115,7 @@ pub(super) fn verify_ingest_auth(
 }
 
 pub(in crate::handlers) fn ingest_secret_for(state: &AppState, source: &str) -> String {
-    let env_key = format!("KLAXOND_INGEST_SECRET_{}", source.to_ascii_uppercase());
+    let env_key = ingest_secret_env_key(source);
     let env_val = env_string(&env_key);
     if !env_val.trim().is_empty() {
         return env_val.trim().into();
@@ -135,10 +135,7 @@ pub(in crate::handlers) fn ingest_secret_for(state: &AppState, source: &str) -> 
 pub(in crate::handlers) fn ingest_auth_payload(state: &AppState) -> Value {
     let mut sources = serde_json::Map::new();
     for src in DEDUP_SOURCES {
-        let env_val = env_string(&format!(
-            "KLAXOND_INGEST_SECRET_{}",
-            src.to_ascii_uppercase()
-        ));
+        let env_val = env_string(&ingest_secret_env_key(src));
         let toml_val = state
             .cfg()
             .toml
@@ -164,4 +161,28 @@ pub(in crate::handlers) fn ingest_auth_payload(state: &AppState) -> Value {
         "auth_methods_accepted": ["Authorization: Bearer <secret>", "X-Klaxond-Token: <secret>", "?token=<secret> query param"],
         "note": "Legacy permissive mode (no auth required) is in effect when a source has no secret configured.",
     })
+}
+
+fn ingest_secret_env_key(source: &str) -> String {
+    format!(
+        "KLAXOND_INGEST_SECRET_{}",
+        source.to_ascii_uppercase().replace('-', "_")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ingest_secret_env_key;
+
+    #[test]
+    fn source_names_map_to_portable_environment_keys() {
+        assert_eq!(
+            ingest_secret_env_key("uptime-kuma"),
+            "KLAXOND_INGEST_SECRET_UPTIME_KUMA"
+        );
+        assert_eq!(
+            ingest_secret_env_key("grafana"),
+            "KLAXOND_INGEST_SECRET_GRAFANA"
+        );
+    }
 }
