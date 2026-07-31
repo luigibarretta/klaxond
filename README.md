@@ -702,4 +702,5 @@ Apache-2.0 — see [LICENSE](./LICENSE).
 > **This repository is the source of truth for klaxond**. Since 2026-06-10,
 > deploys clone this repo at the pinned tag and build/deploy the image published
 > by the Gitea registry. Release flow: commit here → tag `vX.Y.Z` → CI
-> build/push → automatic Semaphore deploy with `klaxond_image_tag`.
+> build/push → automatic Semaphore deploy with `klaxond_image_tag`. Branch
+> pushes still build `:main` for validation, but never deploy it to production.

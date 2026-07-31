@@ -90,7 +90,9 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    # Mutable branch tags are useful for testing images, but production must
+    # only ever be recreated from an immutable release tag.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: docker
     timeout-minutes: 60
     env:
@@ -100,11 +102,7 @@ jobs:
       - name: Trigger and wait for Semaphore deploy
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            tag="${GITHUB_REF_NAME#v}"
-          else
-            tag="main"
-          fi
+          tag="${GITHUB_REF_NAME#v}"
           export SEMAPHORE_ENVIRONMENT="{\"klaxond_image_tag\":\"${tag}\"}"
           payload="$(mktemp)"
           task="$(mktemp)"
