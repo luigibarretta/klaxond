@@ -1,5 +1,9 @@
 # Klaxond
 
+Application integrations should use the canonical event contract and SDKs in
+[`docs/application-event-contract.md`](docs/application-event-contract.md)
+instead of inventing source-specific payloads.
+
 > Notification bridge for homelab alerting — turns Grafana Alertmanager and Beszel webhooks into clean ntfy pushes, with built-in cascade fallback (ntfy → Telegram → SMTP), declarative inhibition rules, and a single-page admin UI.
 
 ```

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://git.luigibarretta.com/luigibarretta/klaxond/raw/branch/main/docs/schemas/application-event-v1.schema.json",
+  "title": "Klaxond application event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "severity", "status", "title", "body", "occurred_at"],
+  "properties": {
+    "kind": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "severity": { "enum": ["info", "warning", "critical"] },
+    "status": { "enum": ["firing", "resolved"] },
+    "title": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "body": { "type": "string", "maxLength": 16384 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "dedup_key": { "type": "string", "minLength": 1, "maxLength": 512 },
+    "runbook_url": { "type": "string", "format": "uri" },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string", "maxLength": 2048 },
+      "maxProperties": 64
+    }
+  }
+}

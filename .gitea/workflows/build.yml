@@ -41,6 +41,20 @@ jobs:
       - name: Check auth gold standard
         run: bash scripts/check-auth-gold-standard.sh
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Test Rust application-event SDK
+        run: cargo test --manifest-path sdk/rust/Cargo.toml --locked
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Test Go application-event SDK
+        run: cd sdk/go && go test ./...
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
