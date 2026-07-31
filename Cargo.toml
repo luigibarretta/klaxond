@@ -9,7 +9,6 @@ auth-modules = { path = "../auth-modules", default-features = false, features = 
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
-constant_time_eq = "0.4"
 fs2 = "0.4"
 hmac = "0.12"
 hex = "0.4"

@@ -97,17 +97,17 @@ pub(super) fn verify_ingest_auth(
     if let Some(auth) = headers.get("Authorization").and_then(|v| v.to_str().ok())
         && let Some((scheme, tok)) = auth.split_once(char::is_whitespace)
         && scheme.eq_ignore_ascii_case("bearer")
-        && constant_time_eq::constant_time_eq(tok.trim().as_bytes(), secret.as_bytes())
+        && auth_modules::secrets::constant_time_eq(tok.trim().as_bytes(), secret.as_bytes())
     {
         return (true, "bearer".into());
     }
     if let Some(tok) = headers.get("X-Klaxond-Token").and_then(|v| v.to_str().ok())
-        && constant_time_eq::constant_time_eq(tok.trim().as_bytes(), secret.as_bytes())
+        && auth_modules::secrets::constant_time_eq(tok.trim().as_bytes(), secret.as_bytes())
     {
         return (true, "x-klaxond-token".into());
     }
     if let Some(tok) = qs.get("token")
-        && constant_time_eq::constant_time_eq(tok.as_bytes(), secret.as_bytes())
+        && auth_modules::secrets::constant_time_eq(tok.as_bytes(), secret.as_bytes())
     {
         return (true, "query".into());
     }

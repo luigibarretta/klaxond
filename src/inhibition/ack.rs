@@ -1,6 +1,6 @@
 use crate::state::{AppState, lock_mutex};
 use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch};
-use constant_time_eq::constant_time_eq;
+use auth_modules::secrets::constant_time_eq;
 use serde_json::json;
 use std::collections::HashMap;
 

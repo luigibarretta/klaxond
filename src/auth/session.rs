@@ -5,11 +5,11 @@ use crate::history::AuthSessionRecord;
 use crate::state::AppState;
 use crate::util::{b64url_decode_padded, hmac_hex, now_epoch_i64, token_urlsafe};
 use auth_modules::one_time_token::hash_token;
+use auth_modules::secrets::constant_time_eq;
 use auth_modules::session_policy::{SameSitePolicy, SessionPolicy};
 use axum::body::Body;
 use axum::http::header::{HOST, SET_COOKIE};
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
-use constant_time_eq::constant_time_eq;
 use serde_json::json;
 use std::net::IpAddr;
 

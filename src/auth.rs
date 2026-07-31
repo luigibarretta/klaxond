@@ -1,10 +1,10 @@
 use crate::endpoints;
 use crate::util::now_epoch_i64;
+use auth_modules::secrets::constant_time_eq;
 use axum::body::Body;
 use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
-use constant_time_eq::constant_time_eq;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

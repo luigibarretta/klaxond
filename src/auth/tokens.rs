@@ -3,10 +3,10 @@ use crate::config::{AuthToken, save_auth};
 use crate::endpoints;
 use crate::state::AppState;
 use crate::util::now_epoch_i64;
+use auth_modules::secrets::constant_time_eq;
 use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderMap, Method, StatusCode};
 use axum::response::IntoResponse;
-use constant_time_eq::constant_time_eq;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
