@@ -303,7 +303,7 @@ default_enabled_for_webhook = false   # /beszel/* always uses cascade
 
 [[cascade.tiers]]
 name = "ntfy"
-timeout_seconds = 5
+timeout_seconds = 15
 
 [[cascade.tiers]]
 name = "telegram"
@@ -312,6 +312,10 @@ timeout_seconds = 8
 [[cascade.tiers]]
 name = "smtp"
 timeout_seconds = 10
+
+# The admin UI accepts 1..60 seconds. It warns before saving ntfy below
+# the recommended 15 seconds because a late upstream acknowledgement can
+# otherwise make a successful delivery look timed out and trigger fallback.
 
 [render]
 grafana_base = "https://grafana.example.com"

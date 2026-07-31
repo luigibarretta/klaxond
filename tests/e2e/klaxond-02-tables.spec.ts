@@ -74,6 +74,33 @@ test("all configured finite admin tables use the shared pager", async ({ page })
   }
 });
 
+test("cascade timeout editor explains and highlights unsafe ntfy values", async ({ page }) => {
+  await page.route("**/api/cascade-config", async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        tiers: [{ name: "ntfy", timeout_seconds: 15 }],
+        default_enabled_for_webhook: false,
+        runtime_enabled: true,
+        timeout_policy: {
+          min_seconds: 1,
+          max_seconds: 60,
+          recommended_seconds: { ntfy: 15, telegram: 8, smtp: 10 },
+          warning_below_seconds: { ntfy: 15 },
+        },
+      }),
+    });
+  });
+
+  await page.goto("/cascade");
+  await expect(page.locator("#cas-timeout-help")).toContainText("at least 15 seconds");
+  const timeout = page.locator('#t-cas [data-f="timeout"]').first();
+  await timeout.fill("5");
+  await expect(timeout).toHaveClass(/input-warning/);
+  await expect(page.locator("#cas-timeout-risk")).toContainText("duplicate notifications");
+});
+
 test("backend logs fetch failure clears stale count", async ({ page }) => {
   await page.goto("/logs");
   await expect(page.locator("#logs-count")).toContainText(/log line/);

@@ -1,6 +1,9 @@
 use super::config_admin::persist_reload;
 use super::{json_body, json_response, json_to_toml, text};
-use crate::config::{DEDUP_SOURCES, DedupSetting, NoiseControlRule, default_dedup, save_dedup};
+use crate::config::{
+    DEDUP_SOURCES, DedupSetting, NTFY_RECOMMENDED_TIMEOUT_SECONDS, NoiseControlRule,
+    TIER_TIMEOUT_MAX_SECONDS, TIER_TIMEOUT_MIN_SECONDS, default_dedup, save_dedup,
+};
 use crate::state::AppState;
 use crate::util::toml_table_mut;
 use axum::body::{Body, Bytes};
@@ -202,13 +205,12 @@ pub(super) fn update_cascade_config(state: &AppState, body: Bytes) -> Response<B
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let Ok(request) = CascadeConfigRequest::from_value(payload) else {
-        return text(StatusCode::BAD_REQUEST, "tiers must be a non-empty list");
+    let request = match CascadeConfigRequest::from_value(payload) {
+        Ok(request) => request,
+        Err(error) => return text(StatusCode::BAD_REQUEST, &error),
     };
     let tiers = request.tier_values();
-    if tiers.is_empty() {
-        return text(StatusCode::BAD_REQUEST, "no valid tiers");
-    }
+    let warnings = request.warnings();
     state
         .with_config_write_lock(|| {
             let mut cfg = state.cfg();
@@ -223,7 +225,13 @@ pub(super) fn update_cascade_config(state: &AppState, body: Bytes) -> Response<B
                 }
             }
             persist_reload(state, cfg.toml)
-                .map(|_| json_response(json!({"ok": true, "tiers": state.cfg().tiers})))
+                .map(|_| {
+                    json_response(json!({
+                        "ok": true,
+                        "tiers": state.cfg().tiers,
+                        "warnings": warnings,
+                    }))
+                })
                 .unwrap_or_else(|e| text(StatusCode::INTERNAL_SERVER_ERROR, &e))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
@@ -236,17 +244,47 @@ struct CascadeConfigRequest {
 }
 
 impl CascadeConfigRequest {
-    fn from_value(value: Value) -> Result<Self, ()> {
-        let tiers = value
+    fn from_value(value: Value) -> Result<Self, String> {
+        let raw_tiers = value
             .get("tiers")
             .and_then(Value::as_array)
-            .ok_or(())?
-            .iter()
-            .filter(|tier| tier.is_object())
-            .map(|tier| {
-                serde_json::from_value::<CascadeTierPatch>(tier.clone()).unwrap_or_default()
-            })
-            .collect();
+            .ok_or_else(|| "tiers must be a non-empty list".to_string())?;
+        if raw_tiers.is_empty() {
+            return Err("tiers must be a non-empty list".to_string());
+        }
+        let mut tiers = Vec::with_capacity(raw_tiers.len());
+        for (index, tier) in raw_tiers.iter().enumerate() {
+            let tier = tier
+                .as_object()
+                .ok_or_else(|| format!("tiers[{index}] must be an object"))?;
+            let name = tier
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("tiers[{index}].name must be a string"))?
+                .to_ascii_lowercase();
+            if !matches!(name.as_str(), "ntfy" | "telegram" | "smtp") {
+                return Err(format!("tiers[{index}].name is not a supported channel"));
+            }
+            let timeout_seconds = tier
+                .get("timeout_seconds")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| {
+                    format!(
+                        "tiers[{index}].timeout_seconds must be an integer between \
+                         {TIER_TIMEOUT_MIN_SECONDS} and {TIER_TIMEOUT_MAX_SECONDS}"
+                    )
+                })?;
+            if !(TIER_TIMEOUT_MIN_SECONDS..=TIER_TIMEOUT_MAX_SECONDS).contains(&timeout_seconds) {
+                return Err(format!(
+                    "tiers[{index}].timeout_seconds must be between \
+                     {TIER_TIMEOUT_MIN_SECONDS} and {TIER_TIMEOUT_MAX_SECONDS}"
+                ));
+            }
+            tiers.push(CascadeTierPatch {
+                name,
+                timeout_seconds,
+            });
+        }
         let default_enabled_for_webhook = value
             .get("default_enabled_for_webhook")
             .and_then(Value::as_bool);
@@ -259,29 +297,40 @@ impl CascadeConfigRequest {
     fn tier_values(&self) -> Vec<Value> {
         self.tiers
             .iter()
-            .filter_map(CascadeTierPatch::to_tier_value)
+            .map(CascadeTierPatch::to_tier_value)
+            .collect()
+    }
+
+    fn warnings(&self) -> Vec<Value> {
+        self.tiers
+            .iter()
+            .filter(|tier| {
+                tier.name == "ntfy" && tier.timeout_seconds < NTFY_RECOMMENDED_TIMEOUT_SECONDS
+            })
+            .map(|tier| {
+                json!({
+                    "code": "ntfy_timeout_below_recommended",
+                    "tier": tier.name,
+                    "timeout_seconds": tier.timeout_seconds,
+                    "recommended_seconds": NTFY_RECOMMENDED_TIMEOUT_SECONDS,
+                })
+            })
             .collect()
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug)]
 struct CascadeTierPatch {
-    #[serde(default, deserialize_with = "optional_string")]
-    name: Option<String>,
-    #[serde(default, deserialize_with = "optional_u64")]
-    timeout_seconds: Option<u64>,
+    name: String,
+    timeout_seconds: u64,
 }
 
 impl CascadeTierPatch {
-    fn to_tier_value(&self) -> Option<Value> {
-        let name = self.name.as_deref().unwrap_or("").to_ascii_lowercase();
-        if !matches!(name.as_str(), "ntfy" | "telegram" | "smtp") {
-            return None;
-        }
-        Some(json!({
-            "name": name,
-            "timeout_seconds": self.timeout_seconds.unwrap_or(5).clamp(1, 60),
-        }))
+    fn to_tier_value(&self) -> Value {
+        json!({
+            "name": self.name,
+            "timeout_seconds": self.timeout_seconds,
+        })
     }
 }
 

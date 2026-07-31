@@ -215,6 +215,27 @@ test("admin config POST endpoints persist through their read APIs", async ({ req
       rules: [expect.objectContaining({ match: { component: "e2e_component" }, policy: "e2e-broadcast" })]
     });
 
+    const cascadeUpdate = await request.post("/api/cascade-config", {
+      data: {
+        tiers: [{ name: "ntfy", timeout_seconds: 7 }, { name: "smtp", timeout_seconds: 10 }],
+        default_enabled_for_webhook: true
+      }
+    });
+    await expect(cascadeUpdate).toBeOK();
+    expect((await cascadeUpdate.json()).warnings).toEqual([
+      expect.objectContaining({ code: "ntfy_timeout_below_recommended", recommended_seconds: 15 })
+    ]);
+    const cascadeRead = await request.get("/api/cascade-config");
+    await expect(cascadeRead).toBeOK();
+    expect(await cascadeRead.json()).toMatchObject({
+      tiers: [{ name: "ntfy", timeout_seconds: 7 }, { name: "smtp", timeout_seconds: 10 }],
+      timeout_policy: { min_seconds: 1, max_seconds: 60 }
+    });
+    const invalidCascade = await request.post("/api/cascade-config", {
+      data: { tiers: [{ name: "ntfy", timeout_seconds: 61 }] }
+    });
+    expect(invalidCascade.status()).toBe(400);
+
     const ingestUpdate = await request.post("/api/ingest-auth", {
       data: { source: "beszel", action: "set", secret: "abcdefghijklmnop" }
     });

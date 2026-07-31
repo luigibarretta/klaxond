@@ -140,14 +140,12 @@ fn selective_noise_rules_are_normalized_validated_and_preserved() {
 }
 
 #[test]
-fn cascade_config_request_preserves_tier_normalization_and_leniency() {
+fn cascade_config_request_preserves_valid_custom_timeouts_and_normalizes_names() {
     let request = CascadeConfigRequest::from_value(json!({
         "tiers": [
-            { "name": "NTFY", "timeout_seconds": 0 },
-            { "name": "telegram", "timeout_seconds": 99 },
-            { "name": "smtp", "timeout_seconds": "slow" },
-            { "name": "pagerduty", "timeout_seconds": 15 },
-            "ignore non-object tier"
+            { "name": "NTFY", "timeout_seconds": 15 },
+            { "name": "telegram", "timeout_seconds": 60 },
+            { "name": "smtp", "timeout_seconds": 1 }
         ],
         "default_enabled_for_webhook": true
     }))
@@ -157,10 +155,29 @@ fn cascade_config_request_preserves_tier_normalization_and_leniency() {
     assert_eq!(
         request.tier_values(),
         vec![
-            json!({"name": "ntfy", "timeout_seconds": 1}),
+            json!({"name": "ntfy", "timeout_seconds": 15}),
             json!({"name": "telegram", "timeout_seconds": 60}),
-            json!({"name": "smtp", "timeout_seconds": 5}),
+            json!({"name": "smtp", "timeout_seconds": 1}),
         ]
+    );
+    assert!(request.warnings().is_empty());
+}
+
+#[test]
+fn cascade_config_request_allows_low_ntfy_timeout_with_warning() {
+    let request = CascadeConfigRequest::from_value(json!({
+        "tiers": [{ "name": "ntfy", "timeout_seconds": 5 }]
+    }))
+    .expect("low but valid timeout");
+
+    assert_eq!(
+        request.warnings(),
+        vec![json!({
+            "code": "ntfy_timeout_below_recommended",
+            "tier": "ntfy",
+            "timeout_seconds": 5,
+            "recommended_seconds": 15,
+        })]
     );
 }
 
@@ -168,10 +185,21 @@ fn cascade_config_request_preserves_tier_normalization_and_leniency() {
 fn cascade_config_request_requires_tiers_array() {
     assert!(CascadeConfigRequest::from_value(json!({})).is_err());
     assert!(CascadeConfigRequest::from_value(json!({"tiers": {}})).is_err());
-    assert!(
-        CascadeConfigRequest::from_value(json!({"tiers": []}))
-            .expect("empty array is syntactically valid")
-            .tier_values()
-            .is_empty()
-    );
+    assert!(CascadeConfigRequest::from_value(json!({"tiers": []})).is_err());
+}
+
+#[test]
+fn cascade_config_request_rejects_invalid_tiers_instead_of_silently_clamping() {
+    for payload in [
+        json!({"tiers": [{ "name": "ntfy", "timeout_seconds": 0 }]}),
+        json!({"tiers": [{ "name": "ntfy", "timeout_seconds": 61 }]}),
+        json!({"tiers": [{ "name": "ntfy", "timeout_seconds": "slow" }]}),
+        json!({"tiers": [{ "name": "pagerduty", "timeout_seconds": 15 }]}),
+        json!({"tiers": ["not an object"]}),
+    ] {
+        assert!(
+            CascadeConfigRequest::from_value(payload).is_err(),
+            "invalid cascade tier must be rejected"
+        );
+    }
 }

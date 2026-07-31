@@ -190,6 +190,18 @@ fn cascade_config_response(state: &AppState) -> Response<Body> {
         "tiers": cfg.tiers,
         "default_enabled_for_webhook": cfg.cascade_default,
         "runtime_enabled": state.cascade_runtime_enabled.load(Ordering::Relaxed),
+        "timeout_policy": {
+            "min_seconds": crate::config::TIER_TIMEOUT_MIN_SECONDS,
+            "max_seconds": crate::config::TIER_TIMEOUT_MAX_SECONDS,
+            "recommended_seconds": {
+                "ntfy": crate::config::recommended_tier_timeout("ntfy"),
+                "telegram": crate::config::recommended_tier_timeout("telegram"),
+                "smtp": crate::config::recommended_tier_timeout("smtp"),
+            },
+            "warning_below_seconds": {
+                "ntfy": crate::config::NTFY_RECOMMENDED_TIMEOUT_SECONDS,
+            },
+        },
     }))
 }
 

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.14.29
+  version: 0.14.30
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -1590,7 +1590,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/CascadeConfig"
         "4XX":
           $ref: "#/components/responses/ClientError"
     post:
@@ -1606,10 +1606,16 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: "#/components/schemas/CascadeConfigUpdate"
       responses:
         "200":
-          $ref: "#/components/responses/OkJson"
+          description: Persisted cascade configuration and non-blocking safety warnings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CascadeConfigUpdateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "428":
           $ref: "#/components/responses/ReauthRequired"
   /api/cascade/toggle:
@@ -2144,6 +2150,102 @@ components:
     Severity:
       type: string
       enum: [info, warning, critical]
+    CascadeTier:
+      type: object
+      required: [name, timeout_seconds]
+      properties:
+        name:
+          type: string
+          enum: [ntfy, telegram, smtp]
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          maximum: 60
+    CascadeTimeoutPolicy:
+      type: object
+      required: [min_seconds, max_seconds, recommended_seconds, warning_below_seconds]
+      properties:
+        min_seconds:
+          type: integer
+          const: 1
+        max_seconds:
+          type: integer
+          const: 60
+        recommended_seconds:
+          type: object
+          required: [ntfy, telegram, smtp]
+          properties:
+            ntfy:
+              type: integer
+            telegram:
+              type: integer
+            smtp:
+              type: integer
+        warning_below_seconds:
+          type: object
+          required: [ntfy]
+          properties:
+            ntfy:
+              type: integer
+    CascadeConfig:
+      type: object
+      required:
+        - tiers
+        - default_enabled_for_webhook
+        - runtime_enabled
+        - timeout_policy
+      properties:
+        tiers:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CascadeTier"
+        default_enabled_for_webhook:
+          type: boolean
+        runtime_enabled:
+          type: boolean
+        timeout_policy:
+          $ref: "#/components/schemas/CascadeTimeoutPolicy"
+    CascadeConfigUpdate:
+      type: object
+      required: [tiers]
+      properties:
+        tiers:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CascadeTier"
+        default_enabled_for_webhook:
+          type: boolean
+    CascadeWarning:
+      type: object
+      required: [code, tier, timeout_seconds, recommended_seconds]
+      properties:
+        code:
+          type: string
+          enum: [ntfy_timeout_below_recommended]
+        tier:
+          type: string
+          enum: [ntfy]
+        timeout_seconds:
+          type: integer
+        recommended_seconds:
+          type: integer
+    CascadeConfigUpdateResponse:
+      type: object
+      required: [ok, tiers, warnings]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        tiers:
+          type: array
+          items:
+            $ref: "#/components/schemas/CascadeTier"
+        warnings:
+          type: array
+          items:
+            $ref: "#/components/schemas/CascadeWarning"
     NoiseControlSetting:
       type: object
       required:

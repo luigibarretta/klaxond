@@ -33,6 +33,10 @@ h3 {
   background: var(--panel);
 }
 .notice.warn { border-left-color: var(--yellow); }
+input.input-warning {
+  border-color: var(--yellow);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--yellow) 25%, transparent);
+}
 .scope-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

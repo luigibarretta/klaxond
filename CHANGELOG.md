@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.14.30 — 2026-07-31
+
+- Reso il timeout di ciascun tier Cascade configurabile dalla UI tra 1 e 60
+  secondi, con limiti forniti dall'API e validazione backend rigorosa anziché
+  correzioni silenziose.
+- Aggiunto un warning persistente e una conferma esplicita quando ntfy viene
+  impostato sotto i 15 secondi consigliati, incluso un warning strutturato
+  nella risposta API per rendere visibile il rischio di consegne duplicate.
+
 ## 0.14.29 — 2026-07-31
 
 - Portato il timeout ntfy predefinito da 5 a 15 secondi: il relay iOS via

@@ -11,21 +11,28 @@ pub const DEDUP_SOURCES: &[&str] = &[
     "prowlarr",
     "decypharr",
 ];
+
+pub const TIER_TIMEOUT_MIN_SECONDS: u64 = 1;
+pub const TIER_TIMEOUT_MAX_SECONDS: u64 = 60;
+pub const NTFY_RECOMMENDED_TIMEOUT_SECONDS: u64 = 15;
+
+pub fn recommended_tier_timeout(name: &str) -> u64 {
+    match name {
+        "ntfy" => NTFY_RECOMMENDED_TIMEOUT_SECONDS,
+        "telegram" => 8,
+        "smtp" => 10,
+        _ => 5,
+    }
+}
+
 pub fn default_tiers() -> Vec<Tier> {
-    vec![
-        Tier {
-            name: "ntfy".into(),
-            timeout_seconds: 15,
-        },
-        Tier {
-            name: "telegram".into(),
-            timeout_seconds: 8,
-        },
-        Tier {
-            name: "smtp".into(),
-            timeout_seconds: 10,
-        },
-    ]
+    ["ntfy", "telegram", "smtp"]
+        .into_iter()
+        .map(|name| Tier {
+            name: name.into(),
+            timeout_seconds: recommended_tier_timeout(name),
+        })
+        .collect()
 }
 
 pub fn default_priorities() -> HashMap<String, String> {
