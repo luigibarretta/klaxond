@@ -16,7 +16,7 @@ default_enabled_for_webhook = false
 # are skipped entirely. Re-order or drop tiers as you like.
 [[cascade.tiers]]
 name = "ntfy"
-timeout_seconds = 5
+timeout_seconds = 15
 
 [[cascade.tiers]]
 name = "telegram"

@@ -15,7 +15,7 @@ pub fn default_tiers() -> Vec<Tier> {
     vec![
         Tier {
             name: "ntfy".into(),
-            timeout_seconds: 5,
+            timeout_seconds: 15,
         },
         Tier {
             name: "telegram".into(),

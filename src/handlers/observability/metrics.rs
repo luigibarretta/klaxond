@@ -40,6 +40,10 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
                 "Cumulative deliveries (or attempts) per source/severity/channel/ok.",
             ),
             (
+                "klaxond_delivery_tier_attempts_total",
+                "Cumulative delivery tier attempts per source/severity/tier/component/ok.",
+            ),
+            (
                 "klaxond_suppressions_armed_total",
                 "Inhibition source-alerts that armed a suppression.",
             ),

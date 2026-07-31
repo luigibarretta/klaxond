@@ -64,6 +64,7 @@ pub async fn deliver(
             labels: &labels,
             source,
             tiers_attempted: &outcome.attempted,
+            tier_results: &outcome.tier_results,
             ok: outcome.ok,
             channel: &outcome.channel,
             started_at: started,
@@ -120,16 +121,19 @@ async fn deliver_broadcast(
 ) -> DeliveryOutcome {
     let mut attempted = Vec::new();
     let mut succeeded = Vec::new();
+    let mut tier_results = Vec::new();
     for tier in &policy.tiers {
-        if post_tier(state, cfg, severity, parts, tier).await {
+        let ok = post_tier(state, cfg, severity, parts, tier).await;
+        tier_results.push((tier.name.clone(), ok));
+        if ok {
             succeeded.push(tier.name.clone());
         }
         attempted.push(tier.name.clone());
     }
     if succeeded.is_empty() {
-        DeliveryOutcome::failed("broadcast-all-failed", attempted)
+        DeliveryOutcome::failed("broadcast-all-failed", attempted, tier_results)
     } else {
-        DeliveryOutcome::success(succeeded.join("+"), attempted)
+        DeliveryOutcome::success(succeeded.join("+"), attempted, tier_results)
     }
 }
 
@@ -147,45 +151,65 @@ async fn deliver_cascade(
         policy.tiers
     };
     let mut attempted = Vec::new();
+    let mut tier_results = Vec::new();
     let first = tiers.first().cloned();
     if let Some(first) = first {
         attempted.push(first.name.clone());
-        if post_tier(state, cfg, severity, parts, &first).await {
-            return DeliveryOutcome::success(first.name, attempted);
+        let ok = post_tier(state, cfg, severity, parts, &first).await;
+        tier_results.push((first.name.clone(), ok));
+        if ok {
+            return DeliveryOutcome::success(first.name, attempted, tier_results);
         }
         if !with_cascade {
-            return DeliveryOutcome::failed(format!("{}-failed", first.name), attempted);
+            return DeliveryOutcome::failed(
+                format!("{}-failed", first.name),
+                attempted,
+                tier_results,
+            );
         }
         for tier in tiers.iter().skip(1) {
             attempted.push(tier.name.clone());
-            if post_tier(state, cfg, severity, parts, tier).await {
-                return DeliveryOutcome::success(tier.name.clone(), attempted);
+            let ok = post_tier(state, cfg, severity, parts, tier).await;
+            tier_results.push((tier.name.clone(), ok));
+            if ok {
+                return DeliveryOutcome::success(tier.name.clone(), attempted, tier_results);
             }
         }
     }
-    DeliveryOutcome::failed("all-failed", attempted)
+    DeliveryOutcome::failed("all-failed", attempted, tier_results)
 }
 
 struct DeliveryOutcome {
     ok: bool,
     channel: String,
     attempted: Vec<String>,
+    tier_results: Vec<(String, bool)>,
 }
 
 impl DeliveryOutcome {
-    fn success(channel: impl Into<String>, attempted: Vec<String>) -> Self {
+    fn success(
+        channel: impl Into<String>,
+        attempted: Vec<String>,
+        tier_results: Vec<(String, bool)>,
+    ) -> Self {
         Self {
             ok: true,
             channel: channel.into(),
             attempted,
+            tier_results,
         }
     }
 
-    fn failed(channel: impl Into<String>, attempted: Vec<String>) -> Self {
+    fn failed(
+        channel: impl Into<String>,
+        attempted: Vec<String>,
+        tier_results: Vec<(String, bool)>,
+    ) -> Self {
         Self {
             ok: false,
             channel: channel.into(),
             attempted,
+            tier_results,
         }
     }
 }
@@ -270,6 +294,7 @@ pub struct DeliveryAudit<'a> {
     pub labels: &'a HashMap<String, String>,
     pub source: &'a str,
     pub tiers_attempted: &'a [String],
+    pub tier_results: &'a [(String, bool)],
     pub ok: bool,
     pub channel: &'a str,
     pub started_at: f64,
@@ -277,6 +302,16 @@ pub struct DeliveryAudit<'a> {
 
 pub fn audit_log_delivery(state: &AppState, audit: DeliveryAudit<'_>) {
     let ended_at = now_epoch();
+    let component = audit
+        .labels
+        .get("component")
+        .map(String::as_str)
+        .unwrap_or("");
+    let tier_results = audit
+        .tier_results
+        .iter()
+        .map(|(tier, ok)| json!({"tier": tier, "ok": ok}))
+        .collect::<Vec<_>>();
     let record = json!({
         "audit": "delivery",
         "source": audit.source,
@@ -286,6 +321,7 @@ pub fn audit_log_delivery(state: &AppState, audit: DeliveryAudit<'_>) {
         "host": audit.labels.get("host").or_else(|| audit.labels.get("instance_name")).cloned().unwrap_or_default(),
         "title": audit.parts.title.chars().take(200).collect::<String>(),
         "tiers_attempted": audit.tiers_attempted,
+        "tier_results": tier_results,
         "ok": audit.ok,
         "channel": audit.channel,
         "duration_ms": ((ended_at - audit.started_at) * 1000.0) as i64,
@@ -309,4 +345,17 @@ pub fn audit_log_delivery(state: &AppState, audit: DeliveryAudit<'_>) {
         ],
         1,
     );
+    for (tier, ok) in audit.tier_results {
+        state.metric_inc(
+            "klaxond_delivery_tier_attempts_total",
+            &[
+                ("source", audit.source),
+                ("severity", audit.severity),
+                ("tier", tier.as_str()),
+                ("ok", if *ok { "1" } else { "0" }),
+                ("component", component),
+            ],
+            1,
+        );
+    }
 }

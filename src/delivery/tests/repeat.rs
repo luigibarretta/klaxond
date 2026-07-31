@@ -3,6 +3,7 @@ use super::support::{http_response, sample_parts, spawn_http_once, test_state};
 use crate::config::{
     NoiseControlRule, NoiseMatchField, NoiseMatchOperator, NoiseRuleAction, NtfyTopic,
 };
+use crate::state::lock_mutex;
 use std::collections::HashMap;
 
 #[tokio::test]
@@ -92,6 +93,50 @@ async fn failed_delivery_releases_repeat_reservation_for_retry() {
 
     assert_eq!(retried, (true, "ntfy".to_string()));
     request_rx.await.expect("retry ntfy request");
+}
+
+#[tokio::test]
+async fn cascade_records_each_tier_and_returns_success_after_ntfy_failure() {
+    let (_tmp, state) = test_state();
+    let (telegram_base, telegram_request) =
+        spawn_http_once(http_response("application/json", br#"{"ok":true}"#)).await;
+    let mut cfg = state.cfg();
+    cfg.ntfy_url = "http://127.0.0.1:9".to_string();
+    cfg.ntfy_topics = vec![NtfyTopic {
+        name: "warning-topic".into(),
+        token: "secret-token".into(),
+        handles: vec!["warning".into()],
+    }];
+    cfg.telegram_api_base = telegram_base;
+    cfg.tg_token = "bot-token".into();
+    cfg.tg_chat = "chat-id".into();
+    state.replace_config(cfg);
+
+    let result = deliver(
+        &state,
+        "warning",
+        sample_parts(),
+        true,
+        HashMap::from([("component".into(), "test-component".into())]),
+        "grafana",
+    )
+    .await;
+
+    assert_eq!(result, (true, "telegram".to_string()));
+    telegram_request.await.expect("telegram fallback request");
+    let counters = lock_mutex(&state.metrics.counters, "test metrics");
+    assert_eq!(
+        counters.get(
+            "klaxond_delivery_tier_attempts_total|component=test-component,ok=0,severity=warning,source=grafana,tier=ntfy"
+        ),
+        Some(&1)
+    );
+    assert_eq!(
+        counters.get(
+            "klaxond_delivery_tier_attempts_total|component=test-component,ok=1,severity=warning,source=grafana,tier=telegram"
+        ),
+        Some(&1)
+    );
 }
 
 #[tokio::test]

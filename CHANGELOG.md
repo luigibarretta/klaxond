@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.14.29 — 2026-07-31
+
+- Portato il timeout ntfy predefinito da 5 a 15 secondi: il relay iOS via
+  `ntfy.sh` può avere già accettato il messaggio mentre la risposta HTTP è
+  ancora pendente, e un timeout troppo corto induceva retry e notifiche
+  duplicate.
+- Aggiunta `klaxond_delivery_tier_attempts_total`, con esito separato per tier
+  e componente, e arricchito l'audit delivery con `tier_results`. Il monitoring
+  può ora distinguere un tier fallito da una consegna complessivamente fallita
+  ed escludere in modo sicuro il proprio meta-alert.
+
 ## 0.14.28 — 2026-07-27
 
 - Resa race-safe la rotazione delle sessioni persistenti: richieste browser

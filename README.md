@@ -177,6 +177,7 @@ The endpoint includes:
 - `klaxond_info{version=...}`
 - `klaxond_uptime_seconds`
 - `klaxond_deliveries_total{source,severity,channel,ok}`
+- `klaxond_delivery_tier_attempts_total{source,severity,tier,ok,component}`
 - `klaxond_suppressions_active`
 - `klaxond_suppressions_armed_total{rule}`
 - `klaxond_render_errors_total{source}`
