@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.14.35 — 2026-08-01
+
+- Route `resolved` notifications to the informational ntfy topic when no
+  dedicated recovery topic is configured, while preserving the distinct
+  severity in delivery history, audit records and metrics. This prevents a
+  successful Kuma recovery from being misclassified as a failed ntfy tier.
+
 ## 0.14.34 — 2026-07-31
 
 - Build each release image only once on `main`, publish it under the immutable

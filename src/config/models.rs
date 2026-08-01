@@ -300,9 +300,23 @@ impl RuntimeConfig {
     }
 
     pub fn topics_for(&self, severity: &str) -> Vec<NtfyTopic> {
-        self.ntfy_topics
+        let exact = self
+            .ntfy_topics
             .iter()
             .filter(|t| t.handles.iter().any(|h| h == severity))
+            .cloned()
+            .collect::<Vec<_>>();
+        if !exact.is_empty() || severity != "resolved" {
+            return exact;
+        }
+
+        // Recovery notifications are informational, but retaining the
+        // distinct `resolved` severity is important for audit and metrics.
+        // Reuse the info topic only when the operator has not configured a
+        // dedicated resolved topic.
+        self.ntfy_topics
+            .iter()
+            .filter(|t| t.handles.iter().any(|h| h == "info"))
             .cloned()
             .collect()
     }

@@ -12,6 +12,50 @@ fn runtime_version_matches_crate_version() {
 }
 
 #[test]
+fn resolved_notifications_fall_back_to_info_topic() {
+    let tmp = TempDir::new().unwrap();
+    let mut cfg = load_runtime_config(&temp_paths(&tmp)).unwrap();
+    cfg.ntfy_topics = vec![
+        NtfyTopic {
+            name: "info-topic".into(),
+            token: "info-token".into(),
+            handles: vec!["info".into()],
+        },
+        NtfyTopic {
+            name: "critical-topic".into(),
+            token: "critical-token".into(),
+            handles: vec!["critical".into()],
+        },
+    ];
+
+    let topics = cfg.topics_for("resolved");
+    assert_eq!(topics.len(), 1);
+    assert_eq!(topics[0].name, "info-topic");
+}
+
+#[test]
+fn dedicated_resolved_topic_takes_precedence_over_info_fallback() {
+    let tmp = TempDir::new().unwrap();
+    let mut cfg = load_runtime_config(&temp_paths(&tmp)).unwrap();
+    cfg.ntfy_topics = vec![
+        NtfyTopic {
+            name: "info-topic".into(),
+            token: "info-token".into(),
+            handles: vec!["info".into()],
+        },
+        NtfyTopic {
+            name: "resolved-topic".into(),
+            token: "resolved-token".into(),
+            handles: vec!["resolved".into()],
+        },
+    ];
+
+    let topics = cfg.topics_for("resolved");
+    assert_eq!(topics.len(), 1);
+    assert_eq!(topics[0].name, "resolved-topic");
+}
+
+#[test]
 fn ldap_config_builds_shared_direct_bind_config() {
     let ldap = LdapConfig {
         url: "ldaps://directory.example.com:636".to_string(),
