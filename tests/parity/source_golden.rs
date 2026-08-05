@@ -136,6 +136,20 @@ fn uptime_kuma_parser_enriches_down_and_recovery_without_leaking_url_secrets() {
     assert_eq!(up.priority, "low");
     assert!(up.skip_snooze);
     assert!(!up.body.contains("Power correlation:"));
+
+    let (severity, notice) = parse_source(
+        "uptime-kuma",
+        &json!({
+            "msg": "Domain name example.com will expire in 7 days"
+        }),
+        "critical",
+        &cfg,
+    );
+    assert_eq!(severity, "warning");
+    assert_eq!(notice.title, "⚠️ Kuma NOTICE: Uptime Kuma");
+    assert!(notice.body.contains("example.com"));
+    assert_eq!(notice.priority, "high");
+    assert!(!notice.body.contains("Power correlation:"));
 }
 
 #[test]

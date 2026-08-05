@@ -18,7 +18,10 @@ pub fn parse_uptime_kuma_payload(
         Some(1) => "resolved",
         Some(2 | 3) => "info",
         Some(0) => route_severity,
-        _ => route_severity,
+        // Kuma emits status-less NOTICE events for advisory conditions such
+        // as domain registration expiry. They are not outages and must not
+        // inherit a critical webhook route used by DOWN heartbeats.
+        _ => "warning",
     }
     .to_string();
     let state = match status {

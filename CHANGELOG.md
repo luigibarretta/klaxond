@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.14.36 — 2026-08-05
+
+- Classify Uptime Kuma status-less `NOTICE` events as warnings instead of
+  inheriting the critical DOWN webhook route. Advisory events such as domain
+  registration expiry no longer produce false critical notifications.
+
 ## 0.14.35 — 2026-08-01
 
 - Route `resolved` notifications to the informational ntfy topic when no
