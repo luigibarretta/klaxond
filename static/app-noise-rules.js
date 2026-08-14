@@ -162,13 +162,14 @@ function snapshotRules() {
 }
 
 $("#dedup-rule-add")?.addEventListener("click", () => {
+  const sources = sourceList();
   snapshotRules();
   draftRules.push({
-    source: "grafana", name: "", enabled: true, field: "title_or_body", label: "",
+    source: sources[0] || "grafana", name: "", enabled: true, field: "title_or_body", label: "",
     operator: "contains", pattern: "", case_sensitive: false, action: "suppress",
     cooldown_s: 7200, include_critical: false,
   });
-  renderDraft(sourceList());
+  renderDraft(sources);
   $("#dedup-rules [data-noise-rule]:last-child [data-rule-field=name]")?.focus();
   markTabDirty("grouping", true);
 });

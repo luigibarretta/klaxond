@@ -1,3 +1,4 @@
+use super::dedup_key;
 use super::render::{highest_severity, render_batch};
 use crate::config::{Paths, load_runtime_config};
 use crate::parsers::Parts;
@@ -124,4 +125,32 @@ fn highest_severity_is_independent_of_batch_order() {
 
     assert_eq!(highest_severity(&[info.clone(), resolved.clone()]), "info");
     assert_eq!(highest_severity(&[resolved, info]), "info");
+}
+
+#[test]
+fn uptime_kuma_dedup_key_is_stable_across_monitor_state_changes() {
+    let parts = item("Monitor changed state").parts;
+    let labels = HashMap::new();
+    let down = json!({"monitor": {"id": 42, "name": "Public API"}, "heartbeat": {"status": 0}});
+    let up = json!({"monitor": {"id": 42, "name": "Public API"}, "heartbeat": {"status": 1}});
+
+    assert_eq!(
+        dedup_key("uptime-kuma", &down, &parts, &labels),
+        "uptime-kuma:42"
+    );
+    assert_eq!(
+        dedup_key("uptime-kuma", &up, &parts, &labels),
+        "uptime-kuma:42"
+    );
+}
+
+#[test]
+fn uptime_kuma_dedup_key_falls_back_to_monitor_name() {
+    let parts = item("Monitor changed state").parts;
+    let payload = json!({"monitor": {"name": " Public API "}});
+
+    assert_eq!(
+        dedup_key("uptime-kuma", &payload, &parts, &HashMap::new()),
+        "uptime-kuma:Public API"
+    );
 }

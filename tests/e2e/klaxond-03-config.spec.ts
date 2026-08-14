@@ -296,6 +296,10 @@ test("noise-control page configures grouping and repeat suppression with human d
     await page.goto("/grouping");
     await expect(page.locator("#tab-grouping")).toHaveClass(/active/);
     await expect(page.locator("#tab-grouping h2")).toHaveText("Notification noise control");
+    const dedupConfig = await request.get("/api/dedup-config");
+    await expect(dedupConfig).toBeOK();
+    const configuredSources = (await dedupConfig.json()).sources as string[];
+    expect(configuredSources).toContain("uptime-kuma");
     const grafana = page.locator('#dedup-cards [data-src="grafana"]');
     await expect(grafana.locator(".d-mode")).toHaveValue("group_suppress");
     await expect(grafana.locator(".d-window")).toHaveValue("300");
@@ -329,6 +333,12 @@ test("noise-control page configures grouping and repeat suppression with human d
     await bypassRule.locator('[data-rule-action="up"]').click();
     await expect(selectiveRules.first().locator('[data-rule-field="name"]')).toHaveValue("Never suppress database alerts");
 
+    await page.locator("#dedup-rule-add").click();
+    const uptimeRule = selectiveRules.last();
+    await uptimeRule.locator('[data-rule-field="source"]').selectOption("uptime-kuma");
+    await uptimeRule.locator('[data-rule-field="name"]').fill("Repeat Kuma certificate reminder");
+    await uptimeRule.locator('[data-rule-field="pattern"]').fill("certificate");
+
     await grafana.locator(".d-mode").selectOption("suppress");
     await grafana.locator(".d-repeat-window").selectOption("21600");
     await page.locator("#dedup-save").click();
@@ -338,7 +348,8 @@ test("noise-control page configures grouping and repeat suppression with human d
 
     const saved = await request.get("/api/dedup-config");
     await expect(saved).toBeOK();
-    expect((await saved.json()).settings.grafana).toMatchObject({
+    const savedSettings = (await saved.json()).settings;
+    expect(savedSettings.grafana).toMatchObject({
       enabled: false,
       strategy: "none",
       repeat_suppression_enabled: true,
@@ -355,6 +366,14 @@ test("noise-control page configures grouping and repeat suppression with human d
         expect.objectContaining({ name: "Filesystem repeats", action: "suppress", cooldown_s: 7200 })
       ]
     });
+    expect(savedSettings["uptime-kuma"]).toMatchObject({
+      rules: [expect.objectContaining({
+        name: "Repeat Kuma certificate reminder",
+        pattern: "certificate",
+        action: "suppress",
+        cooldown_s: 7200
+      })]
+    });
 
     await page.locator('[data-language-option="it"]').click();
     await expect(page.locator("#tab-grouping h2")).toHaveText("Controllo rumore notifiche");
@@ -363,7 +382,7 @@ test("noise-control page configures grouping and repeat suppression with human d
 
     await page.setViewportSize({ width: 375, height: 812 });
     await page.reload();
-    await expect(page.locator(".noise-card")).toHaveCount(8);
+    await expect(page.locator(".noise-card")).toHaveCount(configuredSources.length);
     const layout = await page.evaluate(() => ({
       viewport: window.innerWidth,
       body: document.documentElement.scrollWidth,

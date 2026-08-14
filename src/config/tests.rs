@@ -12,6 +12,19 @@ fn runtime_version_matches_crate_version() {
 }
 
 #[test]
+fn dedup_defaults_cover_every_supported_source() {
+    let defaults = default_dedup();
+
+    assert_eq!(defaults.len(), DEDUP_SOURCES.len());
+    for source in DEDUP_SOURCES {
+        assert!(
+            defaults.contains_key(*source),
+            "missing dedup defaults for {source}"
+        );
+    }
+}
+
+#[test]
 fn resolved_notifications_fall_back_to_info_topic() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = load_runtime_config(&temp_paths(&tmp)).unwrap();

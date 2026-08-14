@@ -83,33 +83,32 @@ pub fn default_component_dashboards() -> HashMap<String, [String; 2]> {
 }
 
 pub fn default_dedup() -> HashMap<String, DedupSetting> {
-    [
-        ("grafana", false, 90, "key", false),
-        ("beszel", false, 90, "key", false),
-        ("healthchecks", false, 90, "key", false),
-        ("wud", true, 90, "key", false),
-        ("authentik", false, 60, "key", false),
-        ("shelfmark", true, 120, "key", false),
-        ("prowlarr", true, 90, "key", false),
-        ("decypharr", true, 60, "key", false),
-    ]
-    .into_iter()
-    .map(|(src, enabled, window_s, strategy, override_critical)| {
-        (
-            src.to_string(),
-            DedupSetting {
-                enabled,
-                window_s,
-                strategy: strategy.to_string(),
-                override_critical,
-                repeat_suppression_enabled: false,
-                repeat_window_s: 7_200,
-                repeat_override_critical: false,
-                rules: Vec::new(),
-            },
-        )
-    })
-    .collect()
+    DEDUP_SOURCES
+        .iter()
+        .map(|source| {
+            let (enabled, window_s, strategy) = match *source {
+                "wud" => (true, 90, "key"),
+                "authentik" => (false, 60, "key"),
+                "shelfmark" => (true, 120, "key"),
+                "prowlarr" => (true, 90, "key"),
+                "decypharr" => (true, 60, "key"),
+                _ => (false, 90, "key"),
+            };
+            (
+                (*source).to_string(),
+                DedupSetting {
+                    enabled,
+                    window_s,
+                    strategy: strategy.to_string(),
+                    override_critical: false,
+                    repeat_suppression_enabled: false,
+                    repeat_window_s: 7_200,
+                    repeat_override_critical: false,
+                    rules: Vec::new(),
+                },
+            )
+        })
+        .collect()
 }
 
 pub fn default_inhibition_rules() -> Vec<InhibitionRule> {

@@ -5,13 +5,6 @@ import {
 import { GROUPING_DURATIONS, REPEAT_DURATIONS, durationOptions } from "./app-duration-options.js";
 import { collectNoiseRules, renderNoiseRules } from "./app-noise-rules.js";
 
-const SOURCES = [
-  "grafana", "beszel", "healthchecks", "wud", "authentik", "shelfmark",
-  "prowlarr", "decypharr",
-];
-const SOURCE_HELP = Object.fromEntries(SOURCES.map(source => [source, `dedup.source_${source}`]));
-const SOURCE_IDENTITY = Object.fromEntries(SOURCES.map(source => [source, `dedup.identity_${source}`]));
-
 let dedupData = {
   settings: {},
   sources: [],
@@ -40,7 +33,7 @@ export async function loadDedup() {
 export function renderDedupCards() {
   const container = $("#dedup-cards");
   if (!container) return;
-  const sources = dedupData.sources || SOURCES;
+  const sources = configuredSources();
   container.innerHTML = `<div class="noise-card-grid">${sources.map(renderSourceCard).join("")}</div>`;
   container.querySelectorAll("[data-src]").forEach(card => {
     card.querySelector(".d-mode")?.addEventListener("change", () => syncCardMode(card));
@@ -60,7 +53,7 @@ function renderSourceCard(source) {
         <h3>${escapeHtml(source.toUpperCase())}</h3>
         ${pending ? `<span class="badge warn">${escapeHtml(tr("dedup.pending", { count: pending }))}</span>` : ""}
       </div>
-      <p class="muted noise-source-help">${escapeHtml(tr(SOURCE_HELP[source] || "dedup.source_generic"))}</p>
+      <p class="muted noise-source-help">${escapeHtml(sourceText("source", source))}</p>
       <label class="noise-mode">
         <span>${escapeHtml(tr("dedup.mode"))}</span>
         <select class="d-mode">
@@ -85,7 +78,7 @@ function renderSourceCard(source) {
           <input type="checkbox" class="d-override" ${setting.override_critical ? "checked" : ""}>
           <span>${escapeHtml(tr("dedup.override_critical"))}</span>
         </label>
-        <small class="muted">${escapeHtml(tr(SOURCE_IDENTITY[source] || "dedup.identity_generic"))}</small>
+        <small class="muted">${escapeHtml(sourceText("identity", source))}</small>
       </fieldset>
       <fieldset class="noise-feature" data-feature="repeat">
         <legend>${escapeHtml(tr("dedup.repeat_title"))}</legend>
@@ -99,6 +92,16 @@ function renderSourceCard(source) {
         <small class="muted">${escapeHtml(tr("dedup.repeat_identity"))}</small>
       </fieldset>
     </article>`;
+}
+
+function configuredSources() {
+  return Array.isArray(dedupData.sources) ? dedupData.sources : [];
+}
+
+function sourceText(kind, source) {
+  const key = `dedup.${kind}_${source}`;
+  const translated = tr(key);
+  return translated === key ? tr(`dedup.${kind}_generic`) : translated;
 }
 
 function modeOption(value, selected) {
@@ -167,7 +170,7 @@ document.querySelectorAll("[data-dedup-save]").forEach(button => {
 });
 
 async function saveNoiseControl() {
-  const selective = collectNoiseRules(SOURCES);
+  const selective = collectNoiseRules(configuredSources());
   if (selective.error) {
     notifyValidationError("dedup-save", selective.error, $("#dedup-status"));
     selective.element?.querySelector("input, select")?.focus();

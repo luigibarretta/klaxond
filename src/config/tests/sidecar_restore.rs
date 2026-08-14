@@ -243,3 +243,26 @@ fn repeat_window_is_bounded_for_toml_and_json_sidecars() {
         assert_eq!(cfg.dedup["grafana"].repeat_window_s, 604_800);
     }
 }
+
+#[test]
+fn dedup_sidecar_adds_and_persists_new_supported_sources() {
+    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    clear_runtime_env();
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let mut legacy = default_dedup();
+    legacy.remove("uptime-kuma");
+    std::fs::write(
+        &paths.dedup_config,
+        serde_json::to_vec_pretty(&legacy).unwrap(),
+    )
+    .unwrap();
+
+    let cfg = load_runtime_config(&paths).unwrap();
+    assert!(cfg.dedup.contains_key("uptime-kuma"));
+
+    let persisted: HashMap<String, DedupSetting> =
+        serde_json::from_slice(&std::fs::read(&paths.dedup_config).unwrap()).unwrap();
+    assert!(persisted.contains_key("uptime-kuma"));
+    assert_eq!(persisted.len(), DEDUP_SOURCES.len());
+}

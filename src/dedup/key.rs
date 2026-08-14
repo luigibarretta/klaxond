@@ -30,6 +30,7 @@ fn source_key(
         "grafana" => grafana_key(common_labels),
         "beszel" => beszel_key(payload, common_labels),
         "healthchecks" => healthchecks_key(payload),
+        "uptime-kuma" => uptime_kuma_key(payload),
         "pve" => pve_key(payload),
         "authentik" => authentik_key(payload),
         "shelfmark" => shelfmark_key(payload),
@@ -37,6 +38,26 @@ fn source_key(
         "decypharr" => decypharr_key(payload),
         _ => None,
     }
+}
+
+fn uptime_kuma_key(payload: &Value) -> Option<String> {
+    let monitor = payload.get("monitor")?;
+    let identity = monitor
+        .get("id")
+        .and_then(|value| match value {
+            Value::Number(number) => Some(number.to_string()),
+            Value::String(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+            _ => None,
+        })
+        .or_else(|| {
+            monitor
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToOwned::to_owned)
+        })?;
+    Some(format!("uptime-kuma:{identity}"))
 }
 
 fn wud_key(payload: &Value) -> Option<String> {

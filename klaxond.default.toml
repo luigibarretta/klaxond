@@ -117,6 +117,7 @@ default_limit = 500
 grafana = ""
 beszel = ""
 healthchecks = ""
+uptime-kuma = ""
 wud = ""
 authentik = ""
 shelfmark = ""
@@ -211,6 +212,15 @@ repeat_override_critical = false
 enabled           = false
 window_s          = 180
 strategy          = "time"  # all deadman fires in window
+override_critical = false
+repeat_suppression_enabled = false
+repeat_window_s = 7200
+repeat_override_critical = false
+
+[dedup.uptime-kuma]
+enabled           = false
+window_s          = 90
+strategy          = "key"   # key=monitor id or name
 override_critical = false
 repeat_suppression_enabled = false
 repeat_window_s = 7200

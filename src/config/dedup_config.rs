@@ -12,9 +12,15 @@ pub(super) fn load_dedup(
         let mut out = default_dedup();
         let raw: HashMap<String, DedupSetting> =
             serde_json::from_slice(&fs::read(&paths.dedup_config)?)?;
+        let missing_supported_source = DEDUP_SOURCES
+            .iter()
+            .any(|source| !raw.contains_key(*source));
         for (k, mut v) in raw {
             normalize_setting(&mut v);
             out.insert(k, v);
+        }
+        if missing_supported_source {
+            save_dedup(paths, &out)?;
         }
         return Ok(out);
     }

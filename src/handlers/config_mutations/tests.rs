@@ -98,6 +98,45 @@ fn legacy_dedup_update_preserves_repeat_suppression_fields() {
 }
 
 #[test]
+fn uptime_kuma_noise_settings_and_rules_are_applied() {
+    let request = DedupConfigRequest::from_value(json!({
+        "settings": {
+            "uptime-kuma": {
+                "enabled": true,
+                "window_s": 120,
+                "strategy": "key",
+                "repeat_suppression_enabled": true,
+                "repeat_window_s": 7200,
+                "rules": [{
+                    "name": "Certificate reminders",
+                    "enabled": true,
+                    "field": "title_or_body",
+                    "operator": "contains",
+                    "pattern": "certificate",
+                    "action": "suppress",
+                    "cooldown_s": 14400
+                }]
+            }
+        }
+    }))
+    .expect("uptime-kuma settings request");
+
+    let settings = request
+        .into_settings(default_dedup(), &default_dedup())
+        .expect("valid uptime-kuma settings");
+    let setting = settings.get("uptime-kuma").expect("uptime-kuma settings");
+
+    assert!(setting.enabled);
+    assert_eq!(setting.window_s, 120);
+    assert!(setting.repeat_suppression_enabled);
+    assert_eq!(setting.repeat_window_s, 7_200);
+    assert_eq!(setting.rules.len(), 1);
+    assert_eq!(setting.rules[0].name, "Certificate reminders");
+    assert_eq!(setting.rules[0].pattern, "certificate");
+    assert_eq!(setting.rules[0].cooldown_s, 14_400);
+}
+
+#[test]
 fn selective_noise_rules_are_normalized_validated_and_preserved() {
     let request = DedupConfigRequest::from_value(json!({
         "settings": {
