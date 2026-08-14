@@ -669,6 +669,17 @@ npm run test:e2e
 docker buildx build --build-context auth-modules=../auth-modules -t klaxond:local .
 ```
 
+The live Authentik canary is intentionally separate from the portable suite. In
+the homelab checkout, run it through the serialized account lifecycle and the
+bounded Klaxond access hook:
+
+```bash
+E2E_BASE_URL=https://klaxond.luigibarretta.com \
+AUTHENTIK_E2E_ACCESS_PLAYBOOK=/opt/ansible/homelab-ansible/playbooks/manage-klaxond-authentik-e2e-access.yml \
+  /opt/ansible/homelab-ansible/scripts/run-authentik-e2e.sh -- \
+  npm run test:e2e:authentik
+```
+
 CI pins the shared `auth-modules` checkout to the reviewed commit recorded in
 `.gitea/workflows/build.yml`; dependency upgrades are explicit, tested changes.
 
