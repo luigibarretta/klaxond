@@ -16,7 +16,7 @@ concurrency:
 jobs:
   check:
     runs-on: docker
-    timeout-minutes: 45
+    timeout-minutes: 90
     permissions:
       contents: read
     services:
@@ -60,10 +60,21 @@ jobs:
       - name: Check auth gold standard
         run: bash scripts/check-auth-gold-standard.sh
 
+      - name: Restore Rust toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.rustup
+          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.96.0
         with:
           components: rustfmt, clippy
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -102,6 +113,12 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
+
+      - name: Restore Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
       - name: Check frontend JavaScript syntax
         run: npm run static:check
