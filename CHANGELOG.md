@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.14.37 — 2026-08-14
+
+- Complete Uptime Kuma noise control support across backend defaults, stable
+  monitor identity keys, selective UI rules and persisted sidecar migration.
+- Run the complete Rust, PostgreSQL persistence and Playwright suites in CI,
+  make the RSA security guard independent of Git metadata, and align Cargo and
+  OCI package metadata with the Apache-2.0 license.
+
 ## 0.14.36 — 2026-08-05
 
 - Classify Uptime Kuma status-less `NOTICE` events as warnings instead of

@@ -7,6 +7,7 @@
     "nasa:warn": "node scripts/check-nasa-warnings.mjs",
     "openapi:lint": "REDOCLY_SUPPRESS_UPDATE_NOTICE=true redocly lint docs/openapi.yaml --config .redocly.yaml",
     "security:rsa-guard": "bash scripts/check-rsa-private-usage.sh",
+    "static:check": "find static -type f -name '*.js' ! -path 'static/vendor/*' ! -name 'mermaid.min.js' -exec node --check {} \\;",
     "test:e2e": "playwright test",
     "test:e2e:authentik": "playwright test tests/e2e/live-authentik.spec.ts --config playwright.live.config.ts --workers=1"
   },

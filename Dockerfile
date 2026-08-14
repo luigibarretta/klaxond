@@ -20,9 +20,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM mirror.gcr.io/library/alpine:3.23
 
 LABEL org.opencontainers.image.title="klaxond"
-LABEL org.opencontainers.image.description="Homelab notification bridge — Grafana/Beszel webhook → ntfy with cascade (Telegram, SMTP) and admin UI"
+LABEL org.opencontainers.image.description="Notification routing service with noise control, delivery history, and admin UI"
 LABEL org.opencontainers.image.source="https://git.luigibarretta.com/luigibarretta/klaxond"
-LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 RUN apk add --no-cache ca-certificates
 

@@ -1,15 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+
+if ! command -v rg >/dev/null 2>&1; then
+  echo "error: ripgrep (rg) is required" >&2
+  exit 2
+fi
 
 status=0
 
 direct_dependency_pattern='^[[:space:]]*rsa[[:space:]]*='
 private_api_pattern='EncodingKey::from_rsa(_pem|_der)?|RsaPrivateKey|DecodeRsaPrivateKey|EncodeRsaPrivateKey|rsa::(Oaep|Pkcs1v15Encrypt|Pkcs1v15Sign|Pss|pkcs1v15::SigningKey|pss::SigningKey)'
 
-if git grep -nE "$direct_dependency_pattern" -- Cargo.toml; then
+scan_pattern() {
+  local pattern=$1
+  shift
+  local output rc
+
+  set +e
+  output="$(rg -n --no-heading -e "$pattern" "$@" 2>&1)"
+  rc=$?
+  set -e
+
+  case "$rc" in
+    0)
+      printf '%s\n' "$output"
+      return 0
+      ;;
+    1)
+      return 1
+      ;;
+    *)
+      printf 'error: RSA guard scan failed (rg exit %s):\n%s\n' "$rc" "$output" >&2
+      exit 2
+      ;;
+  esac
+}
+
+if scan_pattern "$direct_dependency_pattern" Cargo.toml; then
   cat >&2 <<'MSG'
 error: direct dependency on the RustCrypto rsa crate found.
 
@@ -20,7 +50,7 @@ MSG
   status=1
 fi
 
-if git grep -nE "$private_api_pattern" -- Cargo.toml src; then
+if scan_pattern "$private_api_pattern" Cargo.toml src; then
   cat >&2 <<'MSG'
 error: production Rust code appears to use RSA private-key/decrypt/signing APIs.
 

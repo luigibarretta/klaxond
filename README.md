@@ -384,6 +384,10 @@ source-wide behavior. Critical notifications require an explicit per-rule
 opt-in. See the commented `[[dedup.grafana.rules]]` example in
 `klaxond.default.toml`.
 
+The same controls apply to every supported source, including Uptime Kuma. Kuma
+notifications use the monitor ID, or the monitor name when no ID is supplied,
+as their stable grouping identity.
+
 Every compose env var that changes application behavior has at least one
 TOML or JSON equivalent. `KLAXOND_CONFIG` is the only bootstrap-only exception:
 it selects the TOML file itself, so it cannot live inside that same TOML file.
@@ -650,10 +654,17 @@ Verification:
 
 ```bash
 scripts/check-rsa-private-usage.sh
+npm run static:check
 npm run loc:check
 npm run nasa:warn
 npm run openapi:lint
-cargo test
+cargo fmt --all -- --check
+cargo check --locked --all-features
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features -- --nocapture
+# With a disposable PostgreSQL test database:
+KLAXOND_TEST_POSTGRES_URL=postgres://klaxond:password@127.0.0.1:5432/klaxond_test \
+  cargo test --locked --all-features -- --ignored --nocapture --test-threads=1
 npm run test:e2e
 docker buildx build --build-context auth-modules=../auth-modules -t klaxond:local .
 ```

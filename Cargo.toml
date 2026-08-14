@@ -1,7 +1,10 @@
 [package]
 name = "klaxond"
-version = "0.14.36"
+version = "0.14.37"
 edition = "2024"
+description = "Notification routing, noise control, delivery history, and authentication service"
+license = "Apache-2.0"
+repository = "https://git.luigibarretta.com/luigibarretta/klaxond"
 
 [dependencies]
 anyhow = "1.0"
