@@ -1523,7 +1523,7 @@ dependencies = [
 
 [[package]]
 name = "klaxond"
-version = "0.14.37"
+version = "0.14.38"
 dependencies = [
  "anyhow",
  "auth-modules",

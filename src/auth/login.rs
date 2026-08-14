@@ -1,20 +1,21 @@
 use super::login_page::login_page;
 use super::oidc_client::client_for;
 use super::session::{
-    cookie_values, issue_session_on_worker, rotate_session_on_worker, sanitize_return_to,
-    set_session_cookie, verify_session,
+    cookie_values, rotate_session_on_worker, sanitize_return_to, set_session_cookie, verify_session,
 };
-use super::step_up::redirect_location_after_primary;
-use super::{AUTH_SESSION_COOKIE, User, magic_link_enabled, redirect};
+use super::{AUTH_SESSION_COOKIE, magic_link_enabled, redirect};
 use crate::state::{AppState, PendingOidcState, lock_mutex};
 use crate::util::token_urlsafe;
 use auth_modules::oidc::OidcClientConfig;
-use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::Body;
 use axum::http::header::{COOKIE, HOST};
 use axum::http::{HeaderMap, Response, StatusCode};
 use axum::response::IntoResponse;
 use url::Url;
+
+mod callback;
+
+pub use callback::oidc_callback;
 
 pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
     let return_to = login_return_to(uri);
@@ -137,120 +138,6 @@ fn login_return_to(uri: &str) -> String {
         })
         .unwrap_or_else(|| "/status".into());
     sanitize_return_to(&return_to)
-}
-
-pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
-    let cfg = state.cfg().auth.oidc;
-    let parsed = match callback_url(uri) {
-        Ok(parsed) => parsed,
-        Err(_) => return (StatusCode::BAD_REQUEST, "bad callback uri").into_response(),
-    };
-    let code = parsed
-        .query_pairs()
-        .find(|(k, _)| k == "code")
-        .map(|(_, v)| v.to_string());
-    let state_param = parsed
-        .query_pairs()
-        .find(|(k, _)| k == "state")
-        .map(|(_, v)| v.to_string());
-    let (Some(code), Some(state_param)) = (code, state_param) else {
-        return (StatusCode::BAD_REQUEST, "missing code or state").into_response();
-    };
-    let pending = {
-        let mut states = lock_mutex(&state.oidc_states, "oidc states");
-        match states.remove(&state_param) {
-            Some(pending) => pending,
-            None => return redirect("/"),
-        }
-    };
-    let return_to = sanitize_return_to(&pending.return_to);
-    let redirect_uri = oidc_redirect_uri(state, &headers, &cfg.redirect_path);
-    let client_config = oidc_client_config(&cfg, &redirect_uri);
-    let client = match client_for(state, &client_config).await {
-        Ok(client) => client,
-        Err(err) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                format!("OIDC provider unavailable: {err}"),
-            )
-                .into_response();
-        }
-    };
-    let identity = match client
-        .exchange_code(
-            &client_config,
-            &code,
-            &pending.nonce,
-            &pending.code_verifier,
-        )
-        .await
-    {
-        Ok(identity) => identity,
-        Err(err) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                format!("id_token verify failed: {err}"),
-            )
-                .into_response();
-        }
-    };
-    if !cfg.required_group.trim().is_empty()
-        && !identity
-            .groups
-            .iter()
-            .any(|group| group == cfg.required_group.as_str())
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            format!("required_group '{}' not in user claims", cfg.required_group),
-        )
-            .into_response();
-    }
-    let mut user = User {
-        sub: identity.subject,
-        email: identity.email.unwrap_or_default(),
-        name: if identity.name.trim().is_empty() {
-            identity.username
-        } else {
-            identity.name
-        },
-        groups: identity.groups,
-        mode: "oidc".into(),
-        exp: 0,
-        csrf: String::new(),
-        sudo_until: 0,
-        via_authorization: false,
-        second_factor: String::new(),
-        session_id_hash: String::new(),
-        session_family_hash: String::new(),
-        session_created_at: 0,
-        provider_issuer: identity.assurance.issuer,
-        provider_session_id: identity.assurance.provider_session_id.unwrap_or_default(),
-    };
-    let cfg_all = state.cfg().auth;
-    if let Some(location) = redirect_location_after_primary(
-        state,
-        &cfg_all,
-        user.clone(),
-        &return_to,
-        PrimaryAuthMethod::Oidc,
-    ) {
-        return redirect(&location);
-    }
-    let cookie = match issue_session_on_worker(state, &cfg_all, &mut user).await {
-        Ok(cookie) => cookie,
-        Err(err) => {
-            tracing::error!("persist OIDC session failed: {err}");
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-    };
-    let mut resp = redirect(if return_to.is_empty() {
-        "/"
-    } else {
-        &return_to
-    });
-    set_session_cookie(&mut resp, &cookie);
-    resp
 }
 
 pub(super) fn callback_url(uri: &str) -> Result<Url, String> {

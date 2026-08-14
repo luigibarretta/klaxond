@@ -16,6 +16,24 @@ use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
 use axum::response::IntoResponse;
 use std::net::SocketAddr;
 
+enum BasicFailure {
+    Challenge,
+    TooManyRequests,
+    ServiceUnavailable,
+    InternalServerError,
+}
+
+impl BasicFailure {
+    fn response(self, realm: &str) -> Response<Body> {
+        match self {
+            Self::Challenge => challenge(realm),
+            Self::TooManyRequests => StatusCode::TOO_MANY_REQUESTS.into_response(),
+            Self::ServiceUnavailable => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            Self::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    }
+}
+
 pub(super) async fn authenticate_basic(
     state: &AppState,
     cfg: &AuthConfig,
@@ -27,101 +45,20 @@ pub(super) async fn authenticate_basic(
         return AuthOutcome::Rejected(challenge(&cfg.basic.realm));
     };
     let rate_keys = auth_rate_keys(state, "basic", &username, headers, peer);
-    match auth_rate_limited_on_worker(state, &rate_keys).await {
-        Ok(true) => {
-            let _ = record_auth_failure_on_worker(
-                state,
-                &rate_keys,
-                "auth.login",
-                auth_modules::errors::RATE_LIMITED,
-            )
-            .await;
-            return AuthOutcome::Rejected(StatusCode::TOO_MANY_REQUESTS.into_response());
-        }
-        Ok(false) => {}
-        Err(err) => {
-            tracing::error!("persistent Basic rate-limit check failed: {err}");
-            return AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response());
-        }
+    if let Err(failure) = check_rate_limit(state, &rate_keys).await {
+        return AuthOutcome::Rejected(failure.response(&cfg.basic.realm));
     }
-    if username != cfg.basic.username
-        || cfg.basic.password_hash.is_empty()
-        || !verify_password_on_worker(state, &password, &cfg.basic.password_hash).await
-    {
-        if let Err(err) = record_auth_failure_on_worker(
-            state,
-            &rate_keys,
-            "auth.login",
-            "invalid username or password",
-        )
-        .await
-        {
-            tracing::error!("persist Basic authentication failure failed: {err}");
-            return AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response());
-        }
-        return AuthOutcome::Rejected(challenge(&cfg.basic.realm));
+    if let Err(failure) = verify_credentials(state, cfg, &username, &password, &rate_keys).await {
+        return AuthOutcome::Rejected(failure.response(&cfg.basic.realm));
     }
-    if cfg.basic.totp_enabled {
-        let Some(code) = headers
-            .get("X-Klaxond-TOTP")
-            .and_then(|value| value.to_str().ok())
-        else {
-            if let Err(err) =
-                record_auth_failure_on_worker(state, &rate_keys, "auth.login", "missing TOTP code")
-                    .await
-            {
-                tracing::error!("persist Basic TOTP failure failed: {err}");
-                return AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response());
-            }
-            return AuthOutcome::Rejected(challenge(&cfg.basic.realm));
-        };
-        match consume_basic_totp(state, code) {
-            Ok(true) => {}
-            Ok(false) => {
-                if let Err(err) = record_auth_failure_on_worker(
-                    state,
-                    &rate_keys,
-                    "auth.login",
-                    "invalid or replayed TOTP code",
-                )
-                .await
-                {
-                    tracing::error!("persist Basic TOTP failure failed: {err}");
-                    return AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response());
-                }
-                return AuthOutcome::Rejected(challenge(&cfg.basic.realm));
-            }
-            Err(err) => {
-                tracing::error!("persist Basic TOTP replay counter failed: {err}");
-                return AuthOutcome::Rejected(StatusCode::INTERNAL_SERVER_ERROR.into_response());
-            }
-        }
+    if let Err(failure) = verify_totp(state, cfg, headers, &rate_keys).await {
+        return AuthOutcome::Rejected(failure.response(&cfg.basic.realm));
     }
     if let Err(err) = clear_auth_failures_on_worker(state, &rate_keys).await {
         tracing::error!("clear persistent Basic authentication failures failed: {err}");
         return AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response());
     }
-    let mut user = User {
-        sub: username,
-        email: String::new(),
-        name: String::new(),
-        groups: vec![],
-        mode: "basic".into(),
-        exp: 0,
-        csrf: String::new(),
-        sudo_until: now_epoch_i64() + sudo_window_seconds(),
-        via_authorization: false,
-        second_factor: if cfg.basic.totp_enabled {
-            "totp".into()
-        } else {
-            String::new()
-        },
-        session_id_hash: String::new(),
-        session_family_hash: String::new(),
-        session_created_at: 0,
-        provider_issuer: String::new(),
-        provider_session_id: String::new(),
-    };
+    let mut user = basic_user(username, cfg.basic.totp_enabled);
     if let Some(response) = primary_step_up_response(
         state,
         cfg,
@@ -138,6 +75,110 @@ pub(super) async fn authenticate_basic(
             tracing::error!("persist Basic session failed: {err}");
             AuthOutcome::Rejected(StatusCode::SERVICE_UNAVAILABLE.into_response())
         }
+    }
+}
+
+async fn check_rate_limit(
+    state: &AppState,
+    rate_keys: &super::AuthRateKeys,
+) -> Result<(), BasicFailure> {
+    match auth_rate_limited_on_worker(state, rate_keys).await {
+        Ok(true) => {
+            let _ = record_auth_failure_on_worker(
+                state,
+                rate_keys,
+                "auth.login",
+                auth_modules::errors::RATE_LIMITED,
+            )
+            .await;
+            Err(BasicFailure::TooManyRequests)
+        }
+        Ok(false) => Ok(()),
+        Err(err) => {
+            tracing::error!("persistent Basic rate-limit check failed: {err}");
+            Err(BasicFailure::ServiceUnavailable)
+        }
+    }
+}
+
+async fn verify_credentials(
+    state: &AppState,
+    cfg: &AuthConfig,
+    username: &str,
+    password: &str,
+    rate_keys: &super::AuthRateKeys,
+) -> Result<(), BasicFailure> {
+    let valid = username == cfg.basic.username
+        && !cfg.basic.password_hash.is_empty()
+        && verify_password_on_worker(state, password, &cfg.basic.password_hash).await;
+    if valid {
+        return Ok(());
+    }
+    if let Err(err) = record_auth_failure_on_worker(
+        state,
+        rate_keys,
+        "auth.login",
+        "invalid username or password",
+    )
+    .await
+    {
+        tracing::error!("persist Basic authentication failure failed: {err}");
+        return Err(BasicFailure::ServiceUnavailable);
+    }
+    Err(BasicFailure::Challenge)
+}
+
+async fn verify_totp(
+    state: &AppState,
+    cfg: &AuthConfig,
+    headers: &HeaderMap,
+    rate_keys: &super::AuthRateKeys,
+) -> Result<(), BasicFailure> {
+    if !cfg.basic.totp_enabled {
+        return Ok(());
+    }
+    let code = headers
+        .get("X-Klaxond-TOTP")
+        .and_then(|value| value.to_str().ok());
+    let (valid, detail) = match code.map(|code| consume_basic_totp(state, code)) {
+        None => (false, "missing TOTP code"),
+        Some(Ok(valid)) => (valid, "invalid or replayed TOTP code"),
+        Some(Err(err)) => {
+            tracing::error!("persist Basic TOTP replay counter failed: {err}");
+            return Err(BasicFailure::InternalServerError);
+        }
+    };
+    if valid {
+        return Ok(());
+    }
+    if let Err(err) = record_auth_failure_on_worker(state, rate_keys, "auth.login", detail).await {
+        tracing::error!("persist Basic TOTP failure failed: {err}");
+        return Err(BasicFailure::ServiceUnavailable);
+    }
+    Err(BasicFailure::Challenge)
+}
+
+fn basic_user(username: String, totp_enabled: bool) -> User {
+    User {
+        sub: username,
+        email: String::new(),
+        name: String::new(),
+        groups: vec![],
+        mode: "basic".into(),
+        exp: 0,
+        csrf: String::new(),
+        sudo_until: now_epoch_i64() + sudo_window_seconds(),
+        via_authorization: false,
+        second_factor: if totp_enabled {
+            "totp".into()
+        } else {
+            String::new()
+        },
+        session_id_hash: String::new(),
+        session_family_hash: String::new(),
+        session_created_at: 0,
+        provider_issuer: String::new(),
+        provider_session_id: String::new(),
     }
 }
 

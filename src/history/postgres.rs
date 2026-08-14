@@ -1,9 +1,8 @@
 use super::RuntimeAuthState;
 use super::{DeliveryEntry, DeliveryPage, RepeatCandidate, RepeatDecision, RepeatState};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use postgres::{Client, NoTls};
 use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 mod auth_state;
@@ -12,212 +11,23 @@ mod repeat;
 mod session;
 mod session_locks;
 mod storage;
+mod worker;
 mod worker_rate_limit;
 mod worker_repeat;
 mod worker_session;
 
-use self::storage::{
-    count as postgres_count, export_all as postgres_export_all, insert as postgres_insert,
-    migrate as migrate_postgres, page as postgres_page, prune as postgres_prune,
-    validate_schema as validate_postgres_schema,
-};
+use self::storage::{migrate as migrate_postgres, validate_schema as validate_postgres_schema};
+use self::worker::PostgresCommand;
 
 pub(super) struct PostgresWorker {
     tx: mpsc::Sender<PostgresCommand>,
 }
 
-enum PostgresCommand {
-    Record {
-        entry: DeliveryEntry,
-        reply: mpsc::Sender<Result<()>>,
-    },
-    Page {
-        limit: usize,
-        offset: usize,
-        reply: mpsc::Sender<Result<DeliveryPage>>,
-    },
-    ExportAll {
-        reply: mpsc::Sender<Result<Vec<DeliveryEntry>>>,
-    },
-    ReserveRepeat {
-        candidate: RepeatCandidate,
-        reply: mpsc::Sender<Result<RepeatDecision>>,
-    },
-    CompleteRepeat {
-        fingerprint: String,
-        reservation_token: String,
-        delivered_at: Option<f64>,
-        reply: mpsc::Sender<Result<()>>,
-    },
-    RecentRepeatSuppressions {
-        limit: usize,
-        reply: mpsc::Sender<Result<Vec<RepeatState>>>,
-    },
-    ExportRepeatStates {
-        reply: mpsc::Sender<Result<Vec<RepeatState>>>,
-    },
-    ImportRepeatState {
-        state: RepeatState,
-        reply: mpsc::Sender<Result<()>>,
-    },
-    ImportAuthState {
-        state: RuntimeAuthState,
-        reply: mpsc::Sender<Result<()>>,
-    },
-    Session(worker_session::SessionCommand),
-    RateLimit(worker_rate_limit::RateLimitCommand),
-}
-
 impl PostgresWorker {
     pub(super) fn start(url: String, retention: usize, create_schema: bool) -> Result<Self> {
-        let (tx, rx) = mpsc::channel::<PostgresCommand>();
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
-        let worker_url = url.clone();
-        thread::Builder::new()
-            .name("klaxond-history-postgres".to_string())
-            .spawn(move || {
-                let mut client = match connect_postgres(&worker_url, create_schema) {
-                    Ok(client) => {
-                        let _ = ready_tx.send(Ok(()));
-                        client
-                    }
-                    Err(err) => {
-                        let _ = ready_tx.send(Err(err));
-                        return;
-                    }
-                };
-                for command in rx {
-                    match command {
-                        PostgresCommand::Record { entry, reply } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                |client| {
-                                    postgres_insert(client, &entry)?;
-                                    postgres_prune(client, retention)
-                                },
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::Page {
-                            limit,
-                            offset,
-                            reply,
-                        } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                |client| {
-                                    let total = postgres_count(client)?;
-                                    let entries = postgres_page(client, limit, offset)?;
-                                    Ok(DeliveryPage {
-                                        entries,
-                                        total,
-                                        limit,
-                                        offset,
-                                    })
-                                },
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::ExportAll { reply } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                postgres_export_all,
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::ReserveRepeat { candidate, reply } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                |client| repeat::reserve(client, &candidate),
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::CompleteRepeat {
-                            fingerprint,
-                            reservation_token,
-                            delivered_at,
-                            reply,
-                        } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                |client| {
-                                    repeat::complete(
-                                        client,
-                                        &fingerprint,
-                                        &reservation_token,
-                                        delivered_at,
-                                    )
-                                },
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::RecentRepeatSuppressions { limit, reply } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                |client| repeat::recent_suppressions(client, limit),
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::ExportRepeatStates { reply } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                repeat::export_all,
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::ImportRepeatState { state, reply } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                |client| repeat::import(client, &state),
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::ImportAuthState { state, reply } => {
-                            let result = postgres_with_retry(
-                                &worker_url,
-                                create_schema,
-                                &mut client,
-                                |client| auth_state::import(client, &state),
-                            );
-                            let _ = reply.send(result);
-                        }
-                        PostgresCommand::Session(command) => worker_session::execute(
-                            command,
-                            &worker_url,
-                            create_schema,
-                            &mut client,
-                        ),
-                        PostgresCommand::RateLimit(command) => worker_rate_limit::execute(
-                            command,
-                            &worker_url,
-                            create_schema,
-                            &mut client,
-                        ),
-                    }
-                }
-            })
-            .context("spawn postgres history worker")?;
-        match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self { tx }),
-            Ok(Err(err)) => Err(err),
-            Err(err) => bail!("postgres history worker failed to start: {err}"),
-        }
+        Ok(Self {
+            tx: worker::spawn(url, retention, create_schema)?,
+        })
     }
 
     pub(super) fn record_delivery(&self, entry: &DeliveryEntry) -> Result<()> {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::auth_sidecar::load_auth;
+use std::collections::HashMap;
 
 #[test]
 fn auth_sidecar_migrates_legacy_oidc_redirect_without_trimming_issuer_slash() {

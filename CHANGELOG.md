@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.14.38 — 2026-08-15
+
+- Split runtime configuration loading into typed render, routing, channel and
+  server domains while preserving environment and TOML precedence.
+- Isolate the PostgreSQL command worker from its public history facade without
+  changing storage, retry or migration behavior.
+- Refactor local, Basic and OIDC authentication into typed validation and
+  callback boundaries while preserving API responses, step-up flow and session
+  persistence semantics.
+
 ## 0.14.37 — 2026-08-14
 
 - Complete Uptime Kuma noise control support across backend defaults, stable
