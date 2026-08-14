@@ -178,6 +178,12 @@ jobs:
             type=ref,event=branch
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.title=klaxond
+            org.opencontainers.image.description=Notification routing service with noise control, delivery history, and admin UI
+            org.opencontainers.image.url=https://git.luigibarretta.com/luigibarretta/klaxond
+            org.opencontainers.image.source=https://git.luigibarretta.com/luigibarretta/klaxond
+            org.opencontainers.image.licenses=Apache-2.0
 
       - name: Build and push (amd64, docker driver = cache locale)
         uses: docker/build-push-action@v6
@@ -188,6 +194,22 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Verify immutable image metadata
+        env:
+          IMAGE: git.luigibarretta.com/${{ github.repository_owner }}/klaxond:${{ github.sha }}
+          EXPECTED_SOURCE: https://git.luigibarretta.com/luigibarretta/klaxond
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          title="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.title" }}')"
+          description="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.description" }}')"
+          licenses="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.licenses" }}')"
+          source="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')"
+          test "$title" = "klaxond"
+          test -n "$description"
+          test "$licenses" = "Apache-2.0"
+          test "$source" = "$EXPECTED_SOURCE"
 
       - name: Image summary
         run: |

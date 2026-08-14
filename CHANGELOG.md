@@ -9,6 +9,8 @@
 - Run the complete Rust, PostgreSQL persistence and Playwright suites in CI,
   make the RSA security guard independent of Git metadata, and align Cargo and
   OCI package metadata with the Apache-2.0 license.
+- Preserve the canonical description, source URL and Apache-2.0 license on
+  registry images, and verify those OCI labels after every immutable build.
 
 ## 0.14.36 — 2026-08-05
 
