@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.14.39 — 2026-08-15
+
+- Separate persistent session lifecycle, logout cleanup and trusted-proxy
+  client IP resolution into focused auth modules without changing session,
+  rotation or rate-limit policy.
+- Group delivery and routing configuration models by domain while preserving
+  their public types and serialized configuration format.
+- Split deduplication, cascade and delivery admin mutations behind the existing
+  handler facade, retaining payload leniency, validation and API behavior.
+
 ## 0.14.38 — 2026-08-15
 
 - Split runtime configuration loading into typed render, routing, channel and
