@@ -114,6 +114,7 @@ fn healthchecks_resolved_parser_matches_python_golden() {
         "status": "up",
         "code": "200",
         "last_ping": "2026-06-29T12:00:00Z",
+        "observed_at": "2026-06-29T14:00:00Z",
         "tags": "host=nas-01 service=backup",
         "url": "https://hc.example/check"
     });
@@ -123,7 +124,7 @@ fn healthchecks_resolved_parser_matches_python_golden() {
     assert_eq!(parts.title, "✅ HC UP: backup-deadman");
     assert_eq!(
         parts.body,
-        "Status: RESOLVED\nLast ping: 2026-06-29T12:00:00Z\nCode: 200\nTags: host=nas-01 service=backup"
+        "Status: RESOLVED\nLast ping: 2026-06-29T12:00:00Z\nObserved at: 2026-06-29T14:00:00Z\nCode: 200\nTags: host=nas-01 service=backup"
     );
     assert_eq!(parts.tags, vec!["white_check_mark", "healthchecks"]);
     assert_eq!(parts.priority, "low");
@@ -132,6 +133,24 @@ fn healthchecks_resolved_parser_matches_python_golden() {
         ["view", "📊 Open in HC", "https://hc.example/check"]
     );
     assert!(parts.skip_snooze);
+}
+
+#[test]
+fn healthchecks_observation_time_is_not_labeled_as_last_ping() {
+    let (_tmp, cfg) = cfg();
+    let payload = json!({
+        "check": "backup-deadman",
+        "status": "down",
+        "observed_at": "2026-08-19T01:00:00Z"
+    });
+
+    let parts = parse_healthchecks_payload(&payload, "critical", &cfg);
+
+    assert_eq!(
+        parts.body,
+        "Status: DOWN\nObserved at: 2026-08-19T01:00:00Z"
+    );
+    assert!(!parts.body.contains("Last ping"));
 }
 
 #[test]

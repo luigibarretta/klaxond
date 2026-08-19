@@ -146,6 +146,7 @@ fn healthcheck_body(payload: &Value, is_resolved: bool) -> String {
     let mut body_parts = vec![format!("Status: {state_word}")];
     for (label, key) in [
         ("Last ping", "last_ping"),
+        ("Observed at", "observed_at"),
         ("Code", "code"),
         ("Tags", "tags"),
     ] {

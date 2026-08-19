@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.14.40 — 2026-08-19
+
+- Render a Healthchecks notification's observation timestamp separately from
+  a producer-supplied real last-ping timestamp, preventing webhook `$NOW`
+  values from being mislabeled as the check's latest successful ping.
+
 ## 0.14.39 — 2026-08-15
 
 - Separate persistent session lifecycle, logout cleanup and trusted-proxy

@@ -1,6 +1,6 @@
 [package]
 name = "klaxond"
-version = "0.14.39"
+version = "0.14.40"
 edition = "2024"
 description = "Notification routing, noise control, delivery history, and authentication service"
 license = "Apache-2.0"
