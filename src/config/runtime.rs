@@ -2,13 +2,13 @@ use super::auth_sidecar::load_auth;
 use super::dedup_config::load_dedup;
 use super::ntfy_topics::load_ntfy_topics;
 use super::readers::{
-    read_delivery, read_history, read_inhibition_rules, read_schedules, read_tiers,
+    read_delivery, read_emergency, read_history, read_inhibition_rules, read_schedules, read_tiers,
 };
 use super::render::{load_render_config, read_component_dashboards, read_component_image};
 use super::{
-    AuthConfig, DedupSetting, DeliveryConfig, HistoryConfig, InhibitionRule, NtfyTopic, Paths,
-    RuntimeConfig, Schedule, Tier, bootstrap_config, default_icons, default_priorities,
-    default_tag_prefixes, default_tiers,
+    AuthConfig, DedupSetting, DeliveryConfig, EmergencyConfig, HistoryConfig, InhibitionRule,
+    NtfyTopic, Paths, RuntimeConfig, Schedule, Tier, bootstrap_config, default_icons,
+    default_priorities, default_tag_prefixes, default_tiers,
 };
 use crate::util::{env_bool, env_string, toml_bool, toml_get, toml_string};
 use anyhow::Result;
@@ -37,6 +37,7 @@ struct RoutingRuntime {
     auth: AuthConfig,
     schedules: Vec<Schedule>,
     history: HistoryConfig,
+    emergency: EmergencyConfig,
 }
 
 struct ChannelRuntime {
@@ -142,6 +143,7 @@ fn load_routing(paths: &Paths, toml: &toml::Value) -> Result<RoutingRuntime> {
         auth: load_auth(paths, toml_get(toml, &["auth"]))?,
         schedules: read_schedules(toml),
         history: read_history(toml, paths),
+        emergency: read_emergency(toml)?,
     })
 }
 
@@ -239,6 +241,7 @@ fn assemble(
         auth: routing.auth,
         schedules: routing.schedules,
         history: routing.history,
+        emergency: routing.emergency,
         tg_chat: String::new(),
         smtp_host: String::new(),
         smtp_port: channels.smtp_port,

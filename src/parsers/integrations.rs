@@ -58,6 +58,9 @@ pub fn parse_authentik_payload(payload: &Value, severity: &str, cfg: &RuntimeCon
         render_panel: None,
         render_instance: String::new(),
         attach_url: None,
+        ntfy_sequence_id: None,
+        emergency_ack_url: None,
+        emergency_ack_token: None,
     }
 }
 
@@ -90,6 +93,9 @@ pub fn parse_shelfmark_payload(payload: &Value, severity: &str, cfg: &RuntimeCon
         render_panel: None,
         render_instance: String::new(),
         attach_url: None,
+        ntfy_sequence_id: None,
+        emergency_ack_url: None,
+        emergency_ack_token: None,
     }
 }
 

@@ -59,6 +59,9 @@ fn public_get_response(
     headers: &HeaderMap,
 ) -> Option<Response<Body>> {
     match path {
+        _ if path.starts_with("/emergency/") => {
+            Some(super::super::emergency::confirmation(state, path))
+        }
         "/healthz" => Some(text(StatusCode::OK, "OK")),
         "/metrics" => Some(metrics_response(state)),
         "/openapi.yaml" | "/api/openapi.yaml" => Some(openapi::response()),
@@ -114,6 +117,7 @@ async fn config_get_response(state: &AppState, path: &str) -> Option<Response<Bo
     match path {
         "/api/render-config" => Some(render_config_response(state)),
         "/api/cascade-config" => Some(cascade_config_response(state)),
+        "/api/emergency-config" => Some(emergency_config_response(state)),
         "/api/ntfy-topics" => Some(ntfy_topics_response(state)),
         "/api/dedup-config" => Some(noise::response(state).await),
         "/api/delivery-config" => Some(delivery_config_response(state)),
@@ -129,12 +133,25 @@ async fn config_get_response(state: &AppState, path: &str) -> Option<Response<Bo
     }
 }
 
+fn emergency_config_response(state: &AppState) -> Response<Body> {
+    let cfg = state.cfg();
+    json_response(json!({
+        "settings": cfg.emergency,
+        "constraints": {"retry_seconds":{"min":30,"max":3600},"expire_seconds":{"min":30,"max":10800},"max_attempts":{"min":1,"max":50}},
+        "managed_by_environment": std::env::var("KLAXOND_EMERGENCY_ENABLED").is_ok(),
+    }))
+}
+
 async fn observability_get_response(
     state: &AppState,
     path: &str,
     full_path: &str,
 ) -> Option<Response<Body>> {
     match path {
+        "/api/emergencies" => Some(super::super::emergency::list(state, full_path)),
+        _ if path.starts_with("/api/emergencies/") => {
+            Some(super::super::emergency::detail(state, path))
+        }
         "/inhibitions" | "/api/inhibitions" => {
             Some(json_response(inhibition::inhibition_status(state)))
         }

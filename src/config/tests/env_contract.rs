@@ -29,6 +29,47 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
         "CASCADE_ENABLED",
         "TOML [cascade].default_enabled_for_webhook",
     ),
+    ("KLAXOND_EMERGENCY_ENABLED", "TOML [emergency].enabled"),
+    (
+        "KLAXOND_EMERGENCY_SEVERITIES",
+        "TOML [emergency].severities",
+    ),
+    (
+        "KLAXOND_EMERGENCY_RETRY_SECONDS",
+        "TOML [emergency].retry_seconds",
+    ),
+    (
+        "KLAXOND_EMERGENCY_EXPIRE_SECONDS",
+        "TOML [emergency].expire_seconds",
+    ),
+    (
+        "KLAXOND_EMERGENCY_MAX_ATTEMPTS",
+        "TOML [emergency].max_attempts",
+    ),
+    (
+        "KLAXOND_EMERGENCY_LEASE_SECONDS",
+        "TOML [emergency].lease_seconds",
+    ),
+    (
+        "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
+        "TOML [emergency].telegram_after_attempts",
+    ),
+    (
+        "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
+        "TOML [emergency].smtp_after_attempts",
+    ),
+    (
+        "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY",
+        "TOML [emergency].notify_on_expiry",
+    ),
+    (
+        "KLAXOND_EMERGENCY_AUTO_RESOLVE",
+        "TOML [emergency].auto_resolve",
+    ),
+    (
+        "KLAXOND_EMERGENCY_EXCLUDE_SOURCES",
+        "TOML [emergency].exclude_sources",
+    ),
     ("TELEGRAM_BOT_TOKEN", "TOML [telegram].bot_token"),
     ("TELEGRAM_CHAT_ID", "TOML [telegram].chat_id"),
     ("TELEGRAM_API_BASE", "TOML [telegram].api_base"),

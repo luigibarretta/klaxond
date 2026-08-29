@@ -21,6 +21,8 @@ pub enum EndpointMethod {
 pub enum PathPattern {
     Exact(&'static str),
     Prefix(&'static str),
+    EmergencyDetail,
+    EmergencyAction,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +67,8 @@ impl PathPattern {
         match self {
             Self::Exact(exact) => path == exact,
             Self::Prefix(prefix) => path.starts_with(prefix),
+            Self::EmergencyDetail => emergency_segments(path) == 1,
+            Self::EmergencyAction => emergency_segments(path) == 2,
         }
     }
 
@@ -76,9 +80,23 @@ impl PathPattern {
             Self::Prefix("/api/auth/tokens/") => "/api/auth/tokens/{id}",
             Self::Prefix("/api/auth/magic/callback/") => "/api/auth/magic/callback/{token}",
             Self::Prefix("/api/auth/passkey/credentials/") => "/api/auth/passkey/credentials/{id}",
+            Self::Prefix("/api/emergencies/") => "/api/emergencies/{id}",
             Self::Prefix(prefix) => prefix,
+            Self::EmergencyDetail => "/api/emergencies/{id}",
+            Self::EmergencyAction => "/api/emergencies/{id}/{action}",
         }
     }
+}
+
+fn emergency_segments(path: &str) -> usize {
+    path.strip_prefix("/api/emergencies/")
+        .map(|rest| {
+            rest.trim_matches('/')
+                .split('/')
+                .filter(|part| !part.is_empty())
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 pub fn is_public(path: &str) -> bool {

@@ -16,6 +16,9 @@ fn parts(title: &str, body: &str) -> Parts {
         render_panel: None,
         render_instance: String::new(),
         attach_url: None,
+        ntfy_sequence_id: None,
+        emergency_ack_url: None,
+        emergency_ack_token: None,
     }
 }
 

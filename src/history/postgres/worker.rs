@@ -1,7 +1,11 @@
 use super::storage;
 use super::{
     DeliveryEntry, DeliveryPage, RepeatCandidate, RepeatDecision, RepeatState, RuntimeAuthState,
-    auth_state, connect_postgres, postgres_with_retry, repeat, worker_rate_limit, worker_session,
+    auth_state, connect_postgres, emergency, postgres_with_retry, repeat, worker_rate_limit,
+    worker_session,
+};
+use crate::history::{
+    EmergencyAttempt, EmergencyCandidate, EmergencyIncident, EmergencyRegistration,
 };
 use anyhow::{Context, Result, bail};
 use postgres::Client;
@@ -46,6 +50,68 @@ pub(super) enum PostgresCommand {
         state: RuntimeAuthState,
         reply: mpsc::Sender<Result<()>>,
     },
+    EmergencyRegister {
+        candidate: EmergencyCandidate,
+        reply: mpsc::Sender<Result<EmergencyRegistration>>,
+    },
+    EmergencyInitialAttempt {
+        attempt: EmergencyAttempt,
+        reply: mpsc::Sender<Result<()>>,
+    },
+    EmergencyReserve {
+        now: f64,
+        lease_until: f64,
+        token: String,
+        reply: mpsc::Sender<Result<Option<EmergencyIncident>>>,
+    },
+    EmergencyComplete {
+        attempt: EmergencyAttempt,
+        reply: mpsc::Sender<Result<bool>>,
+    },
+    EmergencyTerminalize {
+        receipt: String,
+        state: String,
+        actor: String,
+        now: f64,
+        reply: mpsc::Sender<Result<Option<EmergencyIncident>>>,
+    },
+    EmergencyTerminalizeFingerprint {
+        fingerprint: String,
+        state: String,
+        actor: String,
+        now: f64,
+        reply: mpsc::Sender<Result<Option<EmergencyIncident>>>,
+    },
+    EmergencyExpire {
+        now: f64,
+        limit: usize,
+        reply: mpsc::Sender<Result<Vec<EmergencyIncident>>>,
+    },
+    EmergencyRetry {
+        receipt: String,
+        now: f64,
+        reply: mpsc::Sender<Result<bool>>,
+    },
+    EmergencyGet {
+        receipt: String,
+        reply: mpsc::Sender<Result<Option<EmergencyIncident>>>,
+    },
+    EmergencyPage {
+        state: Option<String>,
+        limit: usize,
+        reply: mpsc::Sender<Result<Vec<EmergencyIncident>>>,
+    },
+    EmergencyExport {
+        reply: mpsc::Sender<Result<Vec<EmergencyIncident>>>,
+    },
+    EmergencyImport {
+        incident: EmergencyIncident,
+        reply: mpsc::Sender<Result<()>>,
+    },
+    EmergencyStats {
+        now: f64,
+        reply: mpsc::Sender<Result<(usize, f64)>>,
+    },
     Session(worker_session::SessionCommand),
     RateLimit(worker_rate_limit::RateLimitCommand),
 }
@@ -85,6 +151,86 @@ impl WorkerContext {
             }
             PostgresCommand::ImportAuthState { state, reply } => {
                 self.import_auth_state(state, reply);
+            }
+            PostgresCommand::EmergencyRegister { candidate, reply } => {
+                let r = self.with_retry(|c| emergency::register(c, &candidate));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyInitialAttempt { attempt, reply } => {
+                let r = self.with_retry(|c| emergency::record_initial_attempt(c, &attempt));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyReserve {
+                now,
+                lease_until,
+                token,
+                reply,
+            } => {
+                let r = self.with_retry(|c| emergency::reserve_due(c, now, lease_until, &token));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyComplete { attempt, reply } => {
+                let r = self.with_retry(|c| emergency::complete_attempt(c, &attempt));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyTerminalize {
+                receipt,
+                state,
+                actor,
+                now,
+                reply,
+            } => {
+                let r =
+                    self.with_retry(|c| emergency::terminalize(c, &receipt, &state, &actor, now));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyTerminalizeFingerprint {
+                fingerprint,
+                state,
+                actor,
+                now,
+                reply,
+            } => {
+                let r = self.with_retry(|c| {
+                    emergency::terminalize_fingerprint(c, &fingerprint, &state, &actor, now)
+                });
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyExpire { now, limit, reply } => {
+                let r = self.with_retry(|c| emergency::expire_due(c, now, limit));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyRetry {
+                receipt,
+                now,
+                reply,
+            } => {
+                let r = self.with_retry(|c| emergency::retry_now(c, &receipt, now));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyGet { receipt, reply } => {
+                let r = self.with_retry(|c| emergency::get(c, &receipt));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyPage {
+                state,
+                limit,
+                reply,
+            } => {
+                let r = self.with_retry(|c| emergency::page(c, state.as_deref(), limit));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyExport { reply } => {
+                let r = self.with_retry(emergency::export_all);
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyImport { incident, reply } => {
+                let r = self.with_retry(|c| emergency::import(c, &incident));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyStats { now, reply } => {
+                let r = self.with_retry(|c| emergency::active_stats(c, now));
+                let _ = reply.send(r);
             }
             PostgresCommand::Session(command) => {
                 worker_session::execute(command, &self.url, self.create_schema, &mut self.client)

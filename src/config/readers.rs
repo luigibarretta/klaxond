@@ -1,7 +1,147 @@
 use super::{
-    DeliveryConfig, DeliveryPolicy, DeliveryRule, HistoryConfig, InhibitionRule, Paths, Schedule,
-    Tier, default_inhibition_rules,
+    DeliveryConfig, DeliveryPolicy, DeliveryRule, EmergencyConfig, HistoryConfig, InhibitionRule,
+    Paths, Schedule, Tier, default_inhibition_rules,
 };
+
+pub(super) fn read_emergency(toml: &toml::Value) -> anyhow::Result<EmergencyConfig> {
+    let defaults = EmergencyConfig::default();
+    let emergency = toml_get(toml, &["emergency"]);
+    let bool_value = |env: &str, key: &str, fallback: bool| -> anyhow::Result<bool> {
+        if let Ok(value) = std::env::var(env) {
+            return match value.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => Ok(true),
+                "0" | "false" | "no" | "off" => Ok(false),
+                _ => anyhow::bail!("{env} must be a boolean"),
+            };
+        }
+        Ok(emergency
+            .and_then(|v| v.get(key))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(fallback))
+    };
+    let u64_value = |env: &str, key: &str, fallback: u64| -> anyhow::Result<u64> {
+        if let Ok(value) = std::env::var(env) {
+            return value
+                .parse::<u64>()
+                .map_err(|_| anyhow::anyhow!("{env} must be an unsigned integer"));
+        }
+        Ok(emergency
+            .and_then(|v| v.get(key))
+            .and_then(toml::Value::as_integer)
+            .and_then(|v| u64::try_from(v).ok())
+            .unwrap_or(fallback))
+    };
+    let list_value = |env: &str, key: &str, fallback: Vec<String>| {
+        std::env::var(env)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .map(|v| {
+                v.split(',')
+                    .map(|s| s.trim().to_ascii_lowercase())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .or_else(|| {
+                emergency
+                    .and_then(|v| v.get(key))
+                    .and_then(toml::Value::as_array)
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(toml::Value::as_str)
+                            .map(|s| s.trim().to_ascii_lowercase())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    })
+            })
+            .unwrap_or(fallback)
+    };
+    let cfg = EmergencyConfig {
+        enabled: bool_value("KLAXOND_EMERGENCY_ENABLED", "enabled", defaults.enabled)?,
+        severities: list_value(
+            "KLAXOND_EMERGENCY_SEVERITIES",
+            "severities",
+            defaults.severities,
+        ),
+        retry_seconds: u64_value(
+            "KLAXOND_EMERGENCY_RETRY_SECONDS",
+            "retry_seconds",
+            defaults.retry_seconds,
+        )?,
+        expire_seconds: u64_value(
+            "KLAXOND_EMERGENCY_EXPIRE_SECONDS",
+            "expire_seconds",
+            defaults.expire_seconds,
+        )?,
+        max_attempts: u32::try_from(u64_value(
+            "KLAXOND_EMERGENCY_MAX_ATTEMPTS",
+            "max_attempts",
+            defaults.max_attempts as u64,
+        )?)
+        .unwrap_or(u32::MAX),
+        lease_seconds: u64_value(
+            "KLAXOND_EMERGENCY_LEASE_SECONDS",
+            "lease_seconds",
+            defaults.lease_seconds,
+        )?,
+        telegram_after_attempts: u32::try_from(u64_value(
+            "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
+            "telegram_after_attempts",
+            defaults.telegram_after_attempts as u64,
+        )?)
+        .unwrap_or(u32::MAX),
+        smtp_after_attempts: u32::try_from(u64_value(
+            "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
+            "smtp_after_attempts",
+            defaults.smtp_after_attempts as u64,
+        )?)
+        .unwrap_or(u32::MAX),
+        notify_on_expiry: bool_value(
+            "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY",
+            "notify_on_expiry",
+            defaults.notify_on_expiry,
+        )?,
+        auto_resolve: bool_value(
+            "KLAXOND_EMERGENCY_AUTO_RESOLVE",
+            "auto_resolve",
+            defaults.auto_resolve,
+        )?,
+        exclude_sources: list_value(
+            "KLAXOND_EMERGENCY_EXCLUDE_SOURCES",
+            "exclude_sources",
+            defaults.exclude_sources,
+        ),
+    };
+    anyhow::ensure!(
+        (30..=3_600).contains(&cfg.retry_seconds),
+        "emergency.retry_seconds must be in 30..=3600"
+    );
+    anyhow::ensure!(
+        (30..=10_800).contains(&cfg.expire_seconds),
+        "emergency.expire_seconds must be in 30..=10800"
+    );
+    anyhow::ensure!(
+        (1..=50).contains(&cfg.max_attempts),
+        "emergency.max_attempts must be in 1..=50"
+    );
+    anyhow::ensure!(
+        (5..=300).contains(&cfg.lease_seconds),
+        "emergency.lease_seconds must be in 5..=300"
+    );
+    anyhow::ensure!(
+        (1..=cfg.max_attempts).contains(&cfg.telegram_after_attempts),
+        "emergency.telegram_after_attempts must be in 1..=max_attempts"
+    );
+    anyhow::ensure!(
+        (1..=cfg.max_attempts).contains(&cfg.smtp_after_attempts),
+        "emergency.smtp_after_attempts must be in 1..=max_attempts"
+    );
+    anyhow::ensure!(
+        !cfg.severities.is_empty(),
+        "emergency.severities cannot be empty"
+    );
+    Ok(cfg)
+}
 use crate::util::toml_get;
 use std::collections::HashMap;
 

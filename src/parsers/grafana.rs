@@ -53,6 +53,9 @@ pub fn parse_grafana_payload(payload: &Value, severity: &str, cfg: &RuntimeConfi
         render_panel,
         render_instance: instance_label.into_owned(),
         attach_url: None,
+        ntfy_sequence_id: None,
+        emergency_ack_url: None,
+        emergency_ack_token: None,
     }
 }
 

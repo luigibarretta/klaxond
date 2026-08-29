@@ -8,6 +8,7 @@ use url::form_urlencoded;
 mod auth_admin;
 mod config_admin;
 mod config_mutations;
+mod emergency;
 mod ingest;
 mod observability;
 mod passkeys;

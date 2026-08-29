@@ -43,6 +43,7 @@ pub(super) fn legacy_ui_redirect(path: &str) -> Option<&'static str> {
         "flow" => "/flow",
         "inhibitions" => "/inhibitions",
         "deliveries" => "/deliveries",
+        "emergencies" => "/emergencies",
         "logs" => "/logs",
         "audit" => "/audit",
         "setup" => "/setup",

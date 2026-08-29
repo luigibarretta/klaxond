@@ -304,6 +304,9 @@ code { background: var(--panel-light); padding: 1px 6px; border-radius: 3px; fon
 .sev-info { color: #3b82f6; }
 .sev-warning { color: var(--yellow); }
 .sev-critical { color: var(--red); font-weight: 600; }
+.sev-active { color: var(--red); font-weight: 700; }
+.sev-acknowledged, .sev-resolved { color: var(--green); }
+.sev-expired, .sev-cancelled { color: var(--muted); }
 .ch-ntfy { color: var(--green); }
 .ch-telegram { color: #06b6d4; }
 .ch-smtp { color: #a855f7; }

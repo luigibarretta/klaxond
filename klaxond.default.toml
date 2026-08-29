@@ -91,6 +91,22 @@ public_url = "http://localhost:8181"
 [acks]
 default_ttl_seconds = 3600
 
+# Durable Pushover-style emergency receipts. Disabled in the portable default;
+# production should enable this explicitly after configuring the public URL and
+# fallback channels. A firing incident repeats until ACK, recovery or expiry.
+[emergency]
+enabled = false
+severities = ["critical"]
+retry_seconds = 60
+expire_seconds = 3600
+max_attempts = 50
+lease_seconds = 60
+telegram_after_attempts = 3
+smtp_after_attempts = 5
+notify_on_expiry = true
+auto_resolve = true
+exclude_sources = ["api-test"]
+
 [paths]
 # Env vars still override these path values. Relative paths are resolved from
 # the directory containing klaxond.toml.

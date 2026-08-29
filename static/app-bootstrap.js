@@ -13,11 +13,12 @@ import { loadAcks, loadInhib, loadInhibRules, loadSchedules } from "./app-inhibi
 import { populateTestComponentSelect, renderRCTable, loadRC } from "./app-render-preview.js";
 import { loadIngestAuth, loadNtfyTopics, loadRouting, renderNtfyTopicsEditor } from "./app-routing.js";
 import { loadCurrentUser, loadConfigBackups, loadStatus } from "./app-status.js";
+import { loadEmergencies } from "./app-emergencies.js";
 
 // ---- Polling ----
 export async function refreshAll() {
   if (isPublicInfoPage()) return;
-  await Promise.all([loadStatus(), loadCurrentUser(), loadInhib(), loadInhibRules(), loadDeliv(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules(), loadAcks()]);
+  await Promise.all([loadStatus(), loadCurrentUser(), loadInhib(), loadInhibRules(), loadDeliv(), loadEmergencies(), loadRC(), loadCascade(), loadRouting(), loadNtfyTopics(), loadDelivery(), loadDedup(), loadAuth(), loadIngestAuth(), loadSchedules(), loadAcks()]);
 }
 document.addEventListener("klaxond:languagechange", () => {
   updateAllTabAccessibleLabels();
@@ -197,5 +198,6 @@ export function startApp() {
     loadStatus();
     loadInhib();
     loadDeliv();
+    loadEmergencies();
   }, 10000);
 }

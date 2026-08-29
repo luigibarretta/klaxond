@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 
+mod emergency;
 mod postgres_rate_limit;
 mod postgres_repeat;
 mod postgres_session;

@@ -3,15 +3,16 @@ use crate::parsers::Parts;
 use crate::state::{AppState, RenderedImage, lock_mutex};
 use crate::util::{now_epoch, token_urlsafe};
 use regex::Regex;
-use serde_json::json;
 use std::collections::HashMap;
 
-mod channels;
+mod audit;
+pub(crate) mod channels;
 mod render;
 mod repeat;
 #[cfg(test)]
 mod tests;
 
+pub use audit::{DeliveryAudit, audit_log_delivery};
 pub use channels::{post_to_ntfy, post_to_smtp, post_to_telegram};
 use channels::{post_to_ntfy_with_config, post_to_smtp_with_config, post_to_telegram_with_config};
 use render::render_alert_image;
@@ -26,6 +27,21 @@ pub async fn deliver(
 ) -> (bool, String) {
     let labels = delivery_labels(severity, labels);
     let cfg = state.cfg();
+    let mut emergency_receipt = None;
+    match crate::emergency::prepare(state, severity, &parts, &labels, source).await {
+        crate::emergency::PrepareResult::Normal => {}
+        crate::emergency::PrepareResult::Duplicate(receipt_id) => {
+            tracing::info!(receipt_id, "coalesced firing into active emergency receipt");
+            return (true, "emergency-coalesced".to_string());
+        }
+        crate::emergency::PrepareResult::Managed {
+            receipt_id,
+            parts: emergency_parts,
+        } => {
+            emergency_receipt = Some(receipt_id);
+            parts = *emergency_parts;
+        }
+    }
     let (policy, reason) = pick_policy(&cfg, &labels);
     tracing::info!(
         "policy picked: {} (mode={}, {} tiers)",
@@ -33,29 +49,56 @@ pub async fn deliver(
         policy.mode,
         policy.tiers.len()
     );
-    let repeat_reservation = match repeat::reserve(
-        state,
-        &cfg,
-        repeat::RepeatRequest {
-            source,
-            severity,
-            parts: &parts,
-            labels: &labels,
-            policy: &policy,
-            with_cascade,
-        },
-    )
-    .await
-    {
-        repeat::RepeatGate::Deliver(reservation) => reservation,
-        repeat::RepeatGate::Suppress => return (true, "repeat-suppressed".to_string()),
+    let repeat_reservation = if emergency_receipt.is_some() {
+        None
+    } else {
+        match repeat::reserve(
+            state,
+            &cfg,
+            repeat::RepeatRequest {
+                source,
+                severity,
+                parts: &parts,
+                labels: &labels,
+                policy: &policy,
+                with_cascade,
+            },
+        )
+        .await
+        {
+            repeat::RepeatGate::Deliver(reservation) => reservation,
+            repeat::RepeatGate::Suppress => return (true, "repeat-suppressed".to_string()),
+        }
     };
 
     attach_rendered_image(state, &cfg, &mut parts).await;
 
     let started = now_epoch();
     let outcome = dispatch_policy(state, &cfg, severity, &parts, policy, with_cascade).await;
-    repeat::complete(state, &cfg, repeat_reservation, outcome.ok);
+    if let Some(receipt_id) = &emergency_receipt {
+        let ntfy_ok = outcome
+            .tier_results
+            .iter()
+            .find(|(tier, _)| tier == "ntfy")
+            .map(|(_, ok)| *ok)
+            .unwrap_or(false);
+        let tier_result = |name: &str| {
+            outcome
+                .tier_results
+                .iter()
+                .find(|(tier, _)| tier == name)
+                .map(|(_, ok)| *ok)
+        };
+        crate::emergency::record_initial_attempt(
+            state,
+            receipt_id,
+            ntfy_ok,
+            tier_result("telegram"),
+            tier_result("smtp"),
+        );
+    } else {
+        repeat::complete(state, &cfg, repeat_reservation, outcome.ok);
+    }
     audit_log_delivery(
         state,
         DeliveryAudit {
@@ -286,76 +329,4 @@ fn matcher_matches(matcher: &HashMap<String, String>, labels: &HashMap<String, S
         }
     }
     true
-}
-
-pub struct DeliveryAudit<'a> {
-    pub severity: &'a str,
-    pub parts: &'a Parts,
-    pub labels: &'a HashMap<String, String>,
-    pub source: &'a str,
-    pub tiers_attempted: &'a [String],
-    pub tier_results: &'a [(String, bool)],
-    pub ok: bool,
-    pub channel: &'a str,
-    pub started_at: f64,
-}
-
-pub fn audit_log_delivery(state: &AppState, audit: DeliveryAudit<'_>) {
-    let ended_at = now_epoch();
-    let component = audit
-        .labels
-        .get("component")
-        .map(String::as_str)
-        .unwrap_or("");
-    let tier_results = audit
-        .tier_results
-        .iter()
-        .map(|(tier, ok)| json!({"tier": tier, "ok": ok}))
-        .collect::<Vec<_>>();
-    let record = json!({
-        "audit": "delivery",
-        "source": audit.source,
-        "severity": audit.severity,
-        "alertname": audit.labels.get("alertname").cloned().unwrap_or_else(|| audit.parts.title.chars().take(120).collect()),
-        "component": audit.labels.get("component").cloned().unwrap_or_default(),
-        "host": audit.labels.get("host").or_else(|| audit.labels.get("instance_name")).cloned().unwrap_or_default(),
-        "title": audit.parts.title.chars().take(200).collect::<String>(),
-        "tiers_attempted": audit.tiers_attempted,
-        "tier_results": tier_results,
-        "ok": audit.ok,
-        "channel": audit.channel,
-        "duration_ms": ((ended_at - audit.started_at) * 1000.0) as i64,
-        "timestamp": (ended_at * 1000.0) as i64,
-    });
-    tracing::info!("AUDIT {}", record);
-    state.log_delivery(
-        audit.source,
-        audit.severity,
-        &audit.parts.title,
-        audit.channel,
-        "",
-    );
-    state.metric_inc(
-        "klaxond_deliveries_total",
-        &[
-            ("source", audit.source),
-            ("severity", audit.severity),
-            ("channel", audit.channel),
-            ("ok", if audit.ok { "1" } else { "0" }),
-        ],
-        1,
-    );
-    for (tier, ok) in audit.tier_results {
-        state.metric_inc(
-            "klaxond_delivery_tier_attempts_total",
-            &[
-                ("source", audit.source),
-                ("severity", audit.severity),
-                ("tier", tier.as_str()),
-                ("ok", if *ok { "1" } else { "0" }),
-                ("component", component),
-            ],
-            1,
-        );
-    }
 }

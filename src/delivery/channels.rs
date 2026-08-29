@@ -16,7 +16,7 @@ pub async fn post_to_ntfy(state: &AppState, severity: &str, parts: &Parts, timeo
     post_to_ntfy_with_config(state, &cfg, severity, parts, timeout_s).await
 }
 
-pub(super) async fn post_to_ntfy_with_config(
+pub(crate) async fn post_to_ntfy_with_config(
     state: &AppState,
     cfg: &RuntimeConfig,
     severity: &str,
@@ -66,6 +66,17 @@ pub(super) async fn post_to_ntfy_with_config(
                 .join("; "),
         )
     };
+    let emergency_action = match (&parts.emergency_ack_url, &parts.emergency_ack_token) {
+        (Some(url), Some(token)) if !url.is_empty() && !token.is_empty() => Some(format!(
+            "http, Acknowledge, {url}, method=POST, headers.X-Klaxond-Emergency-Token={token}, clear=true"
+        )),
+        _ => None,
+    };
+    let actions_header = match (emergency_action, actions_header) {
+        (Some(emergency), Some(existing)) => Some(format!("{emergency}; {existing}")),
+        (Some(emergency), None) => Some(emergency),
+        (None, existing) => existing,
+    };
     let mut any_ok = false;
     for topic in topics {
         if topic.token.is_empty() {
@@ -84,6 +95,9 @@ pub(super) async fn post_to_ntfy_with_config(
             .body(parts.body.clone());
         if let Some(actions) = &actions_header {
             req = req.header("Actions", actions);
+        }
+        if let Some(sequence_id) = &parts.ntfy_sequence_id {
+            req = req.header("X-Sequence-ID", sequence_id);
         }
         if let Some(attach) = &parts.attach_url {
             req = req.header("Attach", attach);
@@ -107,7 +121,7 @@ pub async fn post_to_telegram(
     post_to_telegram_with_config(state, &cfg, severity, parts, timeout_s).await
 }
 
-pub(super) async fn post_to_telegram_with_config(
+pub(crate) async fn post_to_telegram_with_config(
     state: &AppState,
     cfg: &RuntimeConfig,
     severity: &str,
@@ -168,7 +182,7 @@ pub async fn post_to_smtp(state: &AppState, severity: &str, parts: &Parts, timeo
     post_to_smtp_with_config(&cfg, severity, parts, timeout_s).await
 }
 
-pub(super) async fn post_to_smtp_with_config(
+pub(crate) async fn post_to_smtp_with_config(
     cfg: &RuntimeConfig,
     severity: &str,
     parts: &Parts,

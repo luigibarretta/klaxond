@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 pub(super) mod auth_state;
+pub(super) mod emergency;
 pub(super) mod rate_limit;
 pub(super) mod repeat;
 pub(super) mod session;
@@ -132,6 +133,37 @@ CREATE TABLE IF NOT EXISTS klaxond_auth_rate_limits (
 
 CREATE INDEX IF NOT EXISTS idx_klaxond_auth_rate_limits_updated
   ON klaxond_auth_rate_limits(updated_at);
+
+CREATE TABLE IF NOT EXISTS klaxond_emergencies (
+  receipt_id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  state TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  next_retry_at REAL NOT NULL,
+  expires_at REAL NOT NULL,
+  last_sent_at REAL,
+  terminal_at REAL,
+  terminal_by TEXT NOT NULL DEFAULT '',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL,
+  telegram_escalated_at REAL,
+  smtp_escalated_at REAL,
+  last_error TEXT NOT NULL DEFAULT '',
+  reserved_until REAL NOT NULL DEFAULT 0,
+  reservation_token TEXT NOT NULL DEFAULT ''
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_klaxond_emergencies_active_fingerprint
+  ON klaxond_emergencies(fingerprint) WHERE state='active';
+CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_due
+  ON klaxond_emergencies(state,next_retry_at,reserved_until);
+CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_created
+  ON klaxond_emergencies(created_at DESC);
 "#,
     )?;
     if !sqlite_column_exists(conn, "klaxond_auth_sessions", "family_hash")? {

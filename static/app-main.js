@@ -11,6 +11,7 @@ import { loadRC } from "./app-render-preview.js";
 import { loadIngestAuth, loadNtfyTopics } from "./app-routing.js";
 import { loadSetup, runPolicySimulation } from "./app-setup-simulator.js";
 import { loadStatus, setTabBadge } from "./app-status.js";
+import { loadEmergencies } from "./app-emergencies.js";
 import { startApp } from "./app-bootstrap.js";
 
 setTabActivationHandlers({
@@ -18,6 +19,7 @@ setTabActivationHandlers({
   status: () => loadStatus(),
   auth: () => loadAuth(),
   deliveries: () => loadDeliv(),
+  emergencies: () => loadEmergencies(),
   routing: () => { loadNtfyTopics(); loadIngestAuth(); },
   render: () => loadRC(),
   cascade: () => loadCascade(),

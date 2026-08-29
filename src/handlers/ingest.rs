@@ -84,6 +84,8 @@ pub(super) async fn ingest(
     .await;
     if channel == "repeat-suppressed" {
         text(StatusCode::OK, "suppressed duplicate (repeat cooldown)")
+    } else if channel == "emergency-coalesced" {
+        text(StatusCode::OK, "coalesced into active emergency receipt")
     } else if ok {
         text(StatusCode::OK, &format!("delivered via {channel}"))
     } else {
@@ -153,6 +155,9 @@ pub(super) async fn api_test(state: &AppState, path: &str, body: Bytes) -> Respo
                 render_panel: None,
                 render_instance: String::new(),
                 attach_url: None,
+                ntfy_sequence_id: None,
+                emergency_ack_url: None,
+                emergency_ack_token: None,
             },
             HashMap::new(),
         )

@@ -7,6 +7,27 @@ use std::collections::HashMap;
 
 pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> {
     let uptime = state.started.elapsed().as_secs();
+    for operation in [
+        "register",
+        "initial-attempt",
+        "expire",
+        "reserve",
+        "complete",
+        "resolve",
+        "acknowledge",
+        "cancel",
+        "retry",
+        "list",
+        "get",
+        "active-stats",
+        "invalid-payload",
+    ] {
+        state.metric_inc(
+            "klaxond_emergency_storage_errors_total",
+            &[("operation", operation)],
+            0,
+        );
+    }
     state.metric_set(
         "klaxond_suppressions_active",
         &[],
@@ -20,6 +41,14 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
                 d.queues.get(*src).map(|q| q.len()).unwrap_or(0) as f64,
             );
         }
+    }
+    if let Ok((active, oldest_age)) = crate::emergency::active_stats(state) {
+        state.metric_set("klaxond_emergencies_active", &[], active as f64);
+        state.metric_set(
+            "klaxond_emergency_oldest_active_age_seconds",
+            &[],
+            oldest_age,
+        );
     }
     let mut lines = vec![
         "# HELP klaxond_info Static info (version, etc).".to_string(),
@@ -67,6 +96,22 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
                 "klaxond_repeat_suppression_errors_total",
                 "Repeat-suppression persistence errors; delivery fails open.",
             ),
+            (
+                "klaxond_emergency_incidents_total",
+                "Emergency receipts created or coalesced.",
+            ),
+            (
+                "klaxond_emergency_transitions_total",
+                "Durable emergency state transitions.",
+            ),
+            (
+                "klaxond_emergency_attempts_total",
+                "Emergency delivery attempts by channel and outcome.",
+            ),
+            (
+                "klaxond_emergency_storage_errors_total",
+                "Emergency persistence operation failures.",
+            ),
         ]),
     );
     let gauges = lock_mutex(&state.metrics.gauges, "metrics gauges");
@@ -86,6 +131,18 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
             (
                 "klaxond_dedup_pending",
                 "Events pending in the dedup buffer per source.",
+            ),
+            (
+                "klaxond_emergencies_active",
+                "Emergency receipts currently awaiting acknowledgement.",
+            ),
+            (
+                "klaxond_emergency_oldest_active_age_seconds",
+                "Age of the oldest active emergency receipt.",
+            ),
+            (
+                "klaxond_emergency_last_ack_latency_seconds",
+                "Acknowledgement latency of the last acknowledged emergency.",
             ),
         ]),
     );

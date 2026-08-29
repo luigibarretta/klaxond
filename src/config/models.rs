@@ -26,6 +26,39 @@ pub struct HistoryConfig {
     pub default_limit: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmergencyConfig {
+    pub enabled: bool,
+    pub severities: Vec<String>,
+    pub retry_seconds: u64,
+    pub expire_seconds: u64,
+    pub max_attempts: u32,
+    pub lease_seconds: u64,
+    pub telegram_after_attempts: u32,
+    pub smtp_after_attempts: u32,
+    pub notify_on_expiry: bool,
+    pub auto_resolve: bool,
+    pub exclude_sources: Vec<String>,
+}
+
+impl Default for EmergencyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            severities: vec!["critical".to_string()],
+            retry_seconds: 60,
+            expire_seconds: 3_600,
+            max_attempts: 50,
+            lease_seconds: 60,
+            telegram_after_attempts: 3,
+            smtp_after_attempts: 5,
+            notify_on_expiry: true,
+            auto_resolve: true,
+            exclude_sources: vec!["api-test".to_string()],
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub toml: toml::Value,
@@ -46,6 +79,7 @@ pub struct RuntimeConfig {
     pub auth: AuthConfig,
     pub schedules: Vec<Schedule>,
     pub history: HistoryConfig,
+    pub emergency: EmergencyConfig,
     pub tg_chat: String,
     pub smtp_host: String,
     pub smtp_port: u16,

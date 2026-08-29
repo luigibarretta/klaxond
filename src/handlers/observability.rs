@@ -21,6 +21,9 @@ pub(super) use setup::setup_status_payload;
 
 pub(super) async fn status_payload(state: &AppState) -> Value {
     let cfg = state.cfg();
+    let emergency_stats = crate::emergency::active_stats(state);
+    let emergency_storage_ok = emergency_stats.is_ok();
+    let (emergency_active, emergency_oldest_age_seconds) = emergency_stats.unwrap_or((0, 0.0));
     json!({
         "version": crate::config::VERSION,
         "cascade_enabled_runtime": state.cascade_runtime_enabled.load(Ordering::Relaxed),
@@ -30,6 +33,15 @@ pub(super) async fn status_payload(state: &AppState) -> Value {
         "smtp_host": cfg.smtp_host,
         "telegram_configured": !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
         "logs": log_buffer::stats_global(),
+        "emergency": {
+            "enabled": cfg.emergency.enabled,
+            "storage_ok": emergency_storage_ok,
+            "active": emergency_active,
+            "oldest_active_age_seconds": emergency_oldest_age_seconds,
+            "retry_seconds": cfg.emergency.retry_seconds,
+            "expire_seconds": cfg.emergency.expire_seconds,
+            "max_attempts": cfg.emergency.max_attempts,
+        },
     })
 }
 

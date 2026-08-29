@@ -28,6 +28,7 @@ async fn main() -> Result<()> {
     klaxond::auth::warm_oidc_provider(&state).await;
     klaxond::dedup::restore_pending(&state).await;
     spawn_scheduler(state.clone());
+    spawn_emergency_scheduler(state.clone());
     spawn_shutdown_flush(state.clone());
     klaxond::auth::spawn_oidc_provider_refresh(state.clone());
 
@@ -59,6 +60,15 @@ async fn main() -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+fn spawn_emergency_scheduler(state: AppState) {
+    tokio::spawn(async move {
+        loop {
+            klaxond::emergency::scheduler_tick(&state).await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
+    });
 }
 
 fn spawn_scheduler(state: AppState) {

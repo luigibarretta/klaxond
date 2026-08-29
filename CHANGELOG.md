@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.15.0 — 2026-08-29
+
+- Add durable emergency receipts for critical incidents: repeat ntfy delivery
+  until a signed acknowledgement, source recovery, expiry or the bounded
+  attempt cap, with atomic SQLite/PostgreSQL leases across restarts and replicas.
+- Add cross-device one-tap ntfy acknowledgement, a confirmation page for
+  Telegram/SMTP, stable ntfy sequence IDs, automatic recovery closure and
+  idempotent audited admin actions for acknowledge, retry and cancel.
+- Escalate unacknowledged emergencies once to Telegram and SMTP at configurable
+  attempt thresholds, retain escalation state, and expose emergency health,
+  latency, transition and storage metrics.
+- Add the Emergencies operations page, OpenAPI contracts, compose/TOML parity,
+  environment validation and storage-migration coverage. Portable deployments
+  remain opt-in; production can enable the feature declaratively.
+
 ## 0.14.40 — 2026-08-19
 
 - Render a Healthchecks notification's observation timestamp separately from

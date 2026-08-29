@@ -105,7 +105,7 @@ export function applyReadOnlyViewerMode(user = {}) {
     "#ntfy-topics-save", "#btn-routing-save", "#btn-cas-add", "#btn-cas-save",
     "#btn-pol-add", "#btn-rule-add", "#btn-delivery-save", "[data-dedup-save]", "#auth-save",
     "#token-create", "#passkey-register", "#totp-start", "#totp-enable", "#totp-disable", "#btn-preview", "#inhib-test-run", "#btn-test-fire",
-    "button.danger", "[data-clear-suppression]", "[data-clear-ack]", "[data-del]", "[data-revoke]", "[data-passkey-del]", "button[data-act]"
+    "button.danger", "[data-clear-suppression]", "[data-clear-ack]", "[data-del]", "[data-revoke]", "[data-passkey-del]", "button[data-act]", "button[data-emergency-action]"
   ];
   document.querySelectorAll(writeSelectors.join(",")).forEach(el => {
     const dirtyTab = el.dataset.enableWhenDirty;

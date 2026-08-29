@@ -19,6 +19,9 @@ pub fn migrate_between(src: &HistoryConfig, dst: &HistoryConfig) -> Result<usize
     for state in src.export_repeat_states()? {
         dst.import_repeat_state(&state)?;
     }
+    for incident in src.export_emergencies()? {
+        dst.import_emergency(&incident)?;
+    }
     copy_runtime_auth_state(&src, &dst)?;
     Ok(copied)
 }
@@ -54,7 +57,9 @@ pub fn run_migrate_cli(args: &[String]) -> Result<()> {
     let src = config_from_spec(&src_backend, &src_url, retention)?;
     let dst = config_from_spec(&dst_backend, &dst_url, retention)?;
     let copied = migrate_between(&src, &dst)?;
-    println!("migrated {copied} delivery history rows and associated runtime state");
+    println!(
+        "migrated {copied} delivery history rows, emergency receipts and associated runtime state"
+    );
     Ok(())
 }
 

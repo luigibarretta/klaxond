@@ -10,7 +10,7 @@ instead of inventing source-specific payloads.
 ┌──────────────┐   ┌────────┐                            ┌──────────────────────────┐
 │ Alertmanager │ ──┤        ├──→  POST /webhook/<sev> ──→│                          │
 └──────────────┘   │ klaxond │                            │   render → cascade tiers │
-┌──────────────┐   │        │                            │   1. ntfy       (5s)     │
+┌──────────────┐   │        │                            │   1. ntfy       (15s)    │
 │   Beszel     │ ──┤        ├──→  POST /beszel/<sev>  ──→│   2. Telegram   (8s)     │
 └──────────────┘   └────────┘                            │   3. Gmail SMTP (10s)    │
                                                          └──────────────────────────┘
@@ -26,6 +26,9 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 
 - **Multiple webhook formats**: Grafana Alertmanager, Beszel, Healthchecks, WUD, Authentik, Shelfmark, Prowlarr and Decypharr.
 - **3-tier cascade fallback** — ntfy → Telegram → SMTP. Always on for Beszel, gated for Grafana.
+- **Durable emergency delivery** — selected severities repeat until a signed
+  acknowledgement, source recovery or bounded expiry, with cross-device state,
+  restart-safe SQLite/PostgreSQL receipts and staged Telegram/SMTP escalation.
 - **Rich ntfy push rendering**: severity emoji in title (RFC 2047 base64-encoded for non-ASCII), priority + tag mapping, up to 2 action buttons via `component` label → dashboard URL.
 - **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
 - **Full settings export/import**: TOML plus sidecar JSON files, import preview, automatic pre-restore backup and validated restore.
@@ -138,6 +141,10 @@ complete route list, schemas, auth requirements and response contracts.
 | `POST` | `/api/dedup-config` | Persist per-source notification noise controls |
 | `GET` | `/api/inhibitions` | Active in-memory suppressions with TTL |
 | `GET` | `/api/deliveries` | Persistent delivery history; add `limit`/`offset` for the paginated shape |
+| `GET` | `/api/emergencies` | Durable emergency receipts, filterable by state |
+| `GET` | `/api/emergencies/<id>` | Receipt state, attempts, deadlines and escalation history |
+| `POST` | `/api/emergencies/<id>/<ack\|retry\|cancel>` | Audited lifecycle action; local browser sessions require recent reauthentication |
+| `POST` | `/api/emergency/<id>/ack` | Signed one-tap ntfy acknowledgement using a request header token |
 | `GET` | `/api/logs` | Runtime/backend/frontend log buffer with keyword, level and pagination filters |
 | `GET` | `/api/audit` | Security/configuration audit ring buffer with keyword and pagination filters |
 | `GET` | `/api/auth/me` | Current authenticated user, auth mode, scopes and browser CSRF token |
@@ -190,6 +197,11 @@ The endpoint includes:
 - `klaxond_dedup_buffered_total{source}` and `klaxond_dedup_flushed_total{source}`
 - `klaxond_repeat_suppressed_total{source,severity,reason}`
 - `klaxond_repeat_suppression_errors_total{operation,backend}`
+- `klaxond_emergencies_active`
+- `klaxond_emergency_oldest_active_age_seconds`
+- `klaxond_emergency_last_ack_latency_seconds`
+- `klaxond_emergency_incidents_total{outcome}` and `klaxond_emergency_transitions_total{transition}`
+- `klaxond_emergency_attempts_total{channel,ok}` and `klaxond_emergency_storage_errors_total{operation}`
 
 Import [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) into Grafana and select your Prometheus datasource.
 
@@ -259,7 +271,7 @@ klaxond history-migrate \
   --to sqlite --to-url /data/klaxond.db
 ```
 
-The storage migration copies delivery history, repeat-suppression state,
+The storage migration copies delivery history, emergency receipts, repeat-suppression state,
 persistent browser sessions, consumed OIDC logout-token identifiers and active
 authentication lockouts.
 Stop writes to the source instance before running an explicit cross-backend
@@ -268,6 +280,40 @@ imports merge revocations, logout replay records and lockouts monotonically, but
 the command is not a live active/active replication mechanism. An in-process
 history-backend switch preserves runtime auth state under an exclusive cutover
 guard so the current browser session is not invalidated.
+
+### Emergency delivery
+
+Emergency mode is disabled by default in the portable image. When enabled,
+Klaxond creates one active receipt per stable source/alert/host/component
+fingerprint. Further firings coalesce into that receipt, while a background
+scheduler repeats ntfy with a stable sequence ID. A signed POST action in the
+push acknowledges the receipt without exposing an admin session; Telegram and
+SMTP carry a signed confirmation link. Recovery from the original source closes
+the receipt automatically.
+
+```toml
+[emergency]
+enabled = true
+severities = ["critical"]
+retry_seconds = 60
+expire_seconds = 3600
+max_attempts = 50
+lease_seconds = 60
+telegram_after_attempts = 3
+smtp_after_attempts = 5
+notify_on_expiry = true
+auto_resolve = true
+exclude_sources = ["api-test"]
+```
+
+The equivalent compose variables use the `KLAXOND_EMERGENCY_` prefix. Bounds
+match the emergency-delivery contract: retry 30–3600 seconds, expiry 30–10800
+seconds and at most 50 attempts. SQLite is appropriate for one backend;
+PostgreSQL provides `SKIP LOCKED` reservation for multiple schedulers. A lease
+can allow one already in-flight HTTP request to finish while an ACK arrives,
+but the terminal transition prevents every later retry. ntfy sequence updates
+replace or clear repeated notifications on Android and web; clients without
+sequence-update support still stop receiving new retries after ACK.
 
 ### Routing + policy — `klaxond.toml`
 

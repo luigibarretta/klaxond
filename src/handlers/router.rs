@@ -131,6 +131,15 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
     } = req;
     let body_len = body.len();
     let resp = match path {
+        _ if path.starts_with("/api/emergency/") && path.ends_with("/ack") => {
+            super::emergency::ntfy_ack(state, path, headers).await
+        }
+        _ if path.starts_with("/emergency/") => {
+            super::emergency::confirmation_ack(state, path).await
+        }
+        _ if path.starts_with("/api/emergencies/") => {
+            super::emergency::admin_action(state, path, authed_user.as_ref()).await
+        }
         "/api/auth/local/login" => auth::local_login(state, headers, peer, body).await,
         "/api/auth/reauth" => auth::sudo(state, headers, peer, body, authed_user.as_ref()).await,
         "/api/auth/magic/request" => auth::magic_link_request(state, headers, peer, body),

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::{Mutex, MutexGuard};
 
+pub mod emergency;
+mod emergency_store;
 mod migration;
 mod postgres;
 mod rate_limit;
@@ -14,6 +16,10 @@ mod sqlite;
 #[cfg(test)]
 mod tests;
 
+pub use emergency::{
+    EmergencyAttempt, EmergencyCandidate, EmergencyIncident, EmergencyPayload,
+    EmergencyRegistration,
+};
 pub(crate) use migration::snapshot_runtime_auth_state;
 pub use migration::{migrate_between, run_migrate_cli};
 use postgres::PostgresWorker;
@@ -27,7 +33,7 @@ use sqlite::{
     sqlite_page, sqlite_prune, validate_sqlite_schema,
 };
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeliveryEntry {

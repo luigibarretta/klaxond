@@ -59,6 +59,32 @@ async fn ntfy_dispatch_uses_the_reserved_config_snapshot() {
 }
 
 #[tokio::test]
+async fn ntfy_emergency_uses_sequence_id_and_one_tap_post_action() {
+    let (_tmp, state) = test_state();
+    let (base, request_rx) = spawn_http_once(http_response("text/plain", b"ok")).await;
+    let mut cfg = state.cfg();
+    cfg.ntfy_url = base;
+    cfg.ntfy_topics = vec![NtfyTopic {
+        name: "critical-topic".into(),
+        token: "secret-token".into(),
+        handles: vec!["critical".into()],
+    }];
+    let mut parts = sample_parts();
+    parts.ntfy_sequence_id = Some("klaxond-emergency-receipt".into());
+    parts.emergency_ack_url = Some("https://klaxond.test/api/emergency/receipt/ack".into());
+    parts.emergency_ack_token = Some("signed-token".into());
+
+    assert!(post_to_ntfy_with_config(&state, &cfg, "critical", &parts, 2).await);
+    let request = request_rx.await.unwrap();
+    let lower = request.to_ascii_lowercase();
+    assert!(lower.contains("x-sequence-id: klaxond-emergency-receipt"));
+    assert!(lower.contains("actions: http, acknowledge"));
+    assert!(lower.contains("method=post"));
+    assert!(lower.contains("headers.x-klaxond-emergency-token=signed-token"));
+    assert!(lower.contains("clear=true"));
+}
+
+#[tokio::test]
 async fn telegram_posts_to_fake_server_without_real_api() {
     let (_tmp, state) = test_state();
     let (base, request_rx) =

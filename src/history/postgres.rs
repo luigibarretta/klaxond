@@ -6,12 +6,14 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 mod auth_state;
+mod emergency;
 mod rate_limit;
 mod repeat;
 mod session;
 mod session_locks;
 mod storage;
 mod worker;
+mod worker_emergency;
 mod worker_rate_limit;
 mod worker_repeat;
 mod worker_session;

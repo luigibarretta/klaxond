@@ -19,6 +19,7 @@ const UI_ROUTE_TO_TAB = new Map([
   ["flow", "flow"],
   ["inhibitions", "inhibitions"],
   ["deliveries", "deliveries"],
+  ["emergencies", "emergencies"],
   ["logs", "logs"],
   ["audit", "audit"],
   ["setup", "setup"],

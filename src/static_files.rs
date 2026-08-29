@@ -12,6 +12,7 @@ const UI_TABS: &[&str] = &[
     "flow",
     "inhibitions",
     "deliveries",
+    "emergencies",
     "logs",
     "audit",
     "setup",

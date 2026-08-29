@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.14.40
+  version: 0.15.0
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -1112,6 +1112,108 @@ paths:
                   - $ref: "#/components/schemas/PaginatedDeliveries"
         "4XX":
           $ref: "#/components/responses/ClientError"
+  /emergency/{token}:
+    get:
+      tags: [Public]
+      operationId: confirmEmergencyAck
+      summary: Render the signed emergency acknowledgement confirmation page.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Confirmation HTML. }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    post:
+      tags: [Public]
+      operationId: submitEmergencyAck
+      summary: Acknowledge an emergency from the signed confirmation page.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Emergency acknowledged and retries stopped. }
+        "409": { description: Receipt was already terminal. }
+  /api/emergency/{id}/ack:
+    post:
+      tags: [Public]
+      operationId: acknowledgeEmergencyFromNtfy
+      summary: One-tap ntfy action that acknowledges a receipt using a signed header token.
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: X-Klaxond-Emergency-Token
+          in: header
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/OkJson" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { description: Receipt was already terminal. }
+  /api/emergencies:
+    get:
+      tags: [Operations]
+      operationId: listEmergencies
+      summary: List durable emergency receipts and their current state.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - name: state
+          in: query
+          schema: { type: string, enum: [all, active, acknowledged, resolved, expired, cancelled] }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+      responses:
+        "200": { description: Emergency receipt list. }
+        "4XX": { $ref: "#/components/responses/ClientError" }
+  /api/emergencies/{id}:
+    get:
+      tags: [Operations]
+      operationId: getEmergency
+      summary: Return one durable emergency receipt.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Emergency receipt. }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /api/emergencies/{id}/{action}:
+    post:
+      tags: [Operations]
+      operationId: transitionEmergency
+      summary: Acknowledge, cancel or immediately retry an emergency receipt.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+          csrfHeader: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: action
+          in: path
+          required: true
+          schema: { type: string, enum: [ack, cancel, retry] }
+      responses:
+        "200": { $ref: "#/components/responses/OkJson" }
+        "409": { description: Receipt is not active. }
+        "428": { $ref: "#/components/responses/ReauthRequired" }
   /api/auth/config:
     get:
       tags: [Auth]
@@ -1640,6 +1742,19 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "428":
           $ref: "#/components/responses/ReauthRequired"
+  /api/emergency-config:
+    get:
+      tags: [Routing]
+      operationId: getEmergencyConfig
+      summary: Return effective emergency retry, expiry and escalation policy.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Effective emergency configuration and validation constraints.
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/cascade/toggle:
     post:
       tags: [Routing]

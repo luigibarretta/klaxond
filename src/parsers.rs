@@ -38,6 +38,12 @@ pub struct Parts {
     pub render_instance: String,
     #[serde(default)]
     pub attach_url: Option<String>,
+    #[serde(default)]
+    pub ntfy_sequence_id: Option<String>,
+    #[serde(default)]
+    pub emergency_ack_url: Option<String>,
+    #[serde(default)]
+    pub emergency_ack_token: Option<String>,
 }
 
 impl Parts {

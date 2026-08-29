@@ -27,6 +27,9 @@ pub fn parse_prowlarr_payload(payload: &Value, severity: &str, cfg: &RuntimeConf
         render_panel: None,
         render_instance: String::new(),
         attach_url: None,
+        ntfy_sequence_id: None,
+        emergency_ack_url: None,
+        emergency_ack_token: None,
     }
 }
 
