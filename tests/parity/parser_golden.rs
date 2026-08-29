@@ -178,7 +178,7 @@ fn wud_batch_parser_matches_python_golden() {
     );
     assert_eq!(
         parts.actions[0],
-        ["view", "📦 Open WUD", "http://192.168.50.110:3033/"]
+        ["view", "📦 Open WUD", "https://wud.example.test"]
     );
     assert!(parts.skip_snooze);
 }

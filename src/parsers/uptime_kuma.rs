@@ -3,9 +3,6 @@ use crate::config::RuntimeConfig;
 use serde_json::Value;
 use url::Url;
 
-const KUMA_URL: &str = "https://uptime.luigibarretta.com/dashboard";
-const POWER_DASHBOARD_URL: &str = "https://grafana.luigibarretta.com/d/ups-ecoflow-overview";
-
 pub fn parse_uptime_kuma_payload(
     payload: &Value,
     route_severity: &str,
@@ -92,16 +89,25 @@ pub fn parse_uptime_kuma_payload(
     } else {
         cfg.priority(&severity)
     };
+    let mut actions = Vec::new();
+    if let Some(url) = cfg.source_url("uptime-kuma") {
+        actions.push(action("view", "📈 Open Uptime Kuma", url));
+    }
+    if let Some([_, target]) = cfg.component_dashboards.get("ups") {
+        let url = if target.starts_with("http://") || target.starts_with("https://") {
+            target.clone()
+        } else {
+            format!("{}{}", cfg.grafana_base, target)
+        };
+        actions.push(action("view", "🔋 Power & UPS", &url));
+    }
     (
         severity,
         Parts {
             title,
             body: body.join("\n"),
             tags,
-            actions: vec![
-                action("view", "📈 Open Uptime Kuma", KUMA_URL),
-                action("view", "🔋 Power & UPS", POWER_DASHBOARD_URL),
-            ],
+            actions,
             priority,
             alertname: format!("uptime-kuma-{name}"),
             skip_snooze: status == Some(1),

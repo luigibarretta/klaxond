@@ -5,6 +5,12 @@ use url::Url;
 const EMERGENCY_LEASE_MARGIN_SECONDS: u64 = 5;
 
 pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
+    validate_http_url("render.grafana_base", &cfg.grafana_base, true, true)?;
+    for (source, value) in &cfg.source_urls {
+        if !value.trim().is_empty() {
+            validate_http_url(&format!("render.source_urls.{source}"), value, true, false)?;
+        }
+    }
     if !cfg.emergency.enabled {
         return Ok(());
     }

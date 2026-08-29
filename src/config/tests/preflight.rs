@@ -133,3 +133,25 @@ fn emergency_preflight_rejects_lease_shorter_than_channel_budget() {
     let error = load_runtime_config(&paths).unwrap_err().to_string();
     assert!(error.contains("emergency.lease_seconds must be at least"));
 }
+
+#[test]
+fn portable_preflight_rejects_credential_bearing_source_url() {
+    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    clear_runtime_env();
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    fs::write(
+        &paths.config,
+        r#"
+[render]
+grafana_base = "https://grafana.example.test"
+
+[render.source_urls]
+pve = "https://admin:secret@proxmox.example.test/"
+"#,
+    )
+    .unwrap();
+
+    let error = load_runtime_config(&paths).unwrap_err().to_string();
+    assert!(error.contains("render.source_urls.pve must not contain credentials"));
+}

@@ -15,7 +15,7 @@ func TestApplicationEventContract(t *testing.T) {
 		Body:       "The indexer timed out.",
 		OccurredAt: time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC),
 		DedupKey:   "indexer:example",
-		Labels:     map[string]string{"host": "it1-prd-nas-01"},
+		Labels:     map[string]string{"host": "storage-01"},
 	}
 	payload := event.AlertmanagerPayload("lampo")
 

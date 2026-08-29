@@ -177,20 +177,19 @@ fn healthcheck_actions(payload: &Value, cfg: &RuntimeConfig) -> Vec<super::Actio
     if !runbook.is_empty() {
         actions.push(action("view", "📖 Runbook", &runbook));
     }
-    actions.push(healthcheck_open_action(payload));
+    if let Some(open) = healthcheck_open_action(payload, cfg) {
+        actions.push(open);
+    }
     actions
 }
 
-fn healthcheck_open_action(payload: &Value) -> super::Action {
+fn healthcheck_open_action(payload: &Value, cfg: &RuntimeConfig) -> Option<super::Action> {
     let url = json_get_str(payload, "url");
-    if url.is_empty() {
-        return action(
-            "view",
-            "📊 Open Healthchecks",
-            "https://hc.luigibarretta.com/projects/",
-        );
+    if !url.is_empty() {
+        return Some(action("view", "📊 Open in HC", url));
     }
-    action("view", "📊 Open in HC", url)
+    cfg.source_url("healthchecks")
+        .map(|url| action("view", "📊 Open Healthchecks", url))
 }
 
 fn source_icon(severity: &str, cfg: &RuntimeConfig, is_resolved: bool) -> String {
@@ -252,11 +251,9 @@ pub fn parse_pve_payload(payload: &Value, severity: &str, cfg: &RuntimeConfig) -
     if let Some(rb) = cfg.fallback_runbooks.get("pve").filter(|s| !s.is_empty()) {
         actions.push(action("view", "📖 Runbook", rb));
     }
-    actions.push(action(
-        "view",
-        "🖥 Open Proxmox",
-        "https://proxmox.luigibarretta.com/",
-    ));
+    if let Some(url) = cfg.source_url("pve") {
+        actions.push(action("view", "🖥 Open Proxmox", url));
+    }
     Parts {
         title: format!("{} PVE {node}: {title_raw}", cfg.icon(severity)),
         body: if body_parts.is_empty() {

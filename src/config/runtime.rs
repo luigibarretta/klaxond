@@ -21,6 +21,7 @@ struct RenderRuntime {
     icons: HashMap<String, String>,
     tag_prefixes: HashMap<String, String>,
     fallback_runbooks: HashMap<String, String>,
+    source_urls: HashMap<String, String>,
     component_dashboards: HashMap<String, [String; 2]>,
     component_image: HashMap<String, (String, Option<u64>)>,
     grafana_base: String,
@@ -96,12 +97,29 @@ fn load_render(paths: &Paths, toml: &toml::Value) -> Result<RenderRuntime> {
         &mut fallback_runbooks,
         toml_get(toml, &["render", "fallback_runbooks"]),
     );
+    let mut source_urls = HashMap::new();
+    merge_string_map(&mut source_urls, toml_get(toml, &["render", "source_urls"]));
+    for (source, env) in [
+        ("uptime-kuma", "KLAXOND_SOURCE_URL_UPTIME_KUMA"),
+        ("healthchecks", "KLAXOND_SOURCE_URL_HEALTHCHECKS"),
+        ("wud", "KLAXOND_SOURCE_URL_WUD"),
+        ("pve", "KLAXOND_SOURCE_URL_PVE"),
+        ("shelfmark", "KLAXOND_SOURCE_URL_SHELFMARK"),
+        ("prowlarr", "KLAXOND_SOURCE_URL_PROWLARR"),
+        ("decypharr", "KLAXOND_SOURCE_URL_DECYPHARR"),
+    ] {
+        let value = env_string(env);
+        if !value.trim().is_empty() {
+            source_urls.insert(source.to_string(), value);
+        }
+    }
     let seed = read_component_dashboards(toml_get(toml, &["render", "component_dashboards"]));
     Ok(RenderRuntime {
         priorities,
         icons,
         tag_prefixes,
         fallback_runbooks,
+        source_urls,
         component_dashboards: load_render_config(paths, &seed)?,
         component_image: read_component_image(toml_get(toml, &["render", "component_image"])),
         grafana_base: nonempty_env_or_toml("GRAFANA_BASE", toml, &["render", "grafana_base"])
@@ -234,6 +252,7 @@ fn assemble(
         icons: render.icons,
         tag_prefixes: render.tag_prefixes,
         fallback_runbooks: render.fallback_runbooks,
+        source_urls: render.source_urls,
         component_dashboards: render.component_dashboards,
         component_image: render.component_image,
         cascade_default: routing.cascade_default,

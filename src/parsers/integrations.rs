@@ -81,11 +81,10 @@ pub fn parse_shelfmark_payload(payload: &Value, severity: &str, cfg: &RuntimeCon
         title: format!("{} Shelfmark: {title_raw}", cfg.icon(severity)),
         body: body_raw,
         tags,
-        actions: vec![action(
-            "view",
-            "Open Shelfmark",
-            "https://bookdl.luigibarretta.com",
-        )],
+        actions: cfg
+            .source_url("shelfmark")
+            .map(|url| vec![action("view", "Open Shelfmark", url)])
+            .unwrap_or_default(),
         priority: cfg.priority(severity),
         alertname: String::new(),
         skip_snooze: true,

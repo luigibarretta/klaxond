@@ -1,4 +1,5 @@
 use klaxond::config::{NtfyTopic, Paths, load_runtime_config};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -45,5 +46,30 @@ pub fn cfg() -> (TempDir, klaxond::config::RuntimeConfig) {
             handles: vec!["critical".into()],
         },
     ];
+    cfg.source_urls = HashMap::from([
+        (
+            "uptime-kuma".into(),
+            "https://uptime.example.test/dashboard".into(),
+        ),
+        (
+            "healthchecks".into(),
+            "https://healthchecks.example.test/projects".into(),
+        ),
+        ("wud".into(), "https://wud.example.test".into()),
+        ("pve".into(), "https://proxmox.example.test".into()),
+        ("shelfmark".into(), "https://shelfmark.example.test".into()),
+        ("prowlarr".into(), "https://prowlarr.example.test".into()),
+        ("decypharr".into(), "https://decypharr.example.test".into()),
+    ]);
+    cfg.component_dashboards.insert(
+        "host".into(),
+        ["Logs (Loki)".into(), "/d/loki-cluster-logs".into()],
+    );
+    cfg.component_dashboards.insert(
+        "ups".into(),
+        ["UPS dashboard".into(), "/d/ups-overview".into()],
+    );
+    cfg.component_image
+        .insert("host".into(), ("infra-cluster-overview".into(), Some(10)));
     (tmp, cfg)
 }

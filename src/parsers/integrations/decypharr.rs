@@ -14,11 +14,9 @@ pub fn parse_decypharr_payload(payload: &Value, severity: &str, cfg: &RuntimeCon
         title: format!("{} Decypharr: {event_human}: {name}", cfg.icon(severity)),
         body: decypharr_body(payload, &event_human, &name),
         tags: decypharr_tags(severity, cfg),
-        actions: vec![action(
-            "view",
-            "Open Decypharr",
-            "https://decypharr.luigibarretta.com",
-        )],
+        actions: first_configured_url(payload, cfg)
+            .map(|url| vec![action("view", "Open Decypharr", &url)])
+            .unwrap_or_default(),
         priority: cfg.priority(severity),
         alertname: String::new(),
         skip_snooze: true,
@@ -30,6 +28,14 @@ pub fn parse_decypharr_payload(payload: &Value, severity: &str, cfg: &RuntimeCon
         emergency_ack_url: None,
         emergency_ack_token: None,
     }
+}
+
+fn first_configured_url(payload: &Value, cfg: &RuntimeConfig) -> Option<String> {
+    let payload_url = json_get_str(payload, "applicationUrl").trim();
+    if !payload_url.is_empty() {
+        return Some(payload_url.to_string());
+    }
+    cfg.source_url("decypharr").map(ToOwned::to_owned)
 }
 
 fn decypharr_event_human(event: &str) -> String {

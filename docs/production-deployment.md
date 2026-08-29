@@ -28,6 +28,9 @@ chmod 600 .env
 
 Fill at least `NTFY_URL`, `TOPIC_*` and the corresponding `NTFY_TOKEN_*`
 values. Keep `KLAXOND_BIND=127.0.0.1:8181` during onboarding.
+Optional `KLAXOND_SOURCE_URL_*` values control integration action buttons; an
+incoming webhook URL takes precedence, and an unconfigured button is omitted.
+The shipped defaults never point at the maintainer's infrastructure.
 
 ```bash
 docker compose config --quiet

@@ -83,11 +83,7 @@ fn beszel_authentik_and_pve_parsers_match_python_golden() {
     assert_eq!(pve.tags, vec!["rotating_light", "critical", "pve"]);
     assert_eq!(
         pve.actions[0],
-        [
-            "view",
-            "🖥 Open Proxmox",
-            "https://proxmox.luigibarretta.com/"
-        ]
+        ["view", "🖥 Open Proxmox", "https://proxmox.example.test"]
     );
     assert_eq!(pve.alertname, "pve-vzdump");
     assert_eq!(pve.priority, "urgent");
@@ -176,7 +172,7 @@ fn shelfmark_and_decypharr_parsers_match_python_golden() {
     );
     assert_eq!(
         shelfmark.actions[0],
-        ["view", "Open Shelfmark", "https://bookdl.luigibarretta.com"]
+        ["view", "Open Shelfmark", "https://shelfmark.example.test"]
     );
     assert_eq!(shelfmark.priority, "urgent");
     assert!(shelfmark.skip_snooze);
@@ -207,14 +203,34 @@ fn shelfmark_and_decypharr_parsers_match_python_golden() {
     );
     assert_eq!(
         decypharr.actions[0],
-        [
-            "view",
-            "Open Decypharr",
-            "https://decypharr.luigibarretta.com"
-        ]
+        ["view", "Open Decypharr", "https://decypharr.example.test"]
     );
     assert_eq!(decypharr.priority, "default");
     assert!(decypharr.skip_snooze);
+}
+
+#[test]
+fn portable_defaults_omit_unconfigured_operator_links() {
+    let (_tmp, mut cfg) = cfg();
+    cfg.source_urls.clear();
+    cfg.component_dashboards.clear();
+
+    for (source, payload) in [
+        ("pve", json!({"title": "Backup failed"})),
+        ("healthchecks", json!({"check": "backup", "status": "down"})),
+        ("uptime-kuma", json!({"heartbeat": {"status": 0}})),
+        ("wud", json!({"title": "Update available"})),
+        ("shelfmark", json!({"title": "Book", "type": "success"})),
+        ("prowlarr", json!({"eventType": "Health"})),
+        ("decypharr", json!({"event": "download_complete"})),
+    ] {
+        let (_, parts) = parse_source(source, &payload, "warning", &cfg);
+        assert!(
+            parts.actions.is_empty(),
+            "{source} emitted an action without an operator-configured URL: {:?}",
+            parts.actions
+        );
+    }
 }
 
 #[test]

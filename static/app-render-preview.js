@@ -122,12 +122,12 @@ const healthchecksSample = {
   "code": "01d415d8-e39f-4e87-bd44-5c60c2a0fd0a",
   "last_ping": "2026-05-30T03:00:00Z",
   "tags": "semaphore backup",
-  "url": "https://hc.luigibarretta.com/checks/01d415d8/details/"
+  "url": "https://healthchecks.example.com/checks/01d415d8/details/"
 };
 const wudSample = {
   "title": "Container update available",
   "body": "Container nginx (docker.io/library/nginx:1.27.0) can be updated to 1.27.1",
-  "wud_url": "http://192.168.50.110:3033/"
+  "wud_url": "https://wud.example.com/"
 };
 const shelfmarkSample = {
   "version": "1.0",
@@ -139,7 +139,7 @@ const shelfmarkSample = {
 const prowlarrSample = {
   "eventType": "Health",
   "instanceName": "Prowlarr",
-  "applicationUrl": "https://prowlarr.luigibarretta.com",
+  "applicationUrl": "https://prowlarr.example.com",
   "health": {
     "type": "warning",
     "message": "Indexers unavailable due to failures: EZTV, 1337x",
@@ -286,6 +286,5 @@ $("#btn-test-fire").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
-
 
 

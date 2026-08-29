@@ -73,13 +73,7 @@ pub fn default_tag_prefixes() -> HashMap<String, String> {
 }
 
 pub fn default_component_dashboards() -> HashMap<String, [String; 2]> {
-    [
-        ("host", ["Logs", "/d/your-logs-dashboard"]),
-        ("traefik", ["Traefik", "/d/your-traefik-dashboard"]),
-    ]
-    .into_iter()
-    .map(|(k, v)| (k.to_string(), [v[0].to_string(), v[1].to_string()]))
-    .collect()
+    HashMap::new()
 }
 
 pub fn default_dedup() -> HashMap<String, DedupSetting> {

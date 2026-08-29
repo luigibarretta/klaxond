@@ -114,7 +114,7 @@ mod tests {
             occurred_at: "2026-07-31T12:00:00Z".into(),
             dedup_key: Some("indexer:example".into()),
             runbook_url: Some("https://example.test/runbook".into()),
-            labels: BTreeMap::from([("host".into(), "it1-prd-nas-01".into())]),
+            labels: BTreeMap::from([("host".into(), "storage-01".into())]),
         }
     }
 

@@ -110,7 +110,7 @@ Suppressed rows show the rule that matched in the Channel column. </p> <div styl
 <label><span data-i18n-html="sim.labels">Labels (one per line, <code>label=value</code>)</span>
     <textarea id="policy-sim-labels" rows="7" style="font-family:ui-monospace,monospace;font-size:12px">alertname=HostLoadHigh
 component=host
-host=it1-prd-dev-01</textarea>
+host=web-01</textarea>
 </label> <div class="row"> <button id="policy-sim-run" class="btn primary" data-i18n="common.test">Test</button> <span id="policy-sim-status" class="muted"></span> </div> <pre id="policy-sim-output">—</pre> </section> <section id="tab-render" class="tabpane"> <h2 data-i18n="render.title">Component → dashboard mapping</h2> <p class="muted">
 <span data-i18n-html="render.desc_before_base">When a Grafana alert has label <code>component=X</code>, the resulting ntfy push gets an action button "Open &lt;label&gt;" pointing to URL. URLs starting with <code>/</code> are appended to</span> <code id="gbase">https://grafana.example.com</code><span data-i18n="render.desc_after_base">.</span> </p> <div class="card">
 <h3 data-i18n="render.runtime_settings">Runtime settings</h3> <div class="grid2"> <label><span data-i18n="render.grafana_base">Grafana base URL</span> <input type="text" id="rc-grafana-base"></label> <label><span data-i18n="render.public_url">Public klaxond URL</span> <input type="text" id="rc-public-url"></label> </div> <div class="grid2">

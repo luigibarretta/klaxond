@@ -1,4 +1,4 @@
-use super::super::{EmptyStrExt, Parts, action, first_non_empty};
+use super::super::{EmptyStrExt, EmptyStringExt, Parts, action, first_non_empty};
 use crate::config::RuntimeConfig;
 use crate::util::json_get_str;
 use serde_json::Value;
@@ -12,7 +12,7 @@ struct ProwlarrMessage {
 }
 
 pub fn parse_prowlarr_payload(payload: &Value, severity: &str, cfg: &RuntimeConfig) -> Parts {
-    let message = prowlarr_message(payload);
+    let message = prowlarr_message(payload, cfg);
     let tags = prowlarr_tags(&message.event, severity, cfg);
     let actions = prowlarr_actions(&message);
     Parts {
@@ -33,7 +33,7 @@ pub fn parse_prowlarr_payload(payload: &Value, severity: &str, cfg: &RuntimeConf
     }
 }
 
-fn prowlarr_message(payload: &Value) -> ProwlarrMessage {
+fn prowlarr_message(payload: &Value, cfg: &RuntimeConfig) -> ProwlarrMessage {
     let event = json_get_str(payload, "eventType").if_empty("Unknown");
     let health = payload.get("health").unwrap_or(&Value::Null);
     let health_message = first_non_empty(&[
@@ -51,8 +51,8 @@ fn prowlarr_message(payload: &Value) -> ProwlarrMessage {
         body,
         wiki,
         app_url: json_get_str(payload, "applicationUrl")
-            .if_empty("https://prowlarr.luigibarretta.com")
-            .to_string(),
+            .to_string()
+            .if_empty_else(|| cfg.source_url("prowlarr").unwrap_or("").to_string()),
     }
 }
 
@@ -116,7 +116,10 @@ fn prowlarr_tags(event: &str, severity: &str, cfg: &RuntimeConfig) -> Vec<String
 }
 
 fn prowlarr_actions(message: &ProwlarrMessage) -> Vec<super::super::Action> {
-    let mut actions = vec![action("view", "Open Prowlarr", &message.app_url)];
+    let mut actions = Vec::new();
+    if !message.app_url.is_empty() {
+        actions.push(action("view", "Open Prowlarr", &message.app_url));
+    }
     if !message.wiki.is_empty() {
         actions.push(action("view", "Wiki", &message.wiki));
     }

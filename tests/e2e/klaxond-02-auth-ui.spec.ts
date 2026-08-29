@@ -187,14 +187,14 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
   await page.goto("/");
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "light");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
+  await expect(page.locator("#gbase")).toHaveText("https://grafana.example.com");
 
   await page.click('[data-language-option="it"]');
   await expect(page.locator("html")).toHaveAttribute("lang", "it");
   await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Stato");
   await expect(page.locator('[data-tab="deliveries"]')).toContainText("Consegne recenti");
   await expect(page).toHaveTitle(/demone notifiche/);
-  await expect(page.locator("#gbase")).toHaveText("https://grafana.luigibarretta.com");
+  await expect(page.locator("#gbase")).toHaveText("https://grafana.example.com");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.lang"))).toBe("it");
   await expect(page.locator('[data-language-option="it"]')).toHaveAttribute("aria-pressed", "true");
 

@@ -46,15 +46,16 @@ export async function loadFlow() {
   $("#flow-status").textContent = tr("flow.fetching_config");
   let cfgs = {}, stats = null;
   try {
-    const [channel, cascade, ntfy, dedup, auth, deliveries] = await Promise.all([
+    const [channel, cascade, ntfy, dedup, auth, render, deliveries] = await Promise.all([
       queryGet("flow-channel-config", "/api/channel-config", { cancelPrevious: false }),
       queryGet("flow-cascade-config", "/api/cascade-config", { cancelPrevious: false }),
       queryGet("flow-ntfy-topics", "/api/ntfy-topics", { cancelPrevious: false }),
       queryGet("flow-dedup-config", "/api/dedup-config", { cancelPrevious: false }),
       J("/api/auth/config"),
+      queryGet("flow-render-config", "/api/render-config", { cancelPrevious: false }),
       fetchDeliveries(10000, { scope: "flow-deliveries" }),
     ]);
-    cfgs = { channel, cascade, ntfy, dedup, auth };
+    cfgs = { channel, cascade, ntfy, dedup, auth, render };
     stats = aggregateDeliveries24h(deliveries);
   } catch (e) {
     notifyError("flow-config", e, { status: "#flow-status", inlineText: tr("flow.config_fetch_failed", { message: errorText(e) }) });

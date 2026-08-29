@@ -54,8 +54,7 @@ fn render_cluster_network(cfg: &RuntimeConfig) -> Option<String> {
         }
         let mut lines = vec!["\nTop network consumers (cluster-wide):".to_string()];
         for (host, name, val, unit) in items {
-            let h_short = host.replace("it1-prd-", "");
-            lines.push(format!("  • {name:20} @ {h_short:8} {val:>7.1}{unit}"));
+            lines.push(format!("  • {name:20} @ {host:8} {val:>7.1}{unit}"));
         }
         lines.join("\n")
     })

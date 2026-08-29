@@ -73,6 +73,7 @@ pub struct RuntimeConfig {
     pub icons: HashMap<String, String>,
     pub tag_prefixes: HashMap<String, String>,
     pub fallback_runbooks: HashMap<String, String>,
+    pub source_urls: HashMap<String, String>,
     pub component_dashboards: HashMap<String, [String; 2]>,
     pub component_image: HashMap<String, (String, Option<u64>)>,
     pub cascade_default: bool,
@@ -104,6 +105,14 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
+    pub fn source_url(&self, source: &str) -> Option<&str> {
+        self.source_urls
+            .get(source)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
     pub(super) fn with_channels(mut self) -> Self {
         let toml = self.toml.clone();
         self.tg_chat = env_string("TELEGRAM_CHAT_ID")

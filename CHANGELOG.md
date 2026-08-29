@@ -4,6 +4,13 @@
 
 ## 0.16.0 — 2026-08-29
 
+- Remove deployment-specific integration fallbacks from portable defaults.
+  Uptime Kuma, Healthchecks, WUD, PVE, Shelfmark, Prowlarr and Decypharr action
+  roots are now explicit `[render.source_urls]` / `KLAXOND_SOURCE_URL_*`
+  settings; invalid or credential-bearing URLs fail startup preflight.
+- Make Grafana host extraction and the UI flow diagram deployment-neutral;
+  action links now derive from runtime configuration rather than maintainer
+  domains.
 - Make the source checkout and Docker build standalone by vendoring the reviewed
   authentication crate with immutable provenance and Apache-2.0 licensing.
 - Add fail-closed emergency startup validation for canonical HTTPS callbacks,

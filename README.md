@@ -413,6 +413,11 @@ grafana_render_base = "https://grafana-renderer.example.com"
 grafana_render_token = ""
 render_image_ttl = 900
 
+[render.source_urls]
+uptime-kuma = "https://uptime.example.com/dashboard"
+healthchecks = "https://healthchecks.example.com/projects/"
+pve = "https://proxmox.example.com/"
+
 [render.severity_emoji]
 info     = "ℹ️"
 warning  = "⚠️"
@@ -490,6 +495,7 @@ UI-saved values at runtime.
 | `TELEGRAM_CHAT_ID` / `TELEGRAM_BOT_TOKEN` / `TELEGRAM_API_BASE` | `[telegram].*` |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_STARTTLS` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_TO` | `[smtp].*` |
 | `GRAFANA_BASE` / `GRAFANA_RENDER_BASE` / `GRAFANA_RENDER_TOKEN` / `RENDER_IMAGE_TTL` | `[render].*` |
+| `KLAXOND_SOURCE_URL_<SOURCE>` | `[render.source_urls].<source>`; optional action-button roots for Uptime Kuma, Healthchecks, WUD, PVE, Shelfmark, Prowlarr and Decypharr |
 | `KLAXOND_PUBLIC_URL` | `[server].public_url` |
 | `ACK_DEFAULT_TTL_SECONDS` | `[acks].default_ttl_seconds` |
 | `KLAXOND_EMERGENCY_*` | `[emergency]`; production preflight requires HTTPS, publish tokens, fallback and a safe lease |
@@ -760,7 +766,7 @@ the homelab checkout, run it through the serialized account lifecycle and the
 bounded Klaxond access hook:
 
 ```bash
-E2E_BASE_URL=https://klaxond.luigibarretta.com \
+E2E_BASE_URL=https://klaxond.example.com \
 AUTHENTIK_E2E_ACCESS_PLAYBOOK=/opt/ansible/homelab-ansible/playbooks/manage-klaxond-authentik-e2e-access.yml \
   /opt/ansible/homelab-ansible/scripts/run-authentik-e2e.sh -- \
   npm run test:e2e:authentik

@@ -92,6 +92,28 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
     ("GRAFANA_RENDER_BASE", "TOML [render].grafana_render_base"),
     ("GRAFANA_RENDER_TOKEN", "TOML [render].grafana_render_token"),
     ("RENDER_IMAGE_TTL", "TOML [render].render_image_ttl"),
+    (
+        "KLAXOND_SOURCE_URL_UPTIME_KUMA",
+        "TOML [render.source_urls].uptime-kuma",
+    ),
+    (
+        "KLAXOND_SOURCE_URL_HEALTHCHECKS",
+        "TOML [render.source_urls].healthchecks",
+    ),
+    ("KLAXOND_SOURCE_URL_WUD", "TOML [render.source_urls].wud"),
+    ("KLAXOND_SOURCE_URL_PVE", "TOML [render.source_urls].pve"),
+    (
+        "KLAXOND_SOURCE_URL_SHELFMARK",
+        "TOML [render.source_urls].shelfmark",
+    ),
+    (
+        "KLAXOND_SOURCE_URL_PROWLARR",
+        "TOML [render.source_urls].prowlarr",
+    ),
+    (
+        "KLAXOND_SOURCE_URL_DECYPHARR",
+        "TOML [render.source_urls].decypharr",
+    ),
     ("KLAXOND_PUBLIC_URL", "TOML [server].public_url"),
     ("ACK_DEFAULT_TTL_SECONDS", "TOML [acks].default_ttl_seconds"),
     ("AUTH_SESSION_SECRET", "TOML/JSON auth.session_secret"),

@@ -129,10 +129,14 @@ fn wud_actions(extras: &Value, cfg: &RuntimeConfig) -> Vec<super::super::Action>
     if !runbook.is_empty() {
         actions.push(action("view", "📖 Runbook", &runbook));
     }
-    actions.push(action(
-        "view",
-        "📦 Open WUD",
-        json_get_str(extras, "wud_url").if_empty("http://192.168.50.110:3033/"),
-    ));
+    let supplied_url = json_get_str(extras, "wud_url");
+    let open_url = if supplied_url.is_empty() {
+        cfg.source_url("wud").unwrap_or("")
+    } else {
+        supplied_url
+    };
+    if !open_url.is_empty() {
+        actions.push(action("view", "📦 Open WUD", open_url));
+    }
     actions
 }

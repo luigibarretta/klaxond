@@ -20,7 +20,7 @@ export function aggregateDeliveries24h(items) {
 }
 
 export function buildMermaidDiagram(cfgs, stats) {
-  const { channel, cascade, ntfy, dedup, auth } = cfgs;
+  const { channel, cascade, ntfy, dedup, auth, render } = cfgs;
   const safeStats = stats || { bySource: {}, byChannel: {}, bySeverity: {} };
   const authMode = (auth && auth.settings && auth.settings.mode) || "?";
   const cascadeOn = cascade ? (cascade.runtime_enabled !== false) : true;
@@ -32,7 +32,7 @@ export function buildMermaidDiagram(cfgs, stats) {
   appendEmitters(lines, authMode, safeStats, dedup);
   appendKlaxondFlow(lines, cascadeOn);
   appendSinks(lines, channel, ntfy, tiers, safeStats);
-  appendClickHandlers(lines, tiers);
+  appendClickHandlers(lines, tiers, render);
   return lines.join("\n");
 }
 
@@ -159,8 +159,11 @@ function delivered24h(stats, channel) {
     : "";
 }
 
-function appendClickHandlers(lines, tiers) {
-  lines.push('  click GRA "https://grafana.luigibarretta.com/alerting/list" _blank');
+function appendClickHandlers(lines, tiers, render) {
+  const grafanaBase = String((render && render.grafana_base) || "").replace(/\/$/, "");
+  if (/^https?:\/\//.test(grafanaBase)) {
+    lines.push(`  click GRA "${mermaidEscape(grafanaBase)}/alerting/list" _blank`);
+  }
   lines.push('  click AM call flowGotoTab("inhibitions") "Inhibitions tab"');
   for (const id of ["BSZ", "HC", "WUD", "AKN", "SHF", "PRW"]) {
     lines.push(`  click ${id} call flowGotoTab("grouping") "Grouping (dedup) tab"`);

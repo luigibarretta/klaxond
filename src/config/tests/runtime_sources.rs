@@ -41,6 +41,9 @@ grafana_render_base = "https://render.example.test/"
 grafana_render_token = "render-token"
 render_image_ttl = 42
 
+[render.source_urls]
+pve = "https://proxmox.example.test"
+
 [server]
 port = 19090
 public_url = "https://klaxond.example.test/"
@@ -83,6 +86,7 @@ grafana = "toml-grafana-secret"
     assert_eq!(cfg.grafana_render_base, "https://render.example.test");
     assert_eq!(cfg.grafana_render_token, "render-token");
     assert_eq!(cfg.render_image_ttl, 42);
+    assert_eq!(cfg.source_url("pve"), Some("https://proxmox.example.test"));
     assert_eq!(cfg.port, 19090);
     assert_eq!(cfg.public_url, "https://klaxond.example.test");
     assert_eq!(cfg.ack_default_ttl, 1234);

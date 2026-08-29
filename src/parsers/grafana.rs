@@ -12,9 +12,9 @@ mod enrich;
 use self::enrich::enrich_grafana_body;
 
 static SHORT_HOST_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(it1-prd-)?[a-z]+-\d+$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[a-z][a-z0-9-]*-\d+$").unwrap());
 static HOST_IN_TEXT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\b(it1-prd-[a-z]+-\d+|[a-z]+-\d+)\b").unwrap());
+    LazyLock::new(|| Regex::new(r"\b([a-z][a-z0-9-]*-\d+)\b").unwrap());
 
 pub fn parse_grafana_payload(payload: &Value, severity: &str, cfg: &RuntimeConfig) -> Parts {
     let status = json_get_str(payload, "status").if_empty("firing");
@@ -88,12 +88,12 @@ fn grafana_host(
     let instance_label = object_scalar_cow(common_labels, "instance");
     let mut host = first_non_empty(&[host_label.as_ref(), instance_label.as_ref()]);
     if host.is_empty() && SHORT_HOST_RE.is_match(component) {
-        return host_from_short_component(component);
+        return component.to_string();
     }
     if host.is_empty() {
         let hay = format!("{alertname} {summary}");
         if let Some(caps) = HOST_IN_TEXT_RE.captures(&hay) {
-            host = normalize_host(caps.get(1).unwrap().as_str());
+            host = caps.get(1).unwrap().as_str().to_string();
         }
     }
     host
@@ -274,22 +274,6 @@ fn grafana_render_target(component: &str, cfg: &RuntimeConfig) -> (Option<String
         return (Some(slug.clone()), None);
     }
     (None, None)
-}
-
-fn host_from_short_component(component: &str) -> String {
-    if component.starts_with("it1-prd-") {
-        component.to_string()
-    } else {
-        format!("it1-prd-{component}")
-    }
-}
-
-fn normalize_host(host: &str) -> String {
-    if host.starts_with("it1-prd-") {
-        host.to_string()
-    } else {
-        format!("it1-prd-{host}")
-    }
 }
 
 fn object_scalar_cow<'a>(

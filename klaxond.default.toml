@@ -36,6 +36,18 @@ grafana_render_base = ""
 grafana_render_token = ""
 render_image_ttl = 900
 
+# Optional UI roots used for notification action buttons when an incoming
+# webhook does not provide its own URL. Empty values deliberately omit the
+# button instead of pointing users at somebody else's deployment.
+[render.source_urls]
+uptime-kuma = ""
+healthchecks = ""
+wud = ""
+pve = ""
+shelfmark = ""
+prowlarr = ""
+decypharr = ""
+
 # Emoji used in the title per severity.
 [render.severity_emoji]
 info     = "ℹ️"
@@ -60,21 +72,8 @@ resolved = "white_check_mark"
 # component label → [button_label, url_or_path].
 # Paths starting with / are appended to grafana_base.
 [render.component_dashboards]
-ups        = ["UPS dashboard",        "/d/ups-ecoflow-overview"]
-postgres   = ["Postgres cluster",     "/d/infra-postgres-cluster"]
-loki       = ["Logs (Loki)",          "/d/loki-cluster-logs"]
-traefik    = ["Traefik",              "/d/qPdAviJmz4"]
-authentik  = ["Authentik",            "/d/authentik"]
-prometheus = ["Prometheus targets",   "/explore"]
-docker     = ["Logs (Loki)",          "/d/loki-cluster-logs"]
-host       = ["Logs (Loki)",          "/d/loki-cluster-logs"]
-backup     = ["Backup health",        "/d/infra-backup-health"]
-semaphore  = ["Semaphore tasks",      "/d/infra-semaphore-tasks"]
-fail2ban   = ["Fail2ban",             "/d/fail2ban-cluster"]
-dns        = ["DNS resolvers",        "/d/infra-dns-resolvers"]
-clamav     = ["ClamAV logs",          "/d/loki-cluster-logs?var-container=clamd"]
-zfs        = ["ZFS / NAS logs",       "/d/loki-cluster-logs?var-host=your-nas-host"]
-beszel     = ["Beszel UI",            "https://beszel.example.com/"]
+# host = ["Host dashboard", "/d/your-host-dashboard"]
+# traefik = ["Traefik", "/d/your-traefik-dashboard"]
 
 # Per-component IMAGE override: "dashboard_uid:panel_id" (or just "dashboard_uid").
 # The PNG attached to the push uses THIS panel even if the button (above) points
@@ -82,7 +81,7 @@ beszel     = ["Beszel UI",            "https://beszel.example.com/"]
 # dashboard. `host` → cluster-overview resource panel (load1/RAM%/disk per host),
 # instead of the Loki logs panel its button points at.
 [render.component_image]
-host = "infra-cluster-overview:10"
+# host = "your-dashboard-uid:10"
 
 [server]
 port = 8181
