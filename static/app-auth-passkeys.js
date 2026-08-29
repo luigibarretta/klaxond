@@ -1,5 +1,5 @@
 import {
-  $, J, applyTablePager, escapeHtml, notifyError, notifySuccess, setInlineStatus, tr,
+  $, J, applyTablePager, confirmDialog, escapeHtml, notifyError, notifySuccess, setInlineStatus, tr,
 } from "./app.js";
 import { webauthnCreateOptions, webauthnCreatePayload } from "./app-auth-webauthn.js";
 
@@ -64,7 +64,9 @@ export async function registerPasskey() {
 }
 
 async function deletePasskey(id) {
-  if (!confirm(tr("auth.passkey_delete_confirm"))) return;
+  if (!await confirmDialog(tr("auth.passkey_delete_confirm"), {
+    title: tr("auth.passkey_delete"), confirmLabel: tr("auth.passkey_delete"), danger: true,
+  })) return;
   try {
     await J(`/api/auth/passkey/credentials/${encodeURIComponent(id)}`, { method: "DELETE" });
     await authReload();

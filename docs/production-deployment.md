@@ -1,8 +1,9 @@
 # Production deployment
 
-This guide is the supported path for a new operator deploying Klaxond without
-access to Luigi Barretta's private infrastructure. The repository, build and
-container images have no private runtime dependency.
+This guide is the supported path for an authorized operator deploying Klaxond
+without access to Luigi Barretta's private infrastructure. The source repository
+is in private incubation, but the application has no dependency on the
+maintainer's runtime infrastructure.
 
 ## 1. Prerequisites
 
@@ -11,17 +12,17 @@ container images have no private runtime dependency.
 - a DNS name and HTTPS reverse proxy before enabling emergency ACK callbacks
 - Telegram or authenticated SMTP as an independent emergency fallback
 
-The public images support `linux/amd64` and `linux/arm64`. Pin a numbered version
-in production; do not deploy `edge`.
+GitHub registry and release publication are paused during private incubation.
+Build a numbered source tag and never deploy a mutable branch checkout.
 
 ## 2. Install safely on loopback
 
-Download the versioned release bundle or the two files from the matching tag:
+Clone the numbered source tag through an authenticated GitHub CLI:
 
 ```bash
-mkdir klaxond && cd klaxond
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/.env.example
+gh repo clone luigibarretta/klaxond klaxond
+cd klaxond
+git checkout v0.17.0
 cp .env.example .env
 chmod 600 .env
 ```
@@ -34,8 +35,9 @@ The shipped defaults never point at the maintainer's infrastructure.
 
 ```bash
 docker compose config --quiet
-docker compose pull
-docker compose up -d
+docker build --pull=false --tag klaxond:0.17.0 .
+# Set KLAXOND_IMAGE=klaxond:0.17.0 in .env.
+docker compose up -d --pull never
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz
 ```
@@ -45,6 +47,13 @@ Use an SSH tunnel from an administrator workstation when Docker runs remotely:
 ```bash
 ssh -L 8181:127.0.0.1:8181 user@docker-host
 ```
+
+The first visit redirects an incomplete deployment to `/setup`. Treat every
+required item there as a release gate: authentication, inbound webhook secrets,
+at least one notification channel, persistent backups, an HTTPS public origin
+and live connectivity must all be green. Emergency mode and passkeys remain
+optional. Settings owned by environment variables are displayed read-only with
+their exact owner so the UI never pretends to persist an overridden value.
 
 ## 3. Secure authentication and ingress
 
@@ -136,24 +145,21 @@ Keep the prior numbered image tag and volume backup. Roll back by restoring the
 compatible backup, changing the image tag in `docker-compose.yml`, and recreating
 the container. Do not use a mutable tag as a rollback target.
 
-## 7. Verify a published image
+## 7. Verify the private-incubation image
 
-Each main-branch image digest is keylessly signed by the repository's GitHub
-Actions workflow and carries GitHub provenance plus an SBOM. With Cosign:
-
-```bash
-cosign verify \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/luigibarretta/klaxond/.github/workflows/release.yml@refs/heads/main$' \
-  ghcr.io/luigibarretta/klaxond:0.16.1
-```
-
-Inspect the resolved digest before and after rollout:
+Run the same clean-install gate used by CI against the locally built image,
+then record its immutable image ID before rollout:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/luigibarretta/klaxond:0.16.1
+KLAXOND_CLEAN_INSTALL_IMAGE=klaxond:0.17.0 scripts/test-clean-install.sh
+docker image inspect klaxond:0.17.0 --format '{{.Id}}'
 docker inspect klaxond --format '{{.Image}}'
 ```
+
+Multi-architecture GHCR publication, SBOM/provenance attestations and keyless
+Cosign signing remain implemented in the suspended GitHub workflow and must be
+re-enabled only after package visibility and the next public launch are
+explicitly approved.
 
 Report suspected vulnerabilities through GitHub's private security-advisory
 flow described in [`SECURITY.md`](../SECURITY.md), not in a public issue.

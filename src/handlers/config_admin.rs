@@ -1,6 +1,7 @@
 use super::text;
 use crate::config::{load_runtime_config, save_toml};
 use crate::state::AppState;
+use crate::util::atomic_write;
 use axum::body::Body;
 use axum::http::header::{CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE};
 use axum::http::{Response, StatusCode};
@@ -175,8 +176,35 @@ fn config_auto_backup(state: &AppState) -> anyhow::Result<Option<String>> {
 
 pub(super) fn persist_reload(state: &AppState, toml_value: toml::Value) -> Result<(), String> {
     config_auto_backup(state).map_err(|e| e.to_string()).ok();
+    let previous = fs::read(&state.paths.config).ok();
     save_toml(&state.paths, &toml_value).map_err(|e| e.to_string())?;
-    let cfg = load_runtime_config(&state.paths).map_err(|e| e.to_string())?;
-    state.try_replace_config(cfg)?;
+    let cfg = match load_runtime_config(&state.paths) {
+        Ok(cfg) => cfg,
+        Err(error) => {
+            restore_config_file(state, previous.as_deref());
+            return Err(error.to_string());
+        }
+    };
+    if let Err(error) = state.try_replace_config(cfg) {
+        restore_config_file(state, previous.as_deref());
+        return Err(error);
+    }
     Ok(())
+}
+
+fn restore_config_file(state: &AppState, previous: Option<&[u8]>) {
+    match previous {
+        Some(bytes) => {
+            if let Err(error) = atomic_write(&state.paths.config, bytes) {
+                tracing::error!("failed to roll back rejected config: {error}");
+            }
+        }
+        None => {
+            if let Err(error) = fs::remove_file(&state.paths.config)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::error!("failed to remove rejected bootstrap config: {error}");
+            }
+        }
+    }
 }

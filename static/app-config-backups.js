@@ -1,5 +1,5 @@
 import {
-  $, apiFetch, errorText, escapeHtml, fetchError, notifyError, notifyResponseError,
+  $, apiFetch, confirmDialog, errorText, escapeHtml, fetchError, notifyError, notifyResponseError,
   notifySuccess, onReady, queryGet, setInlineStatus, tr,
 } from "./app.js";
 
@@ -83,7 +83,9 @@ async function applyConfigImport() {
   const pending = pendingConfigImport;
   const status = $("#cfg-restore-status");
   if (!pending) return;
-  if (!confirm(tr("config.restore_confirm", { name: pending.file.name, size: pending.file.size }))) return;
+  if (!await confirmDialog(tr("config.restore_confirm", { name: pending.file.name, size: pending.file.size }), {
+    title: tr("config.restore_title"), confirmLabel: tr("config.restore"), danger: true,
+  })) return;
   setInlineStatus(status, tr("status.uploading"));
   try {
     const response = await apiFetch("/api/config/restore", {

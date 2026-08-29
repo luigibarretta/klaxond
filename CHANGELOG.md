@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.17.0 — 2026-08-29
+
+- Replace the passive setup checklist with an ordered production-readiness
+  workflow, live channel checks, blocking-step count, next actions and a safe
+  first-run redirect to `/setup`.
+- Add complete UI and API management for durable emergency policy, including
+  per-field environment ownership, bounded validation, unsafe-option warnings
+  and prospective production preflight before persistence.
+- Add credential-redacted SQLite/PostgreSQL history settings to the setup UI;
+  backend cutover preserves runtime authentication state and rolls the config
+  file back atomically when validation or store activation fails.
+- Make every TOML config mutation transactional on disk and in memory, so a
+  rejected reload cannot leave the next restart pointed at an invalid config.
+- Replace browser-native prompts and confirmations with a bilingual,
+  keyboard-operable modal that traps focus, restores focus and exposes inline
+  validation without leaking one-time secrets.
+- Expand clean-install, Rust, OpenAPI and Playwright coverage for onboarding,
+  readiness, emergency policy, storage boundaries and rollback behavior.
+- Return the source repository to private incubation and pause GitHub release
+  publication while the production build is validated in the maintainer
+  deployment.
+
 ## 0.16.1 — 2026-08-29
 
 - Make the turnkey release bundle self-verifying after extraction by recording

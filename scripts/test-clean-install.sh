@@ -37,6 +37,17 @@ for _ in $(seq 1 30); do
 done
 curl -fsS "http://${PUBLISHED}/healthz" | grep -qx OK
 
+# A blank durable volume must enter the guided setup instead of pretending to
+# be production-ready. The setup API remains machine-verifiable for installers.
+curl -sS -D - -o /dev/null "http://${PUBLISHED}/" \
+  | tr -d '\r' \
+  | grep -qi '^location: /setup$'
+SETUP_STATUS="$(curl -fsS "http://${PUBLISHED}/api/setup-status")"
+grep -q '"ready": false' <<<"$SETUP_STATUS"
+grep -q '"key": "auth"' <<<"$SETUP_STATUS"
+grep -q '"key": "connectivity"' <<<"$SETUP_STATUS"
+curl -fsS "http://${PUBLISHED}/emergencies" | grep -q 'id="emergency-policy-save"'
+
 docker exec "$CONTAINER" klaxond doctor --offline --json >/dev/null
 
 # The development-only escape hatches must be explicit. This proves that a

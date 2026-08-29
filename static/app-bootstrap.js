@@ -1,6 +1,7 @@
 import {
-  $, $$, activateTab, dirtyTabs, escapeHtml, isPublicInfoPage, markTabDirty, refreshTablePagers,
-  syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+  $, $$, activateTab, confirmDialog, dirtyTabs, escapeHtml, isPublicInfoPage, markTabDirty,
+  navigateToTab, refreshTablePagers, syncTabFromPath, tr, updateAllTabAccessibleLabels,
+  updatePublicLoginLinksText,
 } from "./app.js";
 import { loadAuth, renderTokens, authTokens } from "./app-auth-view.js";
 import { loadDeliv, loadLogs, renderDeliv } from "./app-deliveries-logs.js";
@@ -14,6 +15,7 @@ import { populateTestComponentSelect, renderRCTable, loadRC } from "./app-render
 import { loadIngestAuth, loadNtfyTopics, loadRouting, renderNtfyTopicsEditor } from "./app-routing.js";
 import { loadCurrentUser, loadConfigBackups, loadStatus } from "./app-status.js";
 import { loadEmergencies } from "./app-emergencies.js";
+import { loadSetup } from "./app-setup-simulator.js";
 
 // ---- Polling ----
 export async function refreshAll() {
@@ -38,6 +40,7 @@ document.addEventListener("klaxond:languagechange", () => {
   refreshTablePagers();
   if (document.querySelector("#tab-flow.active")) loadFlow();
   if (document.querySelector("#tab-logs.active")) loadLogs();
+  if (document.querySelector("#tab-setup.active")) loadSetup({ force: true });
 });
 
 
@@ -76,14 +79,14 @@ function _wireDirtyTracking() {
       if (!t || ["BUTTON"].includes(t.tagName)) return;
       if (t.closest(".table-pager")) return;
       // Skip search/filter fields — those aren't edits
-      if (t.type === "search" || t.id === "deliv-filter" || t.id === "inhib-test-labels") return;
+      if (t.type === "search" || t.id === "deliv-filter" || t.id === "inhib-test-labels" || t.id === "emergency-filter") return;
       markTabDirty(tabId, true);
     });
     pane.addEventListener("change", e => {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
       if (t.closest(".table-pager")) return;
-      if (t.id === "deliv-show-suppressed" || t.id === "inhib-test-source") return;
+      if (t.id === "deliv-show-suppressed" || t.id === "inhib-test-source" || t.id === "emergency-filter") return;
       markTabDirty(tabId, true);
     });
   });
@@ -101,12 +104,25 @@ window.addEventListener("beforeunload", e => {
 // The user gets a chance to abort or proceed; proceed clears dirty for the
 // active tab (since we assume they're abandoning the edit).
 const _origActivateTab = activateTab;
+let _dirtyNavigationPending = false;
 function activateTabWithDirtyGuard(tabId) {
   const active = document.querySelector(".tabpane.active");
   const activeId = active ? active.id.replace(/^tab-/, "") : null;
   if (activeId && dirtyTabs.has(activeId) && activeId !== tabId) {
-    if (!confirm(tr("shortcut.discard_confirm", { from: activeId, to: tabId }))) return false;
-    markTabDirty(activeId, false);
+    if (!_dirtyNavigationPending) {
+      _dirtyNavigationPending = true;
+      confirmDialog(tr("shortcut.discard_confirm", { from: activeId, to: tabId }), {
+        title: tr("shortcut.unsaved"),
+        confirmLabel: tr("shortcut.discard"),
+        danger: true,
+      }).then(confirmed => {
+        _dirtyNavigationPending = false;
+        if (!confirmed) return;
+        markTabDirty(activeId, false);
+        navigateToTab(tabId);
+      });
+    }
+    return false;
   }
   return _origActivateTab(tabId);
 }

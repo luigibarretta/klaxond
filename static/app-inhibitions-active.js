@@ -1,5 +1,5 @@
 import {
-  $, apiFetch, applyTablePager, errorText, escapeHtml, fetchError, notifyError,
+  $, apiFetch, applyTablePager, confirmDialog, errorText, escapeHtml, fetchError, notifyError,
   notifyResponseError, notifySuccess, queryGet, setInlineStatus, tr,
 } from "./app.js";
 import { loadStatusActivity } from "./app-status.js";
@@ -70,7 +70,10 @@ export async function loadAcks() {
 }
 
 async function clearAck(alertname) {
-  if (!confirm(`Force-clear ack-snooze for "${alertname}"?\n\nFuture alerts with this alertname will resume normal delivery.`)) return;
+  if (!await confirmDialog(
+    `Force-clear the ACK snooze for "${alertname}"? Future alerts will resume normal delivery.`,
+    { title: tr("inhib.clear_ack_title"), confirmLabel: tr("common.clear"), danger: true }
+  )) return;
   try {
     const res = await apiFetch("/api/acks/clear", {
       method: "POST",
@@ -94,8 +97,10 @@ async function clearAck(alertname) {
 
 export async function clearAllSuppressions() {
   const status = $("#inhib-clear-status");
-  // Native confirm — appropriate for a force-clear action that bypasses TTL.
-  if (!confirm("Force-clear ALL active suppressions? Suppressions will re-arm on the next source alert. Continue?")) return;
+  if (!await confirmDialog(
+    "Force-clear all active suppressions? They will re-arm on the next source alert.",
+    { title: tr("inhib.clear_all"), confirmLabel: tr("common.clear"), danger: true }
+  )) return;
   try {
     const res = await apiFetch("/api/inhibitions/clear", {
       method: "POST",

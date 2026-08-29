@@ -39,7 +39,8 @@ test("serves health and admin UI", async ({ page, request }) => {
   );
 
   await page.goto("/");
-  await expect(page).toHaveURL(/\/status$/);
+  await expect(page).toHaveURL(/\/setup$/);
+  await expect(page.locator("#tab-setup")).toHaveClass(/active/);
   await expect(page.locator("h1")).toContainText("klaxond");
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
   await expect(page.locator('[data-tab="logs"]')).toBeVisible();

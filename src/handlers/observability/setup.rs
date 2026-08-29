@@ -3,17 +3,67 @@ use crate::config::{DEDUP_SOURCES, RuntimeConfig};
 use crate::state::AppState;
 use serde_json::{Value, json};
 
-pub(in crate::handlers) fn setup_status_payload(state: &AppState) -> Value {
+pub(super) fn setup_status_payload(state: &AppState, matrix: Option<&Value>) -> Value {
     let cfg = state.cfg();
-    let items = vec![
+    let mut items = vec![
         auth_item(&cfg),
         ingest_auth_item(count_ingest_secrets(state)),
         channels_item(configured_channel_count(&cfg)),
         backups_item(state),
         public_url_item(&cfg.public_url),
+        emergency_item(&cfg),
         passkeys_item(cfg.auth.webauthn.enabled),
     ];
-    setup_response(items)
+    if let Some(matrix) = matrix {
+        items.push(connectivity_item(matrix));
+    }
+    let mut response = setup_response(items);
+    if let Some(matrix) = matrix {
+        response["matrix"] = matrix.clone();
+    }
+    response
+}
+
+pub(in crate::handlers) fn setup_ready(state: &AppState) -> bool {
+    setup_status_payload(state, None)
+        .get("ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn connectivity_item(matrix: &Value) -> Value {
+    let channels = matrix
+        .get("channels")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let configured = channels
+        .iter()
+        .filter(|channel| channel.get("configured").and_then(Value::as_bool) == Some(true))
+        .count();
+    let reachable = channels
+        .iter()
+        .filter(|channel| {
+            channel.get("configured").and_then(Value::as_bool) == Some(true)
+                && channel.get("reachable").and_then(Value::as_bool) == Some(true)
+        })
+        .count();
+    let status = if configured > 0 && reachable == configured {
+        "ok"
+    } else if reachable == 0 {
+        "error"
+    } else {
+        "partial"
+    };
+    json!({
+        "key": "connectivity",
+        "label": "Live channel connectivity",
+        "status": status,
+        "detail": format!("{reachable}/{configured} configured channels are reachable"),
+        "values": {"configured": configured, "reachable": reachable},
+        "required": true,
+        "action": {"key": "connectivity", "path": "/setup", "label": "Run channel checks"},
+    })
 }
 
 fn count_ingest_secrets(state: &AppState) -> usize {
@@ -41,6 +91,8 @@ fn auth_item(cfg: &RuntimeConfig) -> Value {
         "status": if cfg.auth.mode == "none" { "warn" } else { "ok" },
         "detail": if cfg.auth.mode == "none" { "admin UI is unauthenticated" } else { "authentication is enabled" },
         "values": {"mode": cfg.auth.mode},
+        "required": true,
+        "action": {"key": "auth", "path": "/authentication", "label": "Configure authentication"},
     })
 }
 
@@ -52,6 +104,8 @@ fn ingest_auth_item(configured: usize) -> Value {
         "status": if configured == total { "ok" } else if configured == 0 { "warn" } else { "partial" },
         "detail": format!("{configured}/{total} sources have a shared secret"),
         "values": {"configured": configured, "total": total},
+        "required": true,
+        "action": {"key": "ingest_auth", "path": "/routing", "label": "Secure webhooks"},
     })
 }
 
@@ -62,6 +116,8 @@ fn channels_item(configured: usize) -> Value {
         "status": if configured > 0 { "ok" } else { "warn" },
         "detail": format!("{configured}/3 channel families configured"),
         "values": {"configured": configured, "total": 3},
+        "required": true,
+        "action": {"key": "channels", "path": "/routing", "label": "Configure channels"},
     })
 }
 
@@ -73,16 +129,54 @@ fn backups_item(state: &AppState) -> Value {
         "status": if state.paths.backup_dir.is_dir() { "ok" } else { "error" },
         "detail": path,
         "values": {"path": path},
+        "required": true,
+        "action": {"key": "backups", "path": "/status", "label": "Review backups"},
     })
 }
 
 fn public_url_item(public_url: &str) -> Value {
+    let configured = !public_url.trim().is_empty();
+    let secure = public_url
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("https://");
+    let (status, detail) = if !configured {
+        ("warn", "not configured".to_string())
+    } else if !secure {
+        (
+            "warn",
+            format!("{public_url} (HTTPS required for production)"),
+        )
+    } else {
+        ("ok", public_url.to_string())
+    };
     json!({
         "key": "public_url",
         "label": "Public URL",
-        "status": if public_url.trim().is_empty() { "warn" } else { "ok" },
-        "detail": if public_url.trim().is_empty() { "not configured" } else { public_url },
-        "values": {"url": public_url},
+        "status": status,
+        "detail": detail,
+        "values": {"url": public_url, "secure": secure},
+        "required": true,
+        "action": {"key": "public_url", "path": "/render", "label": "Set public URL"},
+    })
+}
+
+fn emergency_item(cfg: &RuntimeConfig) -> Value {
+    json!({
+        "key": "emergency",
+        "label": "Emergency delivery",
+        "status": if cfg.emergency.enabled { "ok" } else { "info" },
+        "detail": if cfg.emergency.enabled {
+            format!(
+                "enabled: retry every {}s, expire after {}s",
+                cfg.emergency.retry_seconds, cfg.emergency.expire_seconds
+            )
+        } else {
+            "optional durable retries are disabled".to_string()
+        },
+        "values": {"enabled": cfg.emergency.enabled},
+        "required": false,
+        "action": {"key": "emergency", "path": "/emergencies", "label": "Configure emergency mode"},
     })
 }
 
@@ -93,15 +187,42 @@ fn passkeys_item(enabled: bool) -> Value {
         "status": if enabled { "ok" } else { "info" },
         "detail": if enabled { "WebAuthn enabled" } else { "optional WebAuthn disabled" },
         "values": {"enabled": enabled},
+        "required": false,
+        "action": {"key": "passkeys", "path": "/authentication", "label": "Configure passkeys"},
     })
 }
 
 fn setup_response(items: Vec<Value>) -> Value {
     let errors = status_count(&items, |status| status == "error");
     let warnings = status_count(&items, |status| matches!(status, "warn" | "partial"));
+    let required = items
+        .iter()
+        .filter(|item| item.get("required").and_then(Value::as_bool) == Some(true))
+        .count();
+    let complete = items
+        .iter()
+        .filter(|item| {
+            item.get("required").and_then(Value::as_bool) == Some(true)
+                && item.get("status").and_then(Value::as_str) == Some("ok")
+        })
+        .count();
+    let blocking = required.saturating_sub(complete);
+    let next_action = items.iter().find(|item| {
+        item.get("required").and_then(Value::as_bool) == Some(true)
+            && item.get("status").and_then(Value::as_str) != Some("ok")
+    });
     json!({
         "ok": errors == 0,
-        "summary": { "errors": errors, "warnings": warnings, "items": items.len() },
+        "ready": blocking == 0,
+        "summary": {
+            "errors": errors,
+            "warnings": warnings,
+            "blocking": blocking,
+            "complete": complete,
+            "required": required,
+            "items": items.len(),
+        },
+        "next_action": next_action.and_then(|item| item.get("action")).cloned(),
         "items": items,
     })
 }

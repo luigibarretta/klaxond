@@ -308,3 +308,36 @@
 }
 /* Cursor pointer on clickable nodes (mermaid sets cursor:pointer in click; reinforce) */
 #flow-diagram .node[data-clickable] { cursor: pointer; }
+
+.app-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, #000 66%, transparent);
+}
+.app-dialog {
+  width: min(520px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 24px 72px var(--shadow);
+}
+.app-dialog h2 { margin: 0 0 10px; font-size: 18px; }
+.app-dialog-message { margin: 0 0 16px; white-space: pre-line; }
+.app-dialog-field { display: grid; gap: 5px; margin: 12px 0; }
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.app-dialog-secret { display: grid; gap: 8px; margin-top: 12px; }
+.app-dialog-secret textarea { min-height: 86px; font-family: ui-monospace, monospace; }
+.app-dialog-error { color: var(--red); margin: 10px 0 0; }
+.app-dialog-danger { border-top: 4px solid var(--red); }

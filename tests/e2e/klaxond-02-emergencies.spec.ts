@@ -12,6 +12,22 @@ test("emergency metric families exist before the first incident", async ({ reque
 test("emergency console renders durable receipts and dispatches audited actions", async ({ page }) => {
   let state = "active";
   let action = "";
+  let policyUpdate: Record<string, unknown> = {};
+  let settings = {
+    enabled: true,
+    allow_insecure_public_url: false,
+    allow_ntfy_only: false,
+    severities: ["critical"],
+    retry_seconds: 60,
+    expire_seconds: 3600,
+    max_attempts: 50,
+    lease_seconds: 60,
+    telegram_after_attempts: 3,
+    smtp_after_attempts: 5,
+    notify_on_expiry: true,
+    auto_resolve: true,
+    exclude_sources: ["api-test"],
+  };
   const incident = () => ({
     receipt_id: "receipt-e2e-1234567890",
     fingerprint: "fingerprint-e2e",
@@ -44,18 +60,24 @@ test("emergency console renders durable receipts and dispatches audited actions"
     });
   });
   await page.route("**/api/emergency-config", async route => {
+    if (route.request().method() === "POST") {
+      policyUpdate = route.request().postDataJSON();
+      settings = { ...settings, ...policyUpdate };
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true }),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        settings: {
-          enabled: true,
-          retry_seconds: 60,
-          expire_seconds: 3600,
-          max_attempts: 50,
-          telegram_after_attempts: 3,
-          smtp_after_attempts: 5,
-        },
+        settings,
+        managed_fields: {},
+        managed_by_environment: false,
+        writeable: true,
       }),
     });
   });
@@ -76,6 +98,13 @@ test("emergency console renders durable receipts and dispatches audited actions"
   await expect(page.locator("#emergency-active")).toHaveText("1");
   await expect(page.locator("#t-emergencies tbody")).toContainText("Production emergency probe");
   await expect(page.locator('[data-emergency-action="ack"]')).toBeVisible();
+
+  await page.locator("#emergency-policy-editor > summary").click();
+  await page.locator("#em-retry").fill("90");
+  await page.locator("#emergency-policy-save").click();
+  await expect.poll(() => policyUpdate.retry_seconds).toBe(90);
+  await expect(page.locator(".toast-success").last()).toContainText("Emergency policy saved");
+  await expect(page.locator("#emergency-policy")).toHaveText("90s × 50; 60m");
 
   await page.click('[data-emergency-action="ack"]');
   await expect.poll(() => action).toBe("POST");

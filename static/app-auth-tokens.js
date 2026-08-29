@@ -1,5 +1,5 @@
 import {
-  $, J, applyTablePager, escapeHtml, notifyError, notifySuccess, setInlineStatus, tr,
+  $, J, applyTablePager, confirmDialog, escapeHtml, notifyError, notifySuccess, setInlineStatus, tr,
 } from "./app.js";
 
 export let authTokens = [];
@@ -126,7 +126,9 @@ export async function createAuthToken() {
 }
 
 async function revokeAuthToken(id) {
-  if (!confirm(tr("auth.revoke_confirm"))) return;
+  if (!await confirmDialog(tr("auth.revoke_confirm"), {
+    title: tr("auth.revoke"), confirmLabel: tr("auth.revoke"), danger: true,
+  })) return;
   try {
     await J(`/api/auth/tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
     await reloadAuth();
@@ -135,4 +137,3 @@ async function revokeAuthToken(id) {
     notifyError("auth-token-revoke", e, { status: "#token-status" });
   }
 }
-

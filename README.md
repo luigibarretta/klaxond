@@ -44,35 +44,39 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 
 ## Quick start
 
-The versioned Compose bundle is the shortest supported installation path. It
-uses the public multi-architecture image and binds the UI to loopback until you
-deliberately add authentication and an HTTPS reverse proxy.
+During private incubation, an authorized checkout is the supported installation
+source. GitHub release/GHCR publication is paused; build the numbered source tag
+locally. The service binds the UI to loopback until authentication and an HTTPS
+reverse proxy are deliberately configured.
 
 ```bash
-mkdir klaxond && cd klaxond
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/.env.example
+gh repo clone luigibarretta/klaxond klaxond
+cd klaxond
+git checkout v0.17.0
 cp .env.example .env
 chmod 600 .env
 
 # Fill NTFY_URL, the topic names and matching NTFY_TOKEN_* values.
+# Set KLAXOND_IMAGE=klaxond:0.17.0 while registry publication is paused.
 ${EDITOR:-vi} .env
 docker compose config --quiet
-docker compose pull
-docker compose up -d
+docker build --pull=false --tag klaxond:0.17.0 .
+docker compose up -d --pull never
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz
 ```
 
-Open `http://127.0.0.1:8181/` locally, or use an SSH tunnel when the Docker host
-is remote:
+Open `http://127.0.0.1:8181/` locally. An incomplete instance opens the guided
+Setup page, which identifies every production blocker and links directly to the
+relevant control. Use an SSH tunnel when the Docker host is remote:
 
 ```bash
 ssh -L 8181:127.0.0.1:8181 user@docker-host
 ```
 
-Configure Basic, LDAP, OIDC or trusted-proxy authentication from the
-Authentication page before changing `KLAXOND_BIND` or publishing the service.
+Complete every required Setup item before changing `KLAXOND_BIND` or publishing
+the service. Configure Basic, LDAP, OIDC or trusted-proxy authentication from
+the Authentication page.
 Set a unique `KLAXOND_INGEST_SECRET_<SOURCE>` for every webhook source you use.
 The named `/data` volume contains the database, ACK signing key and configuration;
 back it up as one unit.
@@ -176,12 +180,14 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/status` | Cascade flag + channel reachability |
 | `GET` | `/api/setup-status` | Setup/readiness checklist |
 | `GET` | `/api/channel-test-matrix` | Dry-run channel connectivity matrix; sends no notification |
+| `GET` / `POST` | `/api/history-config` | Redacted storage settings and transactional SQLite/PostgreSQL cutover |
 | `GET` | `/api/dedup-config` | Per-source burst grouping, repeat-suppression cooldowns and recent suppression activity |
 | `POST` | `/api/dedup-config` | Persist per-source notification noise controls |
 | `GET` | `/api/inhibitions` | Active in-memory suppressions with TTL |
 | `GET` | `/api/deliveries` | Persistent delivery history; add `limit`/`offset` for the paginated shape |
 | `GET` | `/api/emergencies` | Durable emergency receipts, filterable by state |
 | `GET` | `/api/emergencies/<id>` | Receipt state, attempts, deadlines and escalation history |
+| `GET` / `POST` | `/api/emergency-config` | Read or transactionally update durable emergency policy |
 | `POST` | `/api/emergencies/<id>/<ack\|retry\|cancel>` | Audited lifecycle action; local browser sessions require recent reauthentication |
 | `POST` | `/api/emergency/<id>/ack` | Signed one-tap ntfy acknowledgement using a request header token |
 | `GET` | `/api/logs` | Runtime/backend/frontend log buffer with keyword, level and pagination filters |
@@ -457,7 +463,7 @@ Every UI-managed setting has a compose-managed path:
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
 | Noise control: burst grouping and repeat suppression | `[dedup]` bootstrap or `/data/dedup-config.json` |
 | Auth, API keys/PATs, TOTP, passkeys, LDAP, magic links | `[auth]` bootstrap or `/data/auth-config.json` |
-| Delivery history storage | `[history]`, `[paths].history_db`, or `KLAXOND_HISTORY_*` / `KLAXOND_POSTGRES_URL` |
+| Delivery history storage | Setup UI, `[history]`, `[paths].history_db`, or `KLAXOND_HISTORY_*` / `KLAXOND_POSTGRES_URL` |
 | Runtime paths exposed by compose | `[paths]` in `/data/klaxond.toml` |
 
 The reverse path is the UI **Full export** button. It exports
@@ -772,8 +778,8 @@ AUTHENTIK_E2E_ACCESS_PLAYBOOK=/opt/ansible/homelab-ansible/playbooks/manage-klax
   npm run test:e2e:authentik
 ```
 
-The reviewed `auth-modules` crate is vendored under `vendor/auth-modules` so a
-public checkout builds without private dependencies. Its immutable upstream
+The reviewed `auth-modules` crate is vendored under `vendor/auth-modules` so an
+authorized checkout builds without private dependencies. Its immutable upstream
 commit and selected license are recorded in the vendored README; upgrades are
 explicit, reviewed and covered by the complete authentication test suite.
 
@@ -820,6 +826,7 @@ Apache-2.0 — see [LICENSE](./LICENSE).
 
 ---
 > The maintainer's Gitea repository is the canonical write source and is mirrored
-> to GitHub with exact-SHA verification. Tags promote the already-tested internal
-> image for the maintainer's deployment and the already-tested multi-architecture
-> GHCR manifest for public users. Mutable branch images never deploy to production.
+> to the private GitHub repository with exact-SHA verification. Tags promote the
+> already-tested internal image for the maintainer deployment. GitHub registry
+> and release publication remain paused throughout private incubation. Mutable
+> branch images never deploy to production.

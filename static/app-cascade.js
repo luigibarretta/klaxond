@@ -1,5 +1,5 @@
 import {
-  $, $$, J, applyTablePager, escapeHtml, fetchError, markTabDirty, notifyError, notifySuccess,
+  $, $$, J, applyTablePager, confirmDialog, escapeHtml, fetchError, markTabDirty, notifyError, notifySuccess,
   notifyValidationError, queryGet, showTableRowPage, showToast, tr,
 } from "./app.js";
 import { loadStatus } from "./app-status.js";
@@ -147,10 +147,10 @@ $("#btn-cas-save").addEventListener("click", async () => {
     return;
   }
   const risky = riskyNtfyRows();
-  if (risky.length && !window.confirm(tr("cascade.low_timeout_confirm", {
+  if (risky.length && !await confirmDialog(tr("cascade.low_timeout_confirm", {
     timeout: Math.min(...risky.map(row => row.timeout)),
     recommended: casData.timeout_policy.warning_below_seconds.ntfy,
-  }))) return;
+  }), { title: tr("cascade.timeout_risk_title"), confirmLabel: tr("common.save_changes") })) return;
   const tiers = rows.map(row => ({ name: row.name, timeout_seconds: row.timeout }));
   try {
     const response = await J("/api/cascade-config", {

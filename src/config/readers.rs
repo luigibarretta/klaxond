@@ -147,6 +147,10 @@ pub(super) fn read_emergency(toml: &toml::Value) -> anyhow::Result<EmergencyConf
         "emergency.smtp_after_attempts must be in 1..=max_attempts"
     );
     anyhow::ensure!(
+        cfg.expire_seconds >= cfg.retry_seconds,
+        "emergency.expire_seconds must be greater than or equal to retry_seconds"
+    );
+    anyhow::ensure!(
         !cfg.severities.is_empty(),
         "emergency.severities cannot be empty"
     );

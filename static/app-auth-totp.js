@@ -1,5 +1,5 @@
 import {
-  $, J, notifyError, notifySuccess, setInlineStatus, setLocalTotpEnabled, tr,
+  $, J, confirmDialog, notifyError, notifySuccess, setInlineStatus, setLocalTotpEnabled, tr,
 } from "./app.js";
 
 let authReload = async () => {};
@@ -58,7 +58,9 @@ export async function enableTotp() {
 }
 
 export async function disableTotp() {
-  if (!confirm(tr("auth.totp_disable_confirm"))) return;
+  if (!await confirmDialog(tr("auth.totp_disable_confirm"), {
+    title: tr("auth.totp_disable"), confirmLabel: tr("auth.totp_disable"), danger: true,
+  })) return;
   const status = $("#totp-status");
   try {
     await J("/api/auth/totp/disable", {

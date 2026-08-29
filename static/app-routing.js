@@ -1,9 +1,11 @@
 import {
   $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
   escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
-  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  confirmDialog, markTabDirty, notifyError, notifyResponseError, notifySuccess,
+  notifyValidationError, onReady, promptDialog,
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
-  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+  showSecretDialog, showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels,
+  updatePublicLoginLinksText,
 } from "./app.js";
 import { applyReadOnlyViewerMode, loadStatus } from "./app-status.js";
 
@@ -209,13 +211,26 @@ export async function loadIngestAuth() {
 async function _ingestAuthAction(src, action) {
   let body = { source: src, action };
   if (action === "set") {
-    const sec = prompt(`Paste the secret to use for source "${src}":\n\n(min 16 chars; will be shown to emitter ONCE here)`);
+    const sec = await promptDialog(
+      `Paste the secret to use for source "${src}". It must contain at least 16 characters.`,
+      {
+        title: tr("ingest.set_custom"),
+        label: tr("routing.token"),
+        type: "password",
+        minLength: 16,
+        autocomplete: "new-password",
+      }
+    );
     if (!sec) return;
     if (sec.length < 16) { notifyError(`ingest-auth-${action}`, new Error(tr("ingest.secret_too_short"))); return; }
     body.secret = sec;
   }
   if (action === "clear") {
-    if (!confirm(`Clear webhook secret for "${src}"?\n\nSource will return to permissive mode (any caller accepted). Confirm?`)) return;
+    const confirmed = await confirmDialog(
+      `Clear the webhook secret for "${src}"? The source will return to permissive mode.`,
+      { title: tr("ingest.clear"), confirmLabel: tr("ingest.clear"), danger: true }
+    );
+    if (!confirmed) return;
   }
   try {
     const res = await apiFetch("/api/ingest-auth", {
@@ -230,11 +245,11 @@ async function _ingestAuthAction(src, action) {
     }
     const r = await res.json();
     if (r.secret) {
-      // Show generated secret in a copy-friendly prompt
-      window.prompt(
-        `✓ Secret generated for source "${src}".\n\nCopy it now and paste it into the emitter configuration — it WON'T be shown again. (klaxond stores only this value; once you close this dialog you can't retrieve it from the UI.)`,
-        r.secret
-      );
+      await showSecretDialog(r.secret, {
+        title: tr("ingest.generated", { source: src }),
+        message: `Copy this secret into the "${src}" emitter now. It will not be shown again.`,
+        confirmLabel: tr("dialog.done"),
+      });
       notifySuccess(tr("ingest.generated", { source: src }), { durationMs: 4000 });
     } else {
       notifySuccess(tr("ingest.action_ok", { action, source: src }), { durationMs: 4000 });
@@ -244,5 +259,4 @@ async function _ingestAuthAction(src, action) {
     notifyError(`ingest-auth-${action}`, e);
   }
 }
-
 

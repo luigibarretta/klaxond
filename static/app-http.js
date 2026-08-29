@@ -1,6 +1,7 @@
 import {
   AuthRedirectError, isAuthRedirectStarted, setAuthRedirectStarted, tr,
 } from "./app-core.js";
+import { requestDialog } from "./app-dialog.js";
 import {
   notifyError, notifyResponseError, notifySuccess, showToast,
 } from "./app-toast.js";
@@ -192,9 +193,23 @@ export async function requestSudoReauth() {
     if ((_currentUser?.mode || "") === "passkey") {
       return requestPasskeyReauth();
     }
-    const password = window.prompt(tr("auth.reauth_password"));
-    if (password === null) return false;
-    const totp = _localTotpEnabled === false ? "" : (window.prompt(tr("auth.reauth_totp")) || "");
+    const fields = [{
+      name: "password", label: tr("auth.password"), type: "password",
+      required: true, autocomplete: "current-password",
+    }];
+    if (_localTotpEnabled !== false) fields.push({
+      name: "totp", label: tr("auth.reauth_totp"), type: "text",
+      required: false, autocomplete: "one-time-code", inputMode: "numeric",
+    });
+    const credentials = await requestDialog({
+      title: tr("auth.reauth_title"),
+      message: tr("auth.reauth_password"),
+      fields,
+      confirmLabel: tr("auth.reauth_confirm"),
+    });
+    if (!credentials) return false;
+    const password = credentials.password;
+    const totp = credentials.totp || "";
     const res = await apiFetch("/api/auth/reauth", {
       method: "POST",
       body: JSON.stringify({ password, totp }),

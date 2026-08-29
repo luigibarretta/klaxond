@@ -4,10 +4,12 @@ use super::super::auth_admin::{
 use super::super::config_admin::{
     config_backup_response, config_backups_payload, config_full_export_response,
 };
+use super::super::config_mutations::{emergency_config_payload, history_config_payload};
 use super::super::ingest::{ack_response, ingest_auth_payload};
 use super::super::observability::{
     audit_payload, channel_config_payload, channel_test_matrix_payload, deliveries_response,
-    inhibition_rules_payload, logs_payload, metrics_response, setup_status_payload, status_payload,
+    inhibition_rules_payload, logs_payload, metrics_response, setup_ready, setup_status_payload,
+    status_payload,
 };
 use super::super::passkeys::{passkey_login_page, public_passkey, webauthn_public_config};
 use super::super::step_up::{step_up_page, step_up_status_response};
@@ -74,7 +76,11 @@ fn public_get_response(
         _ if legacy_legal_redirect(path).is_some() => Some(redirect(
             legacy_legal_redirect(path).unwrap_or("/legal/privacy"),
         )),
-        "/" | "/ui" | "/ui/" => Some(redirect("/status")),
+        "/" | "/ui" | "/ui/" => Some(redirect(if setup_ready(state) {
+            "/status"
+        } else {
+            "/setup"
+        })),
         _ if root_ui_tab_from_path(path, headers).is_some() => {
             Some(static_files::index_response(state))
         }
@@ -117,7 +123,8 @@ async fn config_get_response(state: &AppState, path: &str) -> Option<Response<Bo
     match path {
         "/api/render-config" => Some(render_config_response(state)),
         "/api/cascade-config" => Some(cascade_config_response(state)),
-        "/api/emergency-config" => Some(emergency_config_response(state)),
+        "/api/emergency-config" => Some(json_response(emergency_config_payload(state))),
+        "/api/history-config" => Some(json_response(history_config_payload(state))),
         "/api/ntfy-topics" => Some(ntfy_topics_response(state)),
         "/api/dedup-config" => Some(noise::response(state).await),
         "/api/delivery-config" => Some(delivery_config_response(state)),
@@ -131,15 +138,6 @@ async fn config_get_response(state: &AppState, path: &str) -> Option<Response<Bo
         "/api/config/backups" => Some(json_response(config_backups_payload(state))),
         _ => None,
     }
-}
-
-fn emergency_config_response(state: &AppState) -> Response<Body> {
-    let cfg = state.cfg();
-    json_response(json!({
-        "settings": cfg.emergency,
-        "constraints": {"retry_seconds":{"min":30,"max":3600},"expire_seconds":{"min":30,"max":10800},"max_attempts":{"min":1,"max":50}},
-        "managed_by_environment": std::env::var("KLAXOND_EMERGENCY_ENABLED").is_ok(),
-    }))
 }
 
 async fn observability_get_response(
@@ -159,7 +157,7 @@ async fn observability_get_response(
         "/api/deliveries" => Some(deliveries_response(state, full_path)),
         "/api/logs" => Some(json_response(logs_payload(full_path))),
         "/api/audit" => Some(json_response(audit_payload(full_path))),
-        "/api/setup-status" => Some(json_response(setup_status_payload(state))),
+        "/api/setup-status" => Some(json_response(setup_status_payload(state).await)),
         "/api/channel-test-matrix" => Some(json_response(channel_test_matrix_payload(state).await)),
         _ => None,
     }

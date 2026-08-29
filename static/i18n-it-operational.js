@@ -101,6 +101,7 @@ export const IT_OPERATIONAL_MESSAGES = {
   "cascade.timeout_warning_title": "Sicurezza del timeout di consegna",
   "cascade.timeout_warning": "I timeout sono personalizzabili da 1 a 60 secondi. Per ntfy mantieni almeno 15 secondi: un timeout più breve può scadere dopo che ntfy ha accettato il messaggio e attivare una consegna fallback duplicata.",
   "cascade.timeout_risk": "Attenzione: ntfy è impostato a {timeout}s, sotto i {recommended}s consigliati. Può causare notifiche duplicate.",
+  "cascade.timeout_risk_title": "Conferma timeout ntfy basso",
   "cascade.timeout_invalid": "Ogni timeout deve essere un numero intero da {min} a {max} secondi.",
   "cascade.low_timeout_confirm": "ntfy è impostato a {timeout}s, sotto i {recommended}s consigliati. Può causare notifiche duplicate. Salvare comunque?",
   "cascade.saved_with_warning": "Salvato con timeout ntfy basso. Sono possibili consegne duplicate.",
@@ -241,6 +242,7 @@ export const IT_OPERATIONAL_MESSAGES = {
 
   "shortcut.unsaved": "Modifiche non salvate",
   "shortcut.discard_confirm": "Il tab \"{from}\" ha modifiche non salvate. Scartarle e passare a \"{to}\"?",
+  "shortcut.discard": "Scarta modifiche",
   "shortcut.title": "Scorciatoie tastiera",
   "shortcut.save": "Salva il tab attivo (clicca il pulsante Salva primario)",
   "shortcut.esc": "Toglie focus dall'input; svuota i filtri di ricerca",
@@ -263,6 +265,8 @@ export const IT_OPERATIONAL_MESSAGES = {
   "config.import_unchanged": "File invariati",
   "config.import_restore": "Ripristinerà",
   "config.restore_confirm": "Ripristinare la config klaxond da \"{name}\" ({size} byte)?\n\nLa config corrente verrà prima salvata in backup automatico. Sono accettati TOML e bundle JSON completi. Dopo l'upload, lo stato in memoria viene ricaricato. Continuare?",
+  "config.restore_title": "Ripristina configurazione",
+  "config.restore": "Ripristina",
   "config.restored_toast": "Config ripristinata — ricarica la pagina per aggiornare tutto lo stato UI",
 };
 

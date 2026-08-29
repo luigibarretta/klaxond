@@ -17,7 +17,12 @@ mod setup;
 
 pub(super) use client_logs::client_log_response;
 pub(super) use metrics::metrics_response;
-pub(super) use setup::setup_status_payload;
+pub(super) use setup::setup_ready;
+
+pub(super) async fn setup_status_payload(state: &AppState) -> Value {
+    let matrix = channel_test_matrix_payload(state).await;
+    setup::setup_status_payload(state, Some(&matrix))
+}
 
 pub(super) async fn status_payload(state: &AppState) -> Value {
     let cfg = state.cfg();

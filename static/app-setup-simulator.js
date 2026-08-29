@@ -1,6 +1,7 @@
 import {
   $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
-  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
+  confirmDialog, escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser,
+  isAbortError, isPublicInfoPage,
   markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
@@ -9,16 +10,95 @@ import {
 // ---- Setup / diagnostics ----
 export async function loadSetup(opts = {}) {
   try {
-    const [setup, matrix] = await Promise.all([
+    const [setup, history] = await Promise.all([
       queryGet("setup-status", "/api/setup-status", { force: opts.force, cancelPrevious: false }),
-      queryGet("setup-matrix", "/api/channel-test-matrix", { force: opts.force, cancelPrevious: false }),
+      queryGet("history-config", "/api/history-config", { force: opts.force, cancelPrevious: false }),
     ]);
     renderSetupChecklist(setup);
-    renderChannelMatrix(matrix);
+    renderChannelMatrix(setup.matrix || { channels: [] });
+    renderHistoryConfig(history);
   } catch (e) {
     fetchError("setup", e);
     const box = $("#setup-checklist");
     if (box) box.innerHTML = `<p class="muted">${escapeHtml(tr("common.error"))}: ${escapeHtml(errorText(e))}</p>`;
+  }
+}
+
+let historyConfig = { settings: {}, managed_fields: {} };
+
+function renderHistoryConfig(payload) {
+  historyConfig = payload || historyConfig;
+  const settings = historyConfig.settings || {};
+  $("#history-backend").value = settings.backend || "sqlite";
+  $("#history-sqlite-path").value = settings.sqlite_path || "";
+  $("#history-postgres-url").value = "";
+  $("#history-postgres-url").placeholder = settings.postgres_url_configured ? "••••••••" : "postgres://user:password@db:5432/klaxond";
+  $("#history-postgres-clear").checked = false;
+  $("#history-postgres-status").textContent = settings.postgres_url_configured
+    ? tr("history.postgres_configured", { target: settings.postgres_target || "PostgreSQL" })
+    : tr("history.postgres_missing");
+  $("#history-retention").value = settings.retention ?? 5000;
+  $("#history-default-limit").value = settings.default_limit ?? 500;
+  const managed = historyConfig.managed_fields || {};
+  document.querySelectorAll("[data-history-field]").forEach(input => {
+    const owner = managed[input.dataset.historyField] || "";
+    input.disabled = !!owner;
+    input.title = owner ? tr("emergency.managed_field", { env: owner }) : "";
+  });
+  $("#history-postgres-clear").disabled = !!managed.postgres_url;
+  const owners = Object.entries(managed);
+  $("#history-env-notice").classList.toggle("hidden", owners.length === 0);
+  $("#history-env-notice").textContent = owners.length
+    ? tr("history.managed_notice", { fields: owners.map(([field, env]) => `${field} (${env})`).join(", ") })
+    : "";
+  window.applyReadOnlyViewerMode?.(window.klaxondCurrentUser || {});
+}
+
+async function saveHistoryConfig() {
+  const payload = {};
+  const backend = $("#history-backend");
+  const postgres = $("#history-postgres-url");
+  const retention = $("#history-retention");
+  const defaultLimit = $("#history-default-limit");
+  if (!backend.disabled) payload.backend = backend.value;
+  if (!postgres.disabled) {
+    if ($("#history-postgres-clear").checked) payload.postgres_url = "";
+    else if (postgres.value.trim()) payload.postgres_url = postgres.value.trim();
+  }
+  if (!retention.disabled) payload.retention = Number(retention.value);
+  if (!defaultLimit.disabled) payload.default_limit = Number(defaultLimit.value);
+  for (const input of [retention, defaultLimit]) {
+    if (!input.disabled && (!input.checkValidity() || !Number.isInteger(Number(input.value)))) {
+      input.focus();
+      notifyValidationError("history-config", tr("history.invalid_number"), "#history-status");
+      return;
+    }
+  }
+  const existing = historyConfig.settings || {};
+  if ((payload.backend || existing.backend) === "postgres"
+      && !(payload.postgres_url || existing.postgres_url_configured)) {
+    notifyValidationError("history-config", tr("history.postgres_required"), "#history-status");
+    postgres.focus();
+    return;
+  }
+  if (payload.backend && payload.backend !== existing.backend
+      && !await confirmDialog(tr("history.switch_confirm", {
+        from: existing.backend || "—", to: payload.backend,
+      }), { title: tr("history.switch_title"), confirmLabel: tr("common.save_changes") })) return;
+  setInlineStatus("#history-status", tr("status.saving"));
+  try {
+    const response = await apiFetch("/api/history-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const result = await response.json();
+    renderHistoryConfig(result.config || historyConfig);
+    markTabDirty("setup", false);
+    notifySuccess(tr("history.saved"), { status: "#history-status", clearMs: 4000 });
+  } catch (error) {
+    notifyError("history-config", error, { status: "#history-status" });
   }
 }
 
@@ -31,18 +111,42 @@ function statusBadge(status) {
 function renderSetupChecklist(payload) {
   const box = $("#setup-checklist"); if (!box) return;
   const items = payload.items || [];
+  const summary = payload.summary || {};
   $("#setup-summary").textContent = tr("setup.summary", {
     errors: payload.summary?.errors || 0,
     warnings: payload.summary?.warnings || 0,
+    blocking: summary.blocking || 0,
   });
-  box.innerHTML = items.map(item => `
+  $("#setup-progress").textContent = tr("setup.progress", {
+    complete: summary.complete || 0,
+    required: summary.required || 0,
+  });
+  $("#setup-ready-label").textContent = payload.ready ? tr("setup.ready") : tr("setup.action_required");
+  $("#setup-readiness").classList.toggle("ready", !!payload.ready);
+  $("#setup-readiness").classList.toggle("blocked", !payload.ready);
+  const next = $("#setup-next");
+  const nextAction = payload.next_action || null;
+  next.classList.toggle("hidden", !nextAction);
+  if (nextAction) {
+    next.href = nextAction.path || "/setup";
+    next.textContent = setupActionLabel(nextAction);
+  }
+  window.setTabBadge?.("setup", summary.blocking || 0, summary.blocking ? "warn" : "");
+  box.innerHTML = items.map((item, index) => `
     <div class="setup-item">
-      <div>${statusBadge(item.status)}</div>
+      <div class="setup-step-number" aria-hidden="true">${index + 1}</div>
       <div>
-        <strong>${escapeHtml(setupItemLabel(item))}</strong>
+        <div class="setup-item-heading"><strong>${escapeHtml(setupItemLabel(item))}</strong>${statusBadge(item.status)}</div>
         <p class="muted">${escapeHtml(setupItemDetail(item))}</p>
+        ${item.action?.path ? `<a class="btn setup-item-action" href="${escapeHtml(item.action.path)}">${escapeHtml(setupActionLabel(item.action))}</a>` : ""}
       </div>
     </div>`).join("");
+}
+
+function setupActionLabel(action) {
+  const key = action?.key ? `setup.action.${action.key}` : "setup.configure";
+  const translated = tr(key);
+  return translated === key ? (action?.label || tr("setup.configure")) : translated;
 }
 
 function setupItemLabel(item) {
@@ -79,6 +183,7 @@ function renderChannelMatrix(payload) {
 
 onReady(() => {
   $("#setup-refresh")?.addEventListener("click", () => loadSetup({ force: true }));
+  $("#history-save")?.addEventListener("click", saveHistoryConfig);
 });
 
 // ---- Policy simulator ----
@@ -119,4 +224,3 @@ export async function runPolicySimulation(opts = {}) {
 onReady(() => {
   $("#policy-sim-run")?.addEventListener("click", () => runPolicySimulation());
 });
-

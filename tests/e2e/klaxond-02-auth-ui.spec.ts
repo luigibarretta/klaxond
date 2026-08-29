@@ -167,8 +167,16 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
 
     await page.goto(`${LOCAL_ORIGIN}/authentication`);
     await expect(page.locator("#auth-current-user")).toContainText("admin (mode=passkey)");
-    await page.once("dialog", dialog => dialog.accept());
-    await page.locator("#t-passkeys tbody tr", { hasText: "e2e virtual key" }).locator("[data-passkey-del]").click();
+    const deleteButton = page.locator("#t-passkeys tbody tr", { hasText: "e2e virtual key" }).locator("[data-passkey-del]");
+    await deleteButton.click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveAttribute("aria-modal", "true");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+    await expect(deleteButton).toBeFocused();
+    await expect(page.locator("#t-passkeys tbody")).toContainText("e2e virtual key");
+    await deleteButton.click();
+    await page.locator(".app-dialog .danger").click();
     await expect(page.locator("#t-passkeys tbody")).toContainText("No passkeys registered.");
   } finally {
     await cleanupAuthenticator?.();

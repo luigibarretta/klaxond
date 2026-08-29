@@ -16,7 +16,7 @@
 
 services:
   klaxond-backend:
-    image: ${KLAXOND_BACKEND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.16.1}
+    image: ${KLAXOND_BACKEND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.17.0}
     build:
       context: .
       dockerfile: Dockerfile
@@ -102,7 +102,7 @@ services:
       - klaxond-data:/data
 
   klaxond-frontend:
-    image: ${KLAXOND_FRONTEND_IMAGE:-ghcr.io/luigibarretta/klaxond-frontend:0.16.1}
+    image: ${KLAXOND_FRONTEND_IMAGE:-ghcr.io/luigibarretta/klaxond-frontend:0.17.0}
     build:
       context: .
       dockerfile: Dockerfile.frontend

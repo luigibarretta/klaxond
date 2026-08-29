@@ -101,6 +101,7 @@ export const EN_OPERATIONAL_MESSAGES = {
   "cascade.timeout_warning_title": "Delivery timeout safety",
   "cascade.timeout_warning": "Timeouts are customizable from 1 to 60 seconds. For ntfy, keep at least 15 seconds: a shorter timeout can expire after ntfy has accepted the message and trigger a duplicate fallback delivery.",
   "cascade.timeout_risk": "Warning: ntfy is set to {timeout}s, below the recommended {recommended}s. This can cause duplicate notifications.",
+  "cascade.timeout_risk_title": "Confirm low ntfy timeout",
   "cascade.timeout_invalid": "Every timeout must be a whole number from {min} to {max} seconds.",
   "cascade.low_timeout_confirm": "ntfy is set to {timeout}s, below the recommended {recommended}s. This can cause duplicate notifications. Save anyway?",
   "cascade.saved_with_warning": "Saved with a low ntfy timeout. Duplicate deliveries are possible.",
@@ -241,6 +242,7 @@ export const EN_OPERATIONAL_MESSAGES = {
 
   "shortcut.unsaved": "Unsaved changes",
   "shortcut.discard_confirm": "Tab \"{from}\" has unsaved changes. Discard and switch to \"{to}\"?",
+  "shortcut.discard": "Discard changes",
   "shortcut.title": "Keyboard shortcuts",
   "shortcut.save": "Save the active tab (clicks its primary Save button)",
   "shortcut.esc": "Blur the focused input; clears search filters",
@@ -263,6 +265,8 @@ export const EN_OPERATIONAL_MESSAGES = {
   "config.import_unchanged": "Unchanged files",
   "config.import_restore": "Will restore",
   "config.restore_confirm": "Restore klaxond config from \"{name}\" ({size} bytes)?\n\nThe current config will be auto-backed-up first. TOML files and full JSON bundles are accepted. After upload, in-memory state reloads. Continue?",
+  "config.restore_title": "Restore configuration",
+  "config.restore": "Restore",
   "config.restored_toast": "Config restored — reload page to see all UI state refresh",
 };
 

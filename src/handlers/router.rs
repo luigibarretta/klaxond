@@ -2,7 +2,8 @@ use super::auth_admin::{create_auth_token, revoke_auth_token, update_auth_config
 use super::config_admin::{config_import_preview_response, restore_config};
 use super::config_mutations::{
     cascade_toggle, render_preview, update_cascade_config, update_channel_config,
-    update_dedup_config, update_delivery_config, update_ntfy_topics, update_render_config,
+    update_dedup_config, update_delivery_config, update_emergency_config, update_history_config,
+    update_ntfy_topics, update_render_config,
 };
 use super::ingest::{api_test, ingest, update_ingest_auth};
 use super::observability::client_log_response;
@@ -195,6 +196,8 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
         "/api/cascade/toggle" => cascade_toggle(state, body),
         "/api/render-config" => update_render_config(state, body),
         "/api/cascade-config" => update_cascade_config(state, body),
+        "/api/emergency-config" => update_emergency_config(state, body),
+        "/api/history-config" => update_history_config(state, body),
         "/api/channel-config" => update_channel_config(state, body),
         "/api/delivery-config" => update_delivery_config(state, body),
         "/api/render-preview" => render_preview(state, body),

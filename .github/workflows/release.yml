@@ -1,4 +1,4 @@
-name: Public release
+name: Private validation
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: public-klaxond-${{ github.ref }}
+  group: private-klaxond-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -121,9 +121,10 @@ jobs:
 
   publish-platform:
     needs: check
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    # GHCR packages created during the public beta cannot be returned to private
+    # through the supported REST API. Keep publication paused until their
+    # visibility is reviewed in Package settings before the next public launch.
+    if: ${{ false }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:
@@ -253,9 +254,7 @@ jobs:
 
   assemble-main:
     needs: publish-platform
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -324,7 +323,7 @@ jobs:
 
   promote-release:
     needs: check
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -367,7 +366,7 @@ jobs:
 
   github-release:
     needs: promote-release
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
