@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.15.1 — 2026-08-29
+
+- Show only the native one-tap acknowledgement on ntfy emergency pushes,
+  while preserving the signed web confirmation fallback for Telegram and SMTP.
+
 ## 0.15.0 — 2026-08-29
 
 - Add durable emergency receipts for critical incidents: repeat ntfy delivery

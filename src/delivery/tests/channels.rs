@@ -69,10 +69,19 @@ async fn ntfy_emergency_uses_sequence_id_and_one_tap_post_action() {
         token: "secret-token".into(),
         handles: vec!["critical".into()],
     }];
+    cfg.public_url = "http://klaxond.test".into();
     let mut parts = sample_parts();
     parts.ntfy_sequence_id = Some("klaxond-emergency-receipt".into());
     parts.emergency_ack_url = Some("https://klaxond.test/api/emergency/receipt/ack".into());
     parts.emergency_ack_token = Some("signed-token".into());
+    parts.actions.insert(
+        0,
+        [
+            "view".into(),
+            "Acknowledge emergency".into(),
+            "http://klaxond.test/emergency/signed-token".into(),
+        ],
+    );
 
     assert!(post_to_ntfy_with_config(&state, &cfg, "critical", &parts, 2).await);
     let request = request_rx.await.unwrap();
@@ -82,6 +91,9 @@ async fn ntfy_emergency_uses_sequence_id_and_one_tap_post_action() {
     assert!(lower.contains("method=post"));
     assert!(lower.contains("headers.x-klaxond-emergency-token=signed-token"));
     assert!(lower.contains("clear=true"));
+    assert_eq!(lower.matches("acknowledge").count(), 1);
+    assert!(!lower.contains("/emergency/signed-token"));
+    assert!(lower.contains("http://example.test/runbook"));
 }
 
 #[tokio::test]

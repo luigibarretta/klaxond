@@ -30,7 +30,25 @@ pub(crate) async fn post_to_ntfy_with_config(
     }
     let title_b64 = general_purpose::STANDARD.encode(parts.title.as_bytes());
     let encoded_title = format!("=?UTF-8?B?{title_b64}?=");
-    let mut actions = parts.actions.iter().take(2).cloned().collect::<Vec<_>>();
+    // Emergency receipts expose a native one-tap POST action on ntfy. The
+    // signed web confirmation remains in `parts.actions` for Telegram and
+    // SMTP, but showing both on ntfy creates two equivalent ACK buttons.
+    let emergency_confirmation_url = parts
+        .emergency_ack_token
+        .as_ref()
+        .filter(|token| !token.is_empty())
+        .map(|token| format!("{}/emergency/{token}", cfg.public_url));
+    let mut actions = parts
+        .actions
+        .iter()
+        .filter(|[_, _, target]| {
+            emergency_confirmation_url
+                .as_deref()
+                .is_none_or(|confirmation| target != confirmation)
+        })
+        .take(2)
+        .cloned()
+        .collect::<Vec<_>>();
     let mut alertname = parts.alertname.trim().to_string();
     if alertname.is_empty() {
         let mut t = parts.title.clone();
