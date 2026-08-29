@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM nginx:1.29-alpine
+FROM nginx:1.31-alpine
 
 LABEL org.opencontainers.image.title="klaxond-frontend"
 LABEL org.opencontainers.image.description="Static klaxond admin UI with reverse proxy hooks for a remote backend"
