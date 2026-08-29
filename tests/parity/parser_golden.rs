@@ -42,13 +42,11 @@ fn grafana_parser_matches_python_golden() {
         parts.actions[0],
         ["view", "📖 Runbook", "https://docs.example/runbook"]
     );
+    assert_eq!(parts.actions[1][0], "view");
+    assert_eq!(parts.actions[1][1], "📊 Logs (Loki)");
     assert_eq!(
-        parts.actions[1],
-        [
-            "view",
-            "📊 Logs (Loki)",
-            "https://grafana.luigibarretta.com/d/loki-cluster-logs"
-        ]
+        parts.actions[1][2],
+        format!("{}/d/loki-cluster-logs", cfg.grafana_base)
     );
     assert_eq!(
         parts.actions[2],
