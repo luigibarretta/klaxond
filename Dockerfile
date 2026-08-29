@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     CARGO_TARGET_DIR=/src/target cargo build --release --locked \
     && cp /src/target/release/klaxond /tmp/klaxond
 
-FROM mirror.gcr.io/library/alpine:3.23
+FROM mirror.gcr.io/library/alpine:3.24
 
 LABEL org.opencontainers.image.title="klaxond"
 LABEL org.opencontainers.image.description="Notification routing service with noise control, delivery history, and admin UI"
