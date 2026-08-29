@@ -4,6 +4,9 @@
 
 ## 0.16.0 — 2026-08-29
 
+- Build amd64 and ARM64 images on GitHub's matching native Linux runners, gate
+  each platform independently, and assemble the public manifest only after all
+  four backend/frontend jobs succeed.
 - Run the release vulnerability gate through an immutable Trivy 0.68.2 image
   and scan both the `linux/amd64` and `linux/arm64` variants of every image.
 - Start the exact immutable backend manifest against a fresh volume during the

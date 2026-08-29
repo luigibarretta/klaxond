@@ -119,13 +119,13 @@ jobs:
       - name: Test browser workflows
         run: npm run test:e2e
 
-  publish-main:
+  publish-platform:
     needs: check
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -138,15 +138,30 @@ jobs:
           - image: klaxond
             dockerfile: Dockerfile
             description: Notification routing service with durable emergency acknowledgement
+            platform: linux/amd64
+            architecture: amd64
+            runner: ubuntu-24.04
+          - image: klaxond
+            dockerfile: Dockerfile
+            description: Notification routing service with durable emergency acknowledgement
+            platform: linux/arm64
+            architecture: arm64
+            runner: ubuntu-24.04-arm
           - image: klaxond-frontend
             dockerfile: Dockerfile.frontend
             description: Static Klaxond UI and reverse proxy for split deployments
+            platform: linux/amd64
+            architecture: amd64
+            runner: ubuntu-24.04
+          - image: klaxond-frontend
+            dockerfile: Dockerfile.frontend
+            description: Static Klaxond UI and reverse proxy for split deployments
+            platform: linux/arm64
+            architecture: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -164,8 +179,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
-            type=raw,value=sha-${{ github.sha }}
-            type=raw,value=edge
+            type=raw,value=sha-${{ github.sha }}-${{ matrix.architecture }}
           labels: |
             org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.description=${{ matrix.description }}
@@ -174,18 +188,18 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=Apache-2.0
 
-      - name: Build and push multi-architecture image
+      - name: Build and push native platform image
         id: build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.architecture }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.architecture }}
           provenance: mode=max
           sbom: true
 
@@ -196,23 +210,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
         run: bash scripts/test-clean-install.sh
 
-      - name: Attest image provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
-        with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
-          subject-digest: ${{ steps.build.outputs.digest }}
-          push-to-registry: true
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
-
-      - name: Sign immutable image digest
-        env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: cosign sign --yes "${IMAGE}@${DIGEST}"
-
-      - name: Scan both image platforms for fixed critical vulnerabilities
+      - name: Scan native image for fixed critical vulnerabilities
         env:
           IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -223,21 +221,106 @@ jobs:
           trivy_cache_dir="${RUNNER_TEMP}/trivy-cache"
           mkdir -p "${trivy_cache_dir}"
 
-          for platform in linux/amd64 linux/arm64; do
-            docker run --rm \
-              --volume /var/run/docker.sock:/var/run/docker.sock \
-              --volume "${docker_config_dir}:/root/.docker:ro" \
-              --volume "${trivy_cache_dir}:/var/cache/trivy" \
-              "${TRIVY_IMAGE}" image \
-                --cache-dir /var/cache/trivy \
-                --scanners vuln \
-                --platform "${platform}" \
-                --format table \
-                --severity CRITICAL \
-                --ignore-unfixed \
-                --exit-code 1 \
-                "${IMAGE}@${DIGEST}"
-          done
+          docker run --rm \
+            --volume /var/run/docker.sock:/var/run/docker.sock \
+            --volume "${docker_config_dir}:/root/.docker:ro" \
+            --volume "${trivy_cache_dir}:/var/cache/trivy" \
+            "${TRIVY_IMAGE}" image \
+              --cache-dir /var/cache/trivy \
+              --scanners vuln \
+              --platform "${{ matrix.platform }}" \
+              --format table \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              "${IMAGE}@${DIGEST}"
+
+      - name: Attest native image provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
+
+      - name: Sign immutable native image digest
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+  assemble-main:
+    needs: publish-platform
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      matrix:
+        image: [klaxond, klaxond-frontend]
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Assemble and verify the multi-architecture manifest
+        id: assemble
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          amd64_source="${IMAGE}:sha-${GITHUB_SHA}-amd64"
+          arm64_source="${IMAGE}:sha-${GITHUB_SHA}-arm64"
+          amd64_digest="$(docker buildx imagetools inspect "${amd64_source}" | sed -n 's/^Digest:[[:space:]]*//p' | head -n1)"
+          arm64_digest="$(docker buildx imagetools inspect "${arm64_source}" | sed -n 's/^Digest:[[:space:]]*//p' | head -n1)"
+          [[ "${amd64_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "${arm64_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+
+          immutable="${IMAGE}:sha-${GITHUB_SHA}"
+          docker buildx imagetools create \
+            --tag "${immutable}" \
+            --tag "${IMAGE}:edge" \
+            "${IMAGE}@${amd64_digest}" \
+            "${IMAGE}@${arm64_digest}"
+
+          manifest_report="$(docker buildx imagetools inspect "${immutable}")"
+          manifest_digest="$(sed -n 's/^Digest:[[:space:]]*//p' <<< "${manifest_report}" | head -n1)"
+          edge_digest="$(docker buildx imagetools inspect "${IMAGE}:edge" | sed -n 's/^Digest:[[:space:]]*//p' | head -n1)"
+          [[ "${manifest_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "${edge_digest}" = "${manifest_digest}"
+          grep -Eq 'Platform:[[:space:]]+linux/amd64' <<< "${manifest_report}"
+          grep -Eq 'Platform:[[:space:]]+linux/arm64' <<< "${manifest_report}"
+          printf 'digest=%s\n' "${manifest_digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: Attest multi-architecture manifest provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          subject-digest: ${{ steps.assemble.outputs.digest }}
+          push-to-registry: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
+
+      - name: Sign immutable multi-architecture manifest
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          DIGEST: ${{ steps.assemble.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
   promote-release:
     needs: check
