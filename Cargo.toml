@@ -10,7 +10,7 @@ repository = "https://github.com/luigibarretta/klaxond"
 anyhow = "1.0"
 auth-modules = { path = "vendor/auth-modules", default-features = false, features = ["audit", "errors", "ldap", "oidc-async", "oidc-pkce", "one-time-token", "password", "rate-limit", "recovery-codes", "security-profile", "session-policy", "totp"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 fs2 = "0.4"
 hmac = "0.12"
