@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.7
-FROM mirror.gcr.io/library/rust:1.96-alpine AS build
+FROM mirror.gcr.io/library/rust:1.98-alpine AS build
 
 WORKDIR /src/klaxond
 
