@@ -8,7 +8,7 @@
 
 services:
   klaxond:
-    image: ${KLAXOND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.17.1}
+    image: ${KLAXOND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.17.2}
     # Comment image: above and uncomment build: to build locally:
     # build:
     #   context: .
@@ -74,6 +74,8 @@ services:
       KLAXOND_INGEST_SECRET_SHELFMARK: ${KLAXOND_INGEST_SECRET_SHELFMARK:-}
       KLAXOND_INGEST_SECRET_PROWLARR: ${KLAXOND_INGEST_SECRET_PROWLARR:-}
       KLAXOND_INGEST_SECRET_DECYPHARR: ${KLAXOND_INGEST_SECRET_DECYPHARR:-}
+      KLAXOND_INGEST_SECRET_PVE: ${KLAXOND_INGEST_SECRET_PVE:-}
+      KLAXOND_INGEST_SECRET_BLACKSTART: ${KLAXOND_INGEST_SECRET_BLACKSTART:-}
       PORT: ${PORT:-8181}
       KLAXOND_CONFIG: ${KLAXOND_CONFIG:-/data/klaxond.toml}
       RENDER_CONFIG_PATH: ${RENDER_CONFIG_PATH:-/data/render-config.json}

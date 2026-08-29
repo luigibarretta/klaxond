@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.17.2 — 2026-08-29
+
+- Make inbound webhook routes fail closed: configuring a per-source secret now
+  both enables and authenticates that source, while unset sources reject
+  delivery instead of accepting unauthenticated requests.
+- Add dedicated authenticated `pve` and `blackstart` source coverage to setup,
+  the routing UI and OpenAPI; `/blackstart/{severity}` preserves Blackstart's
+  source identity instead of sharing the generic Grafana authentication slot.
+  Existing Blackstart clients using `/webhook/{severity}` are recognized by
+  their dedicated token during the rolling migration.
+- Count only enabled-and-protected sources in production readiness, so unused
+  integrations can remain safely disabled without blocking setup.
+
 ## 0.17.1 — 2026-08-29
 
 - Make browser logout navigation atomic so background requests that observe the

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.17.1
+  version: 0.17.2
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -249,7 +249,10 @@ paths:
       tags: [Ingest]
       operationId: ingestGrafanaAlertmanager
       summary: Receive a Grafana Alertmanager webhook.
-      security: []
+      security: &ingestSecurity
+        - ingestBearer: []
+        - ingestTokenHeader: []
+        - ingestTokenQuery: []
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -271,7 +274,7 @@ paths:
       tags: [Ingest]
       operationId: ingestBeszel
       summary: Receive a Beszel webhook.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -293,7 +296,7 @@ paths:
       tags: [Ingest]
       operationId: ingestHealthchecks
       summary: Receive a Healthchecks webhook.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -313,7 +316,7 @@ paths:
       tags: [Ingest]
       operationId: ingestUptimeKuma
       summary: Receive an Uptime Kuma webhook and normalize its heartbeat state.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -335,7 +338,7 @@ paths:
       tags: [Ingest]
       operationId: ingestWud
       summary: Receive a WUD HTTP trigger.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -355,7 +358,7 @@ paths:
       tags: [Ingest]
       operationId: ingestAuthentik
       summary: Receive an Authentik event webhook.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -375,7 +378,7 @@ paths:
       tags: [Ingest]
       operationId: ingestShelfmark
       summary: Receive a Shelfmark event webhook.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -395,7 +398,7 @@ paths:
       tags: [Ingest]
       operationId: ingestProwlarr
       summary: Receive a Prowlarr event webhook.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -415,7 +418,7 @@ paths:
       tags: [Ingest]
       operationId: ingestDecypharr
       summary: Receive a Decypharr event webhook.
-      security: []
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -435,7 +438,27 @@ paths:
       tags: [Ingest]
       operationId: ingestPve
       summary: Receive a Proxmox VE event webhook.
-      security: []
+      security: *ingestSecurity
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /blackstart/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestBlackstart
+      summary: Receive an authenticated Blackstart application-event webhook.
+      security: *ingestSecurity
       parameters:
         - $ref: "#/components/parameters/Severity"
         - $ref: "#/components/parameters/DryRun"
@@ -2215,6 +2238,18 @@ paths:
 
 components:
   securitySchemes:
+    ingestBearer:
+      type: http
+      scheme: bearer
+      description: Per-source inbound webhook secret.
+    ingestTokenHeader:
+      type: apiKey
+      in: header
+      name: X-Klaxond-Token
+    ingestTokenQuery:
+      type: apiKey
+      in: query
+      name: token
     bearerAuth:
       type: http
       scheme: bearer

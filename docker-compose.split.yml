@@ -16,7 +16,7 @@
 
 services:
   klaxond-backend:
-    image: ${KLAXOND_BACKEND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.17.1}
+    image: ${KLAXOND_BACKEND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.17.2}
     build:
       context: .
       dockerfile: Dockerfile
@@ -83,6 +83,8 @@ services:
       KLAXOND_INGEST_SECRET_SHELFMARK: ${KLAXOND_INGEST_SECRET_SHELFMARK:-}
       KLAXOND_INGEST_SECRET_PROWLARR: ${KLAXOND_INGEST_SECRET_PROWLARR:-}
       KLAXOND_INGEST_SECRET_DECYPHARR: ${KLAXOND_INGEST_SECRET_DECYPHARR:-}
+      KLAXOND_INGEST_SECRET_PVE: ${KLAXOND_INGEST_SECRET_PVE:-}
+      KLAXOND_INGEST_SECRET_BLACKSTART: ${KLAXOND_INGEST_SECRET_BLACKSTART:-}
       PORT: ${PORT:-8181}
       KLAXOND_CONFIG: ${KLAXOND_CONFIG:-/data/klaxond.toml}
       RENDER_CONFIG_PATH: ${RENDER_CONFIG_PATH:-/data/render-config.json}
@@ -102,7 +104,7 @@ services:
       - klaxond-data:/data
 
   klaxond-frontend:
-    image: ${KLAXOND_FRONTEND_IMAGE:-ghcr.io/luigibarretta/klaxond-frontend:0.17.1}
+    image: ${KLAXOND_FRONTEND_IMAGE:-ghcr.io/luigibarretta/klaxond-frontend:0.17.2}
     build:
       context: .
       dockerfile: Dockerfile.frontend

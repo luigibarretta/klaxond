@@ -184,8 +184,9 @@ export async function loadIngestAuth() {
       const row = document.createElement("tr");
       const status = info.configured
         ? `<span style='color:var(--green)'>${escapeHtml(tr("ingest.secret_set"))}</span>`
-        : `<span style='color:var(--muted)'>${escapeHtml(tr("ingest.permissive"))}</span>`;
-      const from = info.from === "env" ? `${escapeHtml(tr("ingest.env_readonly", { name: `KLAXOND_INGEST_SECRET_${src.toUpperCase()}` }))}`
+        : `<span style='color:var(--muted)'>${escapeHtml(tr("ingest.disabled"))}</span>`;
+      const envName = `KLAXOND_INGEST_SECRET_${src.toUpperCase().replaceAll("-", "_")}`;
+      const from = info.from === "env" ? `${escapeHtml(tr("ingest.env_readonly", { name: envName }))}`
                   : info.from === "toml" ? `<code>klaxond.toml</code>`
                   : "—";
       const isEnv = info.from === "env";
@@ -227,7 +228,7 @@ async function _ingestAuthAction(src, action) {
   }
   if (action === "clear") {
     const confirmed = await confirmDialog(
-      `Clear the webhook secret for "${src}"? The source will return to permissive mode.`,
+      `Clear the webhook secret for "${src}"? Klaxond will disable that inbound route.`,
       { title: tr("ingest.clear"), confirmLabel: tr("ingest.clear"), danger: true }
     );
     if (!confirmed) return;
@@ -259,4 +260,3 @@ async function _ingestAuthAction(src, action) {
     notifyError(`ingest-auth-${action}`, e);
   }
 }
-

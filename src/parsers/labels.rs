@@ -11,7 +11,7 @@ pub fn normalize_labels(source: &str, payload: &Value) -> Labels {
         ("status".to_string(), "firing".to_string()),
     ]);
     match source {
-        "grafana" => normalize_grafana_labels(payload, &mut out),
+        "grafana" | "blackstart" => normalize_grafana_labels(payload, &mut out),
         "beszel" => normalize_beszel_labels(payload, &mut out),
         "healthchecks" => normalize_healthchecks_labels(payload, &mut out),
         "wud" => normalize_wud_labels(payload, &mut out),

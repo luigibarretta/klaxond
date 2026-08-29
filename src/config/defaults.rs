@@ -1,6 +1,20 @@
 use super::{DedupSetting, InhibitionRule, Tier};
 use std::collections::HashMap;
 
+pub const INGEST_SOURCES: &[&str] = &[
+    "grafana",
+    "beszel",
+    "healthchecks",
+    "uptime-kuma",
+    "wud",
+    "authentik",
+    "shelfmark",
+    "prowlarr",
+    "decypharr",
+    "pve",
+    "blackstart",
+];
+
 pub const DEDUP_SOURCES: &[&str] = &[
     "grafana",
     "beszel",

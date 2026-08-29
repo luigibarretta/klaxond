@@ -52,15 +52,15 @@ reverse proxy are deliberately configured.
 ```bash
 gh repo clone luigibarretta/klaxond klaxond
 cd klaxond
-git checkout v0.17.1
+git checkout v0.17.2
 cp .env.example .env
 chmod 600 .env
 
 # Fill NTFY_URL, the topic names and matching NTFY_TOKEN_* values.
-# Set KLAXOND_IMAGE=klaxond:0.17.1 while registry publication is paused.
+# Set KLAXOND_IMAGE=klaxond:0.17.2 while registry publication is paused.
 ${EDITOR:-vi} .env
 docker compose config --quiet
-docker build --pull=false --tag klaxond:0.17.1 .
+docker build --pull=false --tag klaxond:0.17.2 .
 docker compose up -d --pull never
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz
@@ -265,7 +265,7 @@ keeps deploy-time secret managers authoritative.
 | `SMTP_USER`, `SMTP_PASSWORD` | SMTP tier |
 | `AUTH_SESSION_SECRET`, `AUTH_OIDC_CLIENT_SECRET`, `AUTH_BASIC_PASSWORD_HASH` | auth bootstrap/secrets |
 | `AUTH_TRUSTED_PROXY_CIDRS` | comma-separated addresses/subnets of actual reverse proxies |
-| `KLAXOND_INGEST_SECRET_<SOURCE>` | inbound webhook shared secrets |
+| `KLAXOND_INGEST_SECRET_<SOURCE>` | enables an inbound source and requires its shared secret; unset sources are disabled |
 
 ### Delivery history storage
 
@@ -458,7 +458,7 @@ Every UI-managed setting has a compose-managed path:
 |---|---|
 | Routing: ntfy URL, Telegram, SMTP | env vars or `/data/klaxond.toml` |
 | Routing: ntfy topics and bearer tokens | env vars, `[ntfy.topics]`, or `/data/ntfy-topics.json` |
-| Routing: inbound webhook secrets | `KLAXOND_INGEST_SECRET_<SOURCE>` or `[ingest.secrets]` |
+| Routing: enabled inbound sources and webhook secrets | `KLAXOND_INGEST_SECRET_<SOURCE>` or `[ingest.secrets]`; unset sources reject delivery |
 | Cascade, delivery policies, inhibitions, schedules | `/data/klaxond.toml` |
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
 | Noise control: burst grouping and repeat suppression | `[dedup]` bootstrap or `/data/dedup-config.json` |

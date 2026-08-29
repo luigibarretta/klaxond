@@ -1,6 +1,6 @@
 use super::super::config_admin::persist_reload;
 use super::super::{json_body, json_response, text};
-use crate::config::DEDUP_SOURCES;
+use crate::config::INGEST_SOURCES;
 use crate::state::AppState;
 use crate::util::{env_string, random_hex, toml_table_mut};
 use axum::body::{Body, Bytes};
@@ -24,10 +24,10 @@ pub(in crate::handlers) fn update_ingest_auth(state: &AppState, body: Bytes) -> 
         .unwrap_or("")
         .trim()
         .to_ascii_lowercase();
-    if !DEDUP_SOURCES.contains(&src.as_str()) {
+    if !INGEST_SOURCES.contains(&src.as_str()) {
         return text(
             StatusCode::BAD_REQUEST,
-            &format!("source must be one of {:?}", DEDUP_SOURCES),
+            &format!("source must be one of {:?}", INGEST_SOURCES),
         );
     }
     if !matches!(action.as_str(), "set" | "generate" | "clear") {
@@ -92,7 +92,7 @@ pub(super) fn verify_ingest_auth(
 ) -> (bool, String) {
     let secret = ingest_secret_for(state, source);
     if secret.is_empty() {
-        return (true, "no-secret".into());
+        return (false, "source-disabled-no-secret".into());
     }
     if let Some(auth) = headers.get("Authorization").and_then(|v| v.to_str().ok())
         && let Some((scheme, tok)) = auth.split_once(char::is_whitespace)
@@ -134,7 +134,7 @@ pub(in crate::handlers) fn ingest_secret_for(state: &AppState, source: &str) -> 
 
 pub(in crate::handlers) fn ingest_auth_payload(state: &AppState) -> Value {
     let mut sources = serde_json::Map::new();
-    for src in DEDUP_SOURCES {
+    for src in INGEST_SOURCES {
         let env_val = env_string(&ingest_secret_env_key(src));
         let toml_val = state
             .cfg()
@@ -159,7 +159,7 @@ pub(in crate::handlers) fn ingest_auth_payload(state: &AppState) -> Value {
     json!({
         "sources": sources,
         "auth_methods_accepted": ["Authorization: Bearer <secret>", "X-Klaxond-Token: <secret>", "?token=<secret> query param"],
-        "note": "Legacy permissive mode (no auth required) is in effect when a source has no secret configured.",
+        "note": "Sources without a configured secret are disabled and reject delivery. Setting or generating a secret enables the source.",
     })
 }
 

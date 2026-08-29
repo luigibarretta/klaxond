@@ -30,5 +30,6 @@ KLAXOND_BACKUP_DIR="$DATA/backups" \
 KLAXOND_SQLITE_PATH="$DATA/klaxond.db" \
 KLAXOND_HISTORY_BACKEND="sqlite" \
 KLAXOND_INGEST_SECRET_GRAFANA="e2e-secret" \
+KLAXOND_INGEST_SECRET_BLACKSTART="e2e-blackstart-secret" \
 NTFY_URL="http://127.0.0.1:9" \
 cargo run --quiet

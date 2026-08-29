@@ -27,6 +27,17 @@ fn dedup_defaults_cover_every_supported_source() {
 }
 
 #[test]
+fn ingest_sources_cover_non_deduplicated_routes() {
+    assert!(INGEST_SOURCES.contains(&"pve"));
+    assert!(INGEST_SOURCES.contains(&"blackstart"));
+    assert!(
+        DEDUP_SOURCES
+            .iter()
+            .all(|source| INGEST_SOURCES.contains(source))
+    );
+}
+
+#[test]
 fn resolved_notifications_fall_back_to_info_topic() {
     let tmp = TempDir::new().unwrap();
     let mut cfg = load_runtime_config(&temp_paths(&tmp)).unwrap();
@@ -165,6 +176,8 @@ const RUNTIME_COMPOSE_ENV_KEYS: &[&str] = &[
     "KLAXOND_INGEST_SECRET_SHELFMARK",
     "KLAXOND_INGEST_SECRET_PROWLARR",
     "KLAXOND_INGEST_SECRET_DECYPHARR",
+    "KLAXOND_INGEST_SECRET_PVE",
+    "KLAXOND_INGEST_SECRET_BLACKSTART",
     "PORT",
     "KLAXOND_CONFIG",
     "RENDER_CONFIG_PATH",

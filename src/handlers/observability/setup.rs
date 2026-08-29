@@ -1,5 +1,5 @@
 use super::super::ingest::ingest_secret_for;
-use crate::config::{DEDUP_SOURCES, RuntimeConfig};
+use crate::config::{INGEST_SOURCES, RuntimeConfig};
 use crate::state::AppState;
 use serde_json::{Value, json};
 
@@ -67,7 +67,7 @@ fn connectivity_item(matrix: &Value) -> Value {
 }
 
 fn count_ingest_secrets(state: &AppState) -> usize {
-    DEDUP_SOURCES
+    INGEST_SOURCES
         .iter()
         .filter(|source| !ingest_secret_for(state, source).is_empty())
         .count()
@@ -97,13 +97,18 @@ fn auth_item(cfg: &RuntimeConfig) -> Value {
 }
 
 fn ingest_auth_item(configured: usize) -> Value {
-    let total = DEDUP_SOURCES.len();
+    let total = INGEST_SOURCES.len();
+    let disabled = total.saturating_sub(configured);
     json!({
         "key": "ingest_auth",
         "label": "Inbound webhook auth",
-        "status": if configured == total { "ok" } else if configured == 0 { "warn" } else { "partial" },
-        "detail": format!("{configured}/{total} sources have a shared secret"),
-        "values": {"configured": configured, "total": total},
+        "status": if configured > 0 { "ok" } else { "warn" },
+        "detail": if configured > 0 {
+            format!("{configured} sources enabled and protected; {disabled} disabled")
+        } else {
+            "all inbound sources are disabled".to_string()
+        },
+        "values": {"configured": configured, "total": total, "disabled": disabled},
         "required": true,
         "action": {"key": "ingest_auth", "path": "/routing", "label": "Secure webhooks"},
     })
@@ -236,4 +241,20 @@ fn status_count(items: &[Value], matches_status: fn(&str) -> bool) -> usize {
                 .is_some_and(matches_status)
         })
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ingest_auth_item;
+
+    #[test]
+    fn readiness_requires_one_enabled_and_protected_ingest_source() {
+        let disabled = ingest_auth_item(0);
+        assert_eq!(disabled["status"], "warn");
+
+        let enabled = ingest_auth_item(1);
+        assert_eq!(enabled["status"], "ok");
+        assert_eq!(enabled["values"]["configured"], 1);
+        assert!(enabled["values"]["disabled"].as_u64().unwrap() > 0);
+    }
 }

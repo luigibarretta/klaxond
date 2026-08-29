@@ -191,6 +191,16 @@ test.describe("live Authentik OIDC", () => {
       authentikSessionStarted = true;
       expect((await currentUser(context))?.mode).toBe("oidc");
 
+      const setupResponse = await context.request.get(`${baseURL}/api/setup-status`);
+      expect(setupResponse.status()).toBe(200);
+      const setup = (await setupResponse.json()) as {
+        ready?: boolean;
+        summary?: { blocking?: number; complete?: number; required?: number };
+      };
+      expect(setup.ready).toBe(true);
+      expect(setup.summary?.blocking).toBe(0);
+      expect(setup.summary?.complete).toBe(setup.summary?.required);
+
       await localLogout(page, context);
       expect(await currentUser(context)).toBeNull();
 

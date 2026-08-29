@@ -88,6 +88,7 @@ fn all_runtime_operations_are_documented_in_openapi() {
         ("post", "/prowlarr/{severity}"),
         ("post", "/decypharr/{severity}"),
         ("post", "/pve/{severity}"),
+        ("post", "/blackstart/{severity}"),
         ("get", "/api/auth/login"),
         ("get", "/api/auth/methods"),
         ("post", "/api/auth/local/login"),

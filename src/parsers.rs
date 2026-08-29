@@ -69,7 +69,7 @@ pub fn parse_source(
     cfg: &RuntimeConfig,
 ) -> (String, Parts) {
     match source {
-        "grafana" => (
+        "grafana" | "blackstart" => (
             severity.to_string(),
             parse_grafana_payload(payload, severity, cfg),
         ),

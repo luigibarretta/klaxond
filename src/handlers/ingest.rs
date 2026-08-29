@@ -30,12 +30,27 @@ pub(super) async fn ingest(
     body: Bytes,
     peer: SocketAddr,
 ) -> Response<Body> {
-    let route = match ingest_route(state, path, full_path) {
+    let route = match ingest_route(path, full_path) {
         Ok(route) => route,
         Err(err) => return ingest_route_error_response(err),
     };
-    let source = route.source;
-    let (auth_ok, auth_reason) = verify_ingest_auth(state, source, headers, &route.qs);
+    let mut source = route.source;
+    let (mut auth_ok, mut auth_reason) = verify_ingest_auth(state, source, headers, &route.qs);
+    if !auth_ok && source == "grafana" {
+        let (blackstart_ok, blackstart_reason) =
+            verify_ingest_auth(state, "blackstart", headers, &route.qs);
+        if blackstart_ok {
+            source = "blackstart";
+            auth_ok = true;
+            auth_reason = "blackstart-legacy-webhook-route".into();
+            tracing::warn!(
+                peer = %peer.ip(),
+                "accepted Blackstart credentials on deprecated /webhook route; use /blackstart"
+            );
+        } else if auth_reason == "source-disabled-no-secret" {
+            auth_reason = blackstart_reason;
+        }
+    }
     if !auth_ok {
         tracing::warn!(
             "[{}/{}] webhook auth rejected: {} (from {})",
@@ -44,10 +59,19 @@ pub(super) async fn ingest(
             auth_reason,
             peer.ip()
         );
-        return text(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized (per-source secret required)",
-        );
+        return if auth_reason == "source-disabled-no-secret" {
+            text(StatusCode::NOT_FOUND, "ingest source disabled")
+        } else {
+            text(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized (per-source secret required)",
+            )
+        };
+    }
+    if !state.with_cfg(|cfg| cfg.handles_severity(&route.severity)) {
+        return ingest_route_error_response(pipeline::IngestRouteError::UnknownSeverity(
+            route.severity,
+        ));
     }
     let payload = match parse_ingest_payload(&body) {
         Ok(payload) => payload,

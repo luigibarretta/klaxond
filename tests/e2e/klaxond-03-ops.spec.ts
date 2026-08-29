@@ -59,6 +59,51 @@ test("webhook dry-run exercises ingest pipeline without sending", async ({ reque
   expect(body.parsed.title).toBe("🚨 Grafana: HostLoadHigh — it1-prd-dev-01");
 });
 
+test("ingest routes are fail-closed and Blackstart has a dedicated identity", async ({ request }) => {
+  const payload = {
+    status: "firing",
+    commonLabels: {
+      alertname: "BlackstartPolicyEvent",
+      component: "blackstart",
+      host: "it1-prd-mgmt-01"
+    },
+    commonAnnotations: { summary: "dry-run policy event" },
+    alerts: [{ generatorURL: "https://blackstart.example/events/1" }]
+  };
+
+  const missingGrafanaToken = await request.post("/webhook/warning?dry_run=1", {
+    data: payload
+  });
+  expect(missingGrafanaToken.status()).toBe(401);
+
+  const disabledSource = await request.post("/beszel/warning?dry_run=1", {
+    headers: { Authorization: "Bearer any-token-is-rejected" },
+    data: payload
+  });
+  expect(disabledSource.status()).toBe(404);
+
+  const dedicated = await request.post("/blackstart/warning?dry_run=1", {
+    headers: { Authorization: "Bearer e2e-blackstart-secret" },
+    data: payload
+  });
+  await expect(dedicated).toBeOK();
+  expect(await dedicated.json()).toMatchObject({
+    dry_run: true,
+    source: "blackstart",
+    severity: "warning"
+  });
+
+  const rollingCompatibility = await request.post("/webhook/warning?dry_run=1", {
+    headers: { Authorization: "Bearer e2e-blackstart-secret" },
+    data: payload
+  });
+  await expect(rollingCompatibility).toBeOK();
+  expect(await rollingCompatibility.json()).toMatchObject({
+    dry_run: true,
+    source: "blackstart"
+  });
+});
+
 test("inhibition rule simulator reports source and suppression matches", async ({ request }) => {
   const source = await request.post("/api/inhibition-rules/test", {
     data: {

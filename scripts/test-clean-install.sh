@@ -48,6 +48,13 @@ grep -q '"key": "auth"' <<<"$SETUP_STATUS"
 grep -q '"key": "connectivity"' <<<"$SETUP_STATUS"
 curl -fsS "http://${PUBLISHED}/emergencies" | grep -q 'id="emergency-policy-save"'
 
+# A pristine install exposes no anonymous ingestion surface. Routes become
+# usable only after the operator configures the corresponding source secret.
+test "$(curl -sS -o /dev/null -w '%{http_code}' \
+  -H 'Content-Type: application/json' \
+  -d '{"status":"firing"}' \
+  "http://${PUBLISHED}/webhook/info?dry_run=1")" = "404"
+
 docker exec "$CONTAINER" klaxond doctor --offline --json >/dev/null
 
 # The development-only escape hatches must be explicit. This proves that a

@@ -26,18 +26,11 @@ pub(super) struct DeliveryCandidate {
     pub(super) common_labels: HashMap<String, String>,
 }
 
-pub(super) fn ingest_route(
-    state: &AppState,
-    path: &str,
-    full_path: &str,
-) -> Result<IngestRoute, IngestRouteError> {
+pub(super) fn ingest_route(path: &str, full_path: &str) -> Result<IngestRoute, IngestRouteError> {
     let Some(source) = ingest_source(path) else {
         return Err(IngestRouteError::NotFound);
     };
     let severity = path.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
-    if !state.with_cfg(|cfg| cfg.handles_severity(&severity)) {
-        return Err(IngestRouteError::UnknownSeverity(severity));
-    }
     Ok(IngestRoute {
         source,
         severity,
@@ -67,6 +60,7 @@ fn ingest_source(path: &str) -> Option<&'static str> {
         ("/prowlarr/", "prowlarr"),
         ("/decypharr/", "decypharr"),
         ("/pve/", "pve"),
+        ("/blackstart/", "blackstart"),
     ]
     .iter()
     .find_map(|(prefix, source)| path.starts_with(prefix).then_some(*source))
@@ -181,7 +175,7 @@ pub(super) fn delivery_candidate(
 }
 
 fn common_labels(source: &str, payload: &Value) -> HashMap<String, String> {
-    if source != "grafana" {
+    if !matches!(source, "grafana" | "blackstart") {
         return HashMap::new();
     }
     payload
@@ -239,4 +233,15 @@ pub(super) async fn maybe_buffer_dedup(
             },
         )
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ingest_source;
+
+    #[test]
+    fn dedicated_blackstart_route_preserves_source_identity() {
+        assert_eq!(ingest_source("/blackstart/critical"), Some("blackstart"));
+        assert_eq!(ingest_source("/webhook/critical"), Some("grafana"));
+    }
 }

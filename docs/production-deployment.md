@@ -22,7 +22,7 @@ Clone the numbered source tag through an authenticated GitHub CLI:
 ```bash
 gh repo clone luigibarretta/klaxond klaxond
 cd klaxond
-git checkout v0.17.1
+git checkout v0.17.2
 cp .env.example .env
 chmod 600 .env
 ```
@@ -35,8 +35,8 @@ The shipped defaults never point at the maintainer's infrastructure.
 
 ```bash
 docker compose config --quiet
-docker build --pull=false --tag klaxond:0.17.1 .
-# Set KLAXOND_IMAGE=klaxond:0.17.1 in .env.
+docker build --pull=false --tag klaxond:0.17.2 .
+# Set KLAXOND_IMAGE=klaxond:0.17.2 in .env.
 docker compose up -d --pull never
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz
@@ -74,8 +74,11 @@ openssl rand -hex 32
 
 Store each result in `KLAXOND_INGEST_SECRET_GRAFANA`,
 `KLAXOND_INGEST_SECRET_BESZEL`, or the matching source variable. Configure the
-sender with the same bearer/shared secret. Never put `.env`, exported settings
-bundles or `/data` backups in source control.
+sender with the same bearer/shared secret. A source without a secret is disabled
+and returns a non-success response; there is no unauthenticated compatibility
+mode. `blackstart` has a dedicated `/blackstart/{severity}` route so its token is
+not confused with the generic `/webhook/{severity}` (`grafana`) identity. Never
+put `.env`, exported settings bundles or `/data` backups in source control.
 
 The public legal pages and health endpoint intentionally remain reachable; the
 admin APIs and UI follow the configured authentication policy.
@@ -151,8 +154,8 @@ Run the same clean-install gate used by CI against the locally built image,
 then record its immutable image ID before rollout:
 
 ```bash
-KLAXOND_CLEAN_INSTALL_IMAGE=klaxond:0.17.1 scripts/test-clean-install.sh
-docker image inspect klaxond:0.17.1 --format '{{.Id}}'
+KLAXOND_CLEAN_INSTALL_IMAGE=klaxond:0.17.2 scripts/test-clean-install.sh
+docker image inspect klaxond:0.17.2 --format '{{.Id}}'
 docker inspect klaxond --format '{{.Image}}'
 ```
 

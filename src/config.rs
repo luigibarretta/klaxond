@@ -21,7 +21,7 @@ mod tests;
 pub use auth_sidecar::save_auth;
 pub use dedup_config::save_dedup;
 pub use defaults::{
-    DEDUP_SOURCES, NTFY_RECOMMENDED_TIMEOUT_SECONDS, TIER_TIMEOUT_MAX_SECONDS,
+    DEDUP_SOURCES, INGEST_SOURCES, NTFY_RECOMMENDED_TIMEOUT_SECONDS, TIER_TIMEOUT_MAX_SECONDS,
     TIER_TIMEOUT_MIN_SECONDS, default_component_dashboards, default_dedup, default_icons,
     default_inhibition_rules, default_priorities, default_tag_prefixes, default_tiers,
     recommended_tier_timeout,
