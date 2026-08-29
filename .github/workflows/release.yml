@@ -380,8 +380,11 @@ jobs:
         run: |
           mkdir -p dist
           cp docker-compose.yml .env.example dist/
-          sha256sum dist/docker-compose.yml dist/.env.example > dist/SHA256SUMS
+          (cd dist && sha256sum docker-compose.yml .env.example > SHA256SUMS)
           tar -C dist -czf "dist/klaxond-${GITHUB_REF_NAME#v}-compose.tar.gz" docker-compose.yml .env.example SHA256SUMS
+          mkdir -p dist/verify
+          tar -xzf "dist/klaxond-${GITHUB_REF_NAME#v}-compose.tar.gz" -C dist/verify
+          (cd dist/verify && sha256sum --check SHA256SUMS && docker compose config --quiet)
 
       - name: Publish GitHub release
         env:

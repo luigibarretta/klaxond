@@ -50,8 +50,8 @@ deliberately add authentication and an HTTPS reverse proxy.
 
 ```bash
 mkdir klaxond && cd klaxond
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.0/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.0/.env.example
+curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/.env.example
 cp .env.example .env
 chmod 600 .env
 

@@ -20,8 +20,8 @@ Download the versioned release bundle or the two files from the matching tag:
 
 ```bash
 mkdir klaxond && cd klaxond
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.0/docker-compose.yml
-curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.0/.env.example
+curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.1/.env.example
 cp .env.example .env
 chmod 600 .env
 ```
@@ -145,13 +145,13 @@ Actions workflow and carries GitHub provenance plus an SBOM. With Cosign:
 cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/luigibarretta/klaxond/.github/workflows/release.yml@refs/heads/main$' \
-  ghcr.io/luigibarretta/klaxond:0.16.0
+  ghcr.io/luigibarretta/klaxond:0.16.1
 ```
 
 Inspect the resolved digest before and after rollout:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/luigibarretta/klaxond:0.16.0
+docker buildx imagetools inspect ghcr.io/luigibarretta/klaxond:0.16.1
 docker inspect klaxond --format '{{.Image}}'
 ```
 

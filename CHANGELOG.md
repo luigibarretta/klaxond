@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.16.1 — 2026-08-29
+
+- Make the turnkey release bundle self-verifying after extraction by recording
+  archive-relative filenames in `SHA256SUMS`.
+
 ## 0.16.0 — 2026-08-29
 
 - Build amd64 and ARM64 images on GitHub's matching native Linux runners, gate
