@@ -14,6 +14,6 @@
   "devDependencies": {
     "@playwright/test": "1.57.0",
     "@redocly/cli": "2.37.0",
-    "swagger-ui-dist": "5.30.3"
+    "swagger-ui-dist": "5.32.14"
   }
 }
