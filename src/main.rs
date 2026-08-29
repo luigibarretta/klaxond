@@ -15,6 +15,9 @@ async fn main() -> Result<()> {
     {
         return klaxond::history::run_migrate_cli(&args[1..]);
     }
+    if args.first().is_some_and(|arg| arg == "doctor") {
+        return klaxond::doctor::run_cli(&args[1..]).await;
+    }
 
     let log_buffer = klaxond::log_buffer::init_global(500);
     tracing_subscriber::registry()

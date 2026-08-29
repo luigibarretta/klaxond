@@ -8,6 +8,8 @@ fn emergency_policy_parses_production_bounds() {
         r#"
 [emergency]
 enabled = true
+allow_insecure_public_url = false
+allow_ntfy_only = false
 severities = ["critical"]
 retry_seconds = 60
 expire_seconds = 3600
@@ -24,6 +26,8 @@ exclude_sources = ["api-test"]
 
     let cfg = super::super::readers::read_emergency(&value).unwrap();
     assert!(cfg.enabled);
+    assert!(!cfg.allow_insecure_public_url);
+    assert!(!cfg.allow_ntfy_only);
     assert_eq!(cfg.retry_seconds, 60);
     assert_eq!(cfg.expire_seconds, 3_600);
     assert_eq!(cfg.max_attempts, 50);

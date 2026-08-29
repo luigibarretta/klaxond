@@ -29,6 +29,8 @@ pub struct HistoryConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EmergencyConfig {
     pub enabled: bool,
+    pub allow_insecure_public_url: bool,
+    pub allow_ntfy_only: bool,
     pub severities: Vec<String>,
     pub retry_seconds: u64,
     pub expire_seconds: u64,
@@ -45,6 +47,8 @@ impl Default for EmergencyConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            allow_insecure_public_url: false,
+            allow_ntfy_only: false,
             severities: vec!["critical".to_string()],
             retry_seconds: 60,
             expire_seconds: 3_600,

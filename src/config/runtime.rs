@@ -1,6 +1,7 @@
 use super::auth_sidecar::load_auth;
 use super::dedup_config::load_dedup;
 use super::ntfy_topics::load_ntfy_topics;
+use super::preflight::validate_runtime_config;
 use super::readers::{
     read_delivery, read_emergency, read_history, read_inhibition_rules, read_schedules, read_tiers,
 };
@@ -64,7 +65,9 @@ pub fn load_runtime_config(paths: &Paths) -> Result<RuntimeConfig> {
     let routing = load_routing(paths, &toml)?;
     let channels = load_channels(paths, &toml)?;
     let server = load_server(&toml);
-    Ok(assemble(paths, toml, render, routing, channels, server).with_channels())
+    let cfg = assemble(paths, toml, render, routing, channels, server).with_channels();
+    validate_runtime_config(&cfg)?;
+    Ok(cfg)
 }
 
 fn read_toml(paths: &Paths) -> toml::Value {

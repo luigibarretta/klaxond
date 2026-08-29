@@ -10,6 +10,7 @@ mod defaults;
 mod models;
 mod ntfy_topics;
 mod paths;
+mod preflight;
 mod readers;
 mod render;
 mod runtime;
@@ -33,6 +34,7 @@ pub use models::{
 };
 pub use ntfy_topics::save_ntfy_topics;
 pub use paths::Paths;
+pub use preflight::validate_runtime_config;
 pub use render::save_render_config;
 pub use runtime::load_runtime_config;
 pub use sidecars::restore_sidecars_from_toml;

@@ -31,7 +31,7 @@ timeout_seconds = 10
 # Render — how alerts are formatted for the ntfy push
 # ============================================================================
 [render]
-grafana_base = "https://grafana.luigibarretta.com"
+grafana_base = "https://grafana.example.com"
 grafana_render_base = ""
 grafana_render_token = ""
 render_image_ttl = 900
@@ -73,8 +73,8 @@ semaphore  = ["Semaphore tasks",      "/d/infra-semaphore-tasks"]
 fail2ban   = ["Fail2ban",             "/d/fail2ban-cluster"]
 dns        = ["DNS resolvers",        "/d/infra-dns-resolvers"]
 clamav     = ["ClamAV logs",          "/d/loki-cluster-logs?var-container=clamd"]
-zfs        = ["ZFS / nas-01 logs",    "/d/loki-cluster-logs?var-host=it1-prd-nas-01"]
-beszel     = ["Beszel UI",            "https://beszel.luigibarretta.com/"]
+zfs        = ["ZFS / NAS logs",       "/d/loki-cluster-logs?var-host=your-nas-host"]
+beszel     = ["Beszel UI",            "https://beszel.example.com/"]
 
 # Per-component IMAGE override: "dashboard_uid:panel_id" (or just "dashboard_uid").
 # The PNG attached to the push uses THIS panel even if the button (above) points
@@ -96,6 +96,12 @@ default_ttl_seconds = 3600
 # fallback channels. A firing incident repeats until ACK, recovery or expiry.
 [emergency]
 enabled = false
+# Deliberate development-only escape hatch. Production emergency callbacks and
+# ntfy delivery must use HTTPS.
+allow_insecure_public_url = false
+# Deliberate single-channel mode. Production defaults require Telegram or SMTP
+# as an independent fallback for ntfy.
+allow_ntfy_only = false
 severities = ["critical"]
 retry_seconds = 60
 expire_seconds = 3600

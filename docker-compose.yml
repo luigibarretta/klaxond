@@ -8,16 +8,14 @@
 
 services:
   klaxond:
-    image: ghcr.io/your-org/klaxond:latest  # or: git.luigibarretta.com/luigibarretta/klaxond:latest
+    image: ghcr.io/luigibarretta/klaxond:0.16.0
     # Comment image: above and uncomment build: to build locally:
     # build:
     #   context: .
-    #   additional_contexts:
-    #     auth-modules: ../auth-modules
     container_name: klaxond
     restart: always
     ports:
-      - "8181:8181"
+      - "${KLAXOND_BIND:-127.0.0.1:8181}:8181"
     environment:
       NTFY_URL: ${NTFY_URL:-}
       NTFY_TOKEN_INFO: ${NTFY_TOKEN_INFO:-}
@@ -28,6 +26,8 @@ services:
       TOPIC_CRIT: ${TOPIC_CRIT:-}
       CASCADE_ENABLED: ${CASCADE_ENABLED:-false}
       KLAXOND_EMERGENCY_ENABLED: ${KLAXOND_EMERGENCY_ENABLED:-false}
+      KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL: ${KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL:-false}
+      KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY: ${KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY:-false}
       KLAXOND_EMERGENCY_SEVERITIES: ${KLAXOND_EMERGENCY_SEVERITIES:-critical}
       KLAXOND_EMERGENCY_RETRY_SECONDS: ${KLAXOND_EMERGENCY_RETRY_SECONDS:-60}
       KLAXOND_EMERGENCY_EXPIRE_SECONDS: ${KLAXOND_EMERGENCY_EXPIRE_SECONDS:-3600}

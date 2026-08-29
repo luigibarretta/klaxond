@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.16.0 — 2026-08-29
+
+- Make the source checkout and Docker build standalone by vendoring the reviewed
+  authentication crate with immutable provenance and Apache-2.0 licensing.
+- Add fail-closed emergency startup validation for canonical HTTPS callbacks,
+  token-bearing ntfy routes, an independent Telegram/SMTP fallback and a lease
+  long enough for the configured sequential delivery budget.
+- Add `klaxond doctor` with human and JSON output, offline/online readiness
+  checks, persistence validation and safe public-authentication diagnostics.
+- Add a loopback-safe turnkey Compose default, versioned public GHCR images for
+  amd64/arm64, SBOM and provenance attestations, keyless Cosign signatures,
+  critical-vulnerability scanning and exact-digest release promotion.
+- Add clean-install validation and public deployment, security and contribution
+  documentation for operators outside the original homelab.
+
 ## 0.15.1 — 2026-08-29
 
 - Show only the native one-tap acknowledgement on ntfy emergency pushes,

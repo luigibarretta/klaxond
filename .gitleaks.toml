@@ -1,0 +1,21 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public RFC 4226 HOTP/TOTP test vector, never a deployed credential"
+targetRules = ["generic-api-key"]
+regexTarget = "secret"
+regexes = [
+  '''GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ''',
+]
+
+[[allowlists]]
+description = "Empty secret-variable names in the distributable environment template"
+targetRules = ["generic-api-key"]
+paths = [
+  '''^\.env\.example$''',
+]
+regexTarget = "match"
+regexes = [
+  '''KLAXOND_INGEST_SECRET_[A-Z_]+=$''',
+]

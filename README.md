@@ -44,15 +44,54 @@ A small admin UI lets you watch deliveries in real time, edit channel routing wi
 
 ## Quick start
 
+The versioned Compose bundle is the shortest supported installation path. It
+uses the public multi-architecture image and binds the UI to loopback until you
+deliberately add authentication and an HTTPS reverse proxy.
+
 ```bash
-git clone https://github.com/your-org/klaxond.git
-cd klaxond
+mkdir klaxond && cd klaxond
+curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.0/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/luigibarretta/klaxond/v0.16.0/.env.example
 cp .env.example .env
-# edit .env to fill the secrets: NTFY_TOKEN_*, TELEGRAM_BOT_TOKEN, SMTP_USER/PASSWORD
+chmod 600 .env
+
+# Fill NTFY_URL, the topic names and matching NTFY_TOKEN_* values.
+${EDITOR:-vi} .env
+docker compose config --quiet
+docker compose pull
 docker compose up -d
+docker compose exec klaxond klaxond doctor --offline
+curl -fsS http://127.0.0.1:8181/healthz
 ```
 
-Open `http://localhost:8181/` to access the admin UI. Edit channel URLs/topics from the Routing tab; secrets stay in your `.env`.
+Open `http://127.0.0.1:8181/` locally, or use an SSH tunnel when the Docker host
+is remote:
+
+```bash
+ssh -L 8181:127.0.0.1:8181 user@docker-host
+```
+
+Configure Basic, LDAP, OIDC or trusted-proxy authentication from the
+Authentication page before changing `KLAXOND_BIND` or publishing the service.
+Set a unique `KLAXOND_INGEST_SECRET_<SOURCE>` for every webhook source you use.
+The named `/data` volume contains the database, ACK signing key and configuration;
+back it up as one unit.
+
+For Pushover-style emergency delivery, first configure a canonical
+`KLAXOND_PUBLIC_URL` using HTTPS, a token-bearing ntfy topic for every emergency
+severity, and at least one complete Telegram or SMTP fallback. Then enable
+`KLAXOND_EMERGENCY_ENABLED=true`, restart, and run the online preflight:
+
+```bash
+docker compose up -d
+docker compose exec klaxond klaxond doctor
+```
+
+Klaxond refuses to start emergency mode when these guarantees are incomplete.
+The two explicit escape hatches (`ALLOW_INSECURE_PUBLIC_URL` and
+`ALLOW_NTFY_ONLY`) are intended only for deliberate local testing. See
+[`docs/production-deployment.md`](docs/production-deployment.md) for reverse
+proxy, authentication, backup, upgrade, rollback and image-verification steps.
 
 ### Public legal and accessibility pages
 
@@ -453,6 +492,7 @@ UI-saved values at runtime.
 | `GRAFANA_BASE` / `GRAFANA_RENDER_BASE` / `GRAFANA_RENDER_TOKEN` / `RENDER_IMAGE_TTL` | `[render].*` |
 | `KLAXOND_PUBLIC_URL` | `[server].public_url` |
 | `ACK_DEFAULT_TTL_SECONDS` | `[acks].default_ttl_seconds` |
+| `KLAXOND_EMERGENCY_*` | `[emergency]`; production preflight requires HTTPS, publish tokens, fallback and a safe lease |
 | `CASCADE_ENABLED` | `[cascade].default_enabled_for_webhook` |
 | `PORT` | `[server].port` |
 | `AUTH_SESSION_SECRET` | `[auth].session_secret` or `auth-config.json` |
@@ -712,7 +752,7 @@ cargo test --locked --all-features -- --nocapture
 KLAXOND_TEST_POSTGRES_URL=postgres://klaxond:password@127.0.0.1:5432/klaxond_test \
   cargo test --locked --all-features -- --ignored --nocapture --test-threads=1
 npm run test:e2e
-docker buildx build --build-context auth-modules=../auth-modules -t klaxond:local .
+docker buildx build -t klaxond:local .
 ```
 
 The live Authentik canary is intentionally separate from the portable suite. In
@@ -726,8 +766,10 @@ AUTHENTIK_E2E_ACCESS_PLAYBOOK=/opt/ansible/homelab-ansible/playbooks/manage-klax
   npm run test:e2e:authentik
 ```
 
-CI pins the shared `auth-modules` checkout to the reviewed commit recorded in
-`.gitea/workflows/build.yml`; dependency upgrades are explicit, tested changes.
+The reviewed `auth-modules` crate is vendored under `vendor/auth-modules` so a
+public checkout builds without private dependencies. Its immutable upstream
+commit and selected license are recorded in the vendored README; upgrades are
+explicit, reviewed and covered by the complete authentication test suite.
 
 `npm run nasa:warn` runs a warning-only maintainability profile inspired by
 NASA/JPL rules. It reports files over 300 LOC, functions over 60 LOC and
@@ -771,8 +813,7 @@ The threat model and review checklist are tracked in
 Apache-2.0 — see [LICENSE](./LICENSE).
 
 ---
-> **This repository is the source of truth for klaxond**. Since 2026-06-10,
-> deploys clone this repo at the pinned tag and build/deploy the image published
-> by the Gitea registry. Release flow: commit here → tag `vX.Y.Z` → CI
-> build/push → automatic Semaphore deploy with `klaxond_image_tag`. Branch
-> pushes still build `:main` for validation, but never deploy it to production.
+> The maintainer's Gitea repository is the canonical write source and is mirrored
+> to GitHub with exact-SHA verification. Tags promote the already-tested internal
+> image for the maintainer's deployment and the already-tested multi-architecture
+> GHCR manifest for public users. Mutable branch images never deploy to production.

@@ -12,6 +12,7 @@ fallback_check() {
     -g '!target/**'
     -g '!node_modules/**'
     -g '!auth-modules/**'
+    -g '!vendor/auth-modules/**'
     -g '!static/vendor/**'
     -g '!static/mermaid.min.js'
     -g '!docs/**'

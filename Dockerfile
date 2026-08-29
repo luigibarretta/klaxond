@@ -6,8 +6,7 @@ WORKDIR /src/klaxond
 RUN apk add --no-cache build-base perl
 
 COPY Cargo.toml Cargo.lock ./
-COPY --from=auth-modules Cargo.toml /src/auth-modules/Cargo.toml
-COPY --from=auth-modules src/ /src/auth-modules/src/
+COPY vendor/auth-modules/ ./vendor/auth-modules/
 COPY src/ ./src/
 COPY docs/openapi.yaml ./docs/openapi.yaml
 
@@ -21,7 +20,7 @@ FROM mirror.gcr.io/library/alpine:3.23
 
 LABEL org.opencontainers.image.title="klaxond"
 LABEL org.opencontainers.image.description="Notification routing service with noise control, delivery history, and admin UI"
-LABEL org.opencontainers.image.source="https://git.luigibarretta.com/luigibarretta/klaxond"
+LABEL org.opencontainers.image.source="https://github.com/luigibarretta/klaxond"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 RUN apk add --no-cache ca-certificates

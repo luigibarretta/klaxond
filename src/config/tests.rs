@@ -4,6 +4,7 @@ use tempfile::TempDir;
 
 mod emergency;
 mod env_contract;
+mod preflight;
 mod runtime_sources;
 mod sidecar_restore;
 
@@ -132,6 +133,8 @@ const RUNTIME_COMPOSE_ENV_KEYS: &[&str] = &[
     "KLAXOND_PUBLIC_URL",
     "ACK_DEFAULT_TTL_SECONDS",
     "KLAXOND_EMERGENCY_ENABLED",
+    "KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL",
+    "KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY",
     "KLAXOND_EMERGENCY_SEVERITIES",
     "KLAXOND_EMERGENCY_RETRY_SECONDS",
     "KLAXOND_EMERGENCY_EXPIRE_SECONDS",

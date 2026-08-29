@@ -16,17 +16,15 @@
 
 services:
   klaxond-backend:
-    image: ${KLAXOND_BACKEND_IMAGE:-git.luigibarretta.com/luigibarretta/klaxond:0.14}
+    image: ${KLAXOND_BACKEND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.16.0}
     build:
       context: .
       dockerfile: Dockerfile
-      additional_contexts:
-        auth-modules: ../auth-modules
     container_name: ${KLAXOND_BACKEND_CONTAINER:-klaxond-backend}
     restart: unless-stopped
     profiles: ["backend", "all"]
     ports:
-      - "${KLAXOND_BACKEND_BIND:-8181}:8181"
+      - "${KLAXOND_BACKEND_BIND:-127.0.0.1:8181}:8181"
     environment:
       NTFY_URL: ${NTFY_URL:-}
       NTFY_TOKEN_INFO: ${NTFY_TOKEN_INFO:-}
@@ -37,6 +35,8 @@ services:
       TOPIC_CRIT: ${TOPIC_CRIT:-}
       CASCADE_ENABLED: ${CASCADE_ENABLED:-false}
       KLAXOND_EMERGENCY_ENABLED: ${KLAXOND_EMERGENCY_ENABLED:-false}
+      KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL: ${KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL:-false}
+      KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY: ${KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY:-false}
       KLAXOND_EMERGENCY_SEVERITIES: ${KLAXOND_EMERGENCY_SEVERITIES:-critical}
       KLAXOND_EMERGENCY_RETRY_SECONDS: ${KLAXOND_EMERGENCY_RETRY_SECONDS:-60}
       KLAXOND_EMERGENCY_EXPIRE_SECONDS: ${KLAXOND_EMERGENCY_EXPIRE_SECONDS:-3600}
@@ -95,7 +95,7 @@ services:
       - klaxond-data:/data
 
   klaxond-frontend:
-    image: ${KLAXOND_FRONTEND_IMAGE:-git.luigibarretta.com/luigibarretta/klaxond-frontend:0.14}
+    image: ${KLAXOND_FRONTEND_IMAGE:-ghcr.io/luigibarretta/klaxond-frontend:0.16.0}
     build:
       context: .
       dockerfile: Dockerfile.frontend
@@ -103,7 +103,7 @@ services:
     restart: unless-stopped
     profiles: ["frontend", "all"]
     ports:
-      - "${KLAXOND_FRONTEND_BIND:-8080}:8080"
+      - "${KLAXOND_FRONTEND_BIND:-127.0.0.1:8080}:8080"
     environment:
       KLAXOND_BACKEND_URL: ${KLAXOND_BACKEND_URL:-http://klaxond-backend:8181}
       KLAXOND_FRONTEND_MAX_BODY_SIZE: ${KLAXOND_FRONTEND_MAX_BODY_SIZE:-25m}

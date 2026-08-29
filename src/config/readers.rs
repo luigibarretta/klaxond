@@ -58,6 +58,16 @@ pub(super) fn read_emergency(toml: &toml::Value) -> anyhow::Result<EmergencyConf
     };
     let cfg = EmergencyConfig {
         enabled: bool_value("KLAXOND_EMERGENCY_ENABLED", "enabled", defaults.enabled)?,
+        allow_insecure_public_url: bool_value(
+            "KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL",
+            "allow_insecure_public_url",
+            defaults.allow_insecure_public_url,
+        )?,
+        allow_ntfy_only: bool_value(
+            "KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY",
+            "allow_ntfy_only",
+            defaults.allow_ntfy_only,
+        )?,
         severities: list_value(
             "KLAXOND_EMERGENCY_SEVERITIES",
             "severities",

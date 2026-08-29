@@ -2,8 +2,8 @@
 name = "klaxond-protocol"
 version = "0.1.0"
 edition = "2021"
-license = "MIT"
-repository = "https://git.luigibarretta.com/luigibarretta/klaxond"
+license = "Apache-2.0"
+repository = "https://github.com/luigibarretta/klaxond"
 description = "Canonical application-event payloads for Klaxond"
 
 [dependencies]

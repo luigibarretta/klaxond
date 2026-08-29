@@ -31,6 +31,14 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
     ),
     ("KLAXOND_EMERGENCY_ENABLED", "TOML [emergency].enabled"),
     (
+        "KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL",
+        "TOML [emergency].allow_insecure_public_url",
+    ),
+    (
+        "KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY",
+        "TOML [emergency].allow_ntfy_only",
+    ),
+    (
         "KLAXOND_EMERGENCY_SEVERITIES",
         "TOML [emergency].severities",
     ),

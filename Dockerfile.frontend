@@ -3,8 +3,8 @@ FROM nginx:1.29-alpine
 
 LABEL org.opencontainers.image.title="klaxond-frontend"
 LABEL org.opencontainers.image.description="Static klaxond admin UI with reverse proxy hooks for a remote backend"
-LABEL org.opencontainers.image.source="https://git.luigibarretta.com/luigibarretta/klaxond"
-LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.source="https://github.com/luigibarretta/klaxond"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 ENV KLAXOND_BACKEND_URL=http://klaxond-backend:8181 \
     KLAXOND_FRONTEND_MAX_BODY_SIZE=25m

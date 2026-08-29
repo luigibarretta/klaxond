@@ -3,6 +3,7 @@ pub mod auth;
 pub mod config;
 pub mod dedup;
 pub mod delivery;
+pub mod doctor;
 pub mod emergency;
 pub mod endpoints;
 pub mod handlers;

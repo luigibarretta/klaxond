@@ -1,14 +1,14 @@
 [package]
 name = "klaxond"
-version = "0.15.1"
+version = "0.16.0"
 edition = "2024"
 description = "Notification routing, noise control, delivery history, and authentication service"
 license = "Apache-2.0"
-repository = "https://git.luigibarretta.com/luigibarretta/klaxond"
+repository = "https://github.com/luigibarretta/klaxond"
 
 [dependencies]
 anyhow = "1.0"
-auth-modules = { path = "../auth-modules", default-features = false, features = ["audit", "errors", "ldap", "oidc-async", "oidc-pkce", "one-time-token", "password", "rate-limit", "recovery-codes", "security-profile", "session-policy", "totp"] }
+auth-modules = { path = "vendor/auth-modules", default-features = false, features = ["audit", "errors", "ldap", "oidc-async", "oidc-pkce", "one-time-token", "password", "rate-limit", "recovery-codes", "security-profile", "session-policy", "totp"] }
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
@@ -37,5 +37,5 @@ urlencoding = "2.1"
 webauthn-rs = { version = "0.6.1-dev", features = ["danger-allow-state-serialisation"] }
 
 [dev-dependencies]
-auth-modules = { path = "../auth-modules", default-features = false, features = ["testing"] }
+auth-modules = { path = "vendor/auth-modules", default-features = false, features = ["testing"] }
 tempfile = "3.23"

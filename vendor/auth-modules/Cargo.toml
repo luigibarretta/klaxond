@@ -1,0 +1,51 @@
+[package]
+name = "auth-modules"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://git.luigibarretta.com/luigibarretta/auth-modules"
+description = "Shared Rust authentication building blocks for personal projects"
+
+[features]
+default = [
+    "audit",
+    "errors",
+    "oidc-pkce",
+    "one-time-token",
+    "password",
+    "rate-limit",
+    "recovery-codes",
+    "security-profile",
+    "session-policy",
+    "totp",
+]
+audit = []
+errors = []
+ldap = ["dep:ldap3"]
+oidc = ["dep:jsonwebtoken", "dep:openidconnect", "dep:serde", "dep:serde_json"]
+oidc-async = ["oidc", "openidconnect/reqwest"]
+oidc-blocking = ["oidc", "openidconnect/reqwest-blocking"]
+oidc-pkce = ["dep:base64", "dep:rand", "dep:sha2", "dep:url"]
+one-time-token = ["dep:base64", "dep:rand", "dep:sha2"]
+password = ["dep:argon2", "dep:password-hash"]
+rate-limit = []
+recovery-codes = ["dep:base64", "dep:rand", "dep:sha2"]
+security-profile = ["password", "rate-limit", "session-policy"]
+session-policy = []
+testing = []
+totp = ["dep:hmac", "dep:rand", "dep:sha1"]
+
+[dependencies]
+argon2 = { version = "0.5", optional = true }
+base64 = { version = "0.22", optional = true }
+hmac = { version = "0.12", optional = true }
+ldap3 = { version = "0.12.1", default-features = false, features = ["sync", "tls-rustls-aws-lc-rs"], optional = true }
+jsonwebtoken = { version = "9.3", default-features = false, optional = true }
+openidconnect = { version = "4.0.1", default-features = false, features = ["rustls-tls"], optional = true }
+password-hash = { version = "0.5", features = ["getrandom"], optional = true }
+rand = { version = "0.8", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+url = { version = "2", optional = true }
