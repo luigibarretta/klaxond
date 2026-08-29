@@ -4,6 +4,8 @@
 
 ## 0.16.0 — 2026-08-29
 
+- Run the release vulnerability gate through an immutable Trivy 0.68.2 image
+  and scan both the `linux/amd64` and `linux/arm64` variants of every image.
 - Update the vendored OIDC JWT verifier to `jsonwebtoken` 10.4, above the
   fixed 10.3 security floor reported by GitHub, while retaining the reviewed
   public-key-only verification boundary and full logout-token tests.

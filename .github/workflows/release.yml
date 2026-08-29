@@ -205,14 +205,32 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
-      - name: Scan image for fixed critical vulnerabilities
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
-          format: table
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+      - name: Scan both image platforms for fixed critical vulnerabilities
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TRIVY_IMAGE: docker.io/aquasec/trivy@sha256:05d0126976bdedcd0782a0336f77832dbea1c81b9cc5e4b3a5ea5d2ec863aca7
+        run: |
+          set -euo pipefail
+          docker_config_dir="${DOCKER_CONFIG:-${HOME}/.docker}"
+          trivy_cache_dir="${RUNNER_TEMP}/trivy-cache"
+          mkdir -p "${trivy_cache_dir}"
+
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm \
+              --volume /var/run/docker.sock:/var/run/docker.sock \
+              --volume "${docker_config_dir}:/root/.docker:ro" \
+              --volume "${trivy_cache_dir}:/var/cache/trivy" \
+              "${TRIVY_IMAGE}" image \
+                --cache-dir /var/cache/trivy \
+                --scanners vuln \
+                --platform "${platform}" \
+                --format table \
+                --severity CRITICAL \
+                --ignore-unfixed \
+                --exit-code 1 \
+                "${IMAGE}@${DIGEST}"
+          done
 
   promote-release:
     needs: check
