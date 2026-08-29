@@ -4,6 +4,9 @@
 
 ## 0.16.0 — 2026-08-29
 
+- Update the vendored OIDC JWT verifier to `jsonwebtoken` 10.4, above the
+  fixed 10.3 security floor reported by GitHub, while retaining the reviewed
+  public-key-only verification boundary and full logout-token tests.
 - Remove deployment-specific integration fallbacks from portable defaults.
   Uptime Kuma, Healthchecks, WUD, PVE, Shelfmark, Prowlarr and Decypharr action
   roots are now explicit `[render.source_urls]` / `KLAXOND_SOURCE_URL_*`
