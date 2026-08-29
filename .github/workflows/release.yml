@@ -189,6 +189,13 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Test the immutable backend from a clean install
+        if: matrix.image == 'klaxond'
+        env:
+          KLAXOND_CLEAN_INSTALL_IMAGE: >-
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+        run: bash scripts/test-clean-install.sh
+
       - name: Attest image provenance
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:

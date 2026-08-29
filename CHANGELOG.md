@@ -6,6 +6,8 @@
 
 - Run the release vulnerability gate through an immutable Trivy 0.68.2 image
   and scan both the `linux/amd64` and `linux/arm64` variants of every image.
+- Start the exact immutable backend manifest against a fresh volume during the
+  public release, then require health, doctor and production fail-closed gates.
 - Update the vendored OIDC JWT verifier to `jsonwebtoken` 10.4, above the
   fixed 10.3 security floor reported by GitHub, while retaining the reviewed
   public-key-only verification boundary and full logout-token tests.

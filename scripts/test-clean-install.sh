@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="${USER:-user}-$$"
-IMAGE="klaxond-clean-install:${RUN_ID}"
+SOURCE_IMAGE="${KLAXOND_CLEAN_INSTALL_IMAGE:-}"
+IMAGE="${SOURCE_IMAGE:-klaxond-clean-install:${RUN_ID}}"
 CONTAINER="klaxond-clean-install-${RUN_ID}"
 VOLUME="klaxond-clean-install-${RUN_ID}"
 
@@ -14,7 +15,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 docker info >/dev/null
-docker build --pull=false --tag "$IMAGE" "$ROOT"
+if [[ -n "$SOURCE_IMAGE" ]]; then
+  docker image inspect "$IMAGE" >/dev/null 2>&1 || docker pull "$IMAGE"
+else
+  docker build --pull=false --tag "$IMAGE" "$ROOT"
+fi
 docker volume create "$VOLUME" >/dev/null
 docker run --detach \
   --name "$CONTAINER" \
