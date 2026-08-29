@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.17.1 — 2026-08-29
+
+- Make browser logout navigation atomic so background requests that observe the
+  invalidated session cannot replace the deliberate signed-out destination.
+- Exercise the real UI logout path in the live Authentik canary before proving
+  SSO reuse and back-channel logout.
+
 ## 0.17.0 — 2026-08-29
 
 - Replace the passive setup checklist with an ordered production-readiness

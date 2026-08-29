@@ -151,13 +151,18 @@ async function currentUser(context: BrowserContext): Promise<KlaxondUser | null>
   return response.json();
 }
 
-async function localLogout(context: BrowserContext): Promise<void> {
+async function localLogout(page: Page, context: BrowserContext): Promise<void> {
   const user = await currentUser(context);
   expect(user).not.toBeNull();
-  const response = await context.request.post(`${baseURL}/api/auth/logout`, {
-    headers: user?.csrf ? { "X-Klaxond-CSRF": user.csrf } : {}
-  });
-  expect(response.status()).toBe(200);
+  const logout = page.locator("[data-auth-logout]:visible").first();
+  await logout.waitFor({ state: "visible", timeout: 10_000 });
+  await Promise.all([
+    page.waitForURL(
+      (url) => url.pathname === "/api/auth/login" && url.searchParams.get("logged_out") === "1",
+      { waitUntil: "domcontentloaded" }
+    ),
+    logout.click()
+  ]);
 }
 
 async function endAuthentikSession(page: Page): Promise<void> {
@@ -186,7 +191,7 @@ test.describe("live Authentik OIDC", () => {
       authentikSessionStarted = true;
       expect((await currentUser(context))?.mode).toBe("oidc");
 
-      await localLogout(context);
+      await localLogout(page, context);
       expect(await currentUser(context)).toBeNull();
 
       await loginFromExistingSso(page);

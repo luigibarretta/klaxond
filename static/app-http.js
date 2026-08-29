@@ -115,6 +115,11 @@ export function setupLogoutLinks() {
   document.querySelectorAll("[data-auth-logout]").forEach(link => {
     link.addEventListener("click", async e => {
       e.preventDefault();
+      if (isAuthRedirectStarted()) return;
+      // Own the navigation before invalidating the session. Background API
+      // requests can otherwise observe the logout first and race this redirect.
+      setAuthRedirectStarted(true);
+      link.setAttribute("aria-disabled", "true");
       try {
         await fetch("/api/auth/logout", {
           method: "POST",
