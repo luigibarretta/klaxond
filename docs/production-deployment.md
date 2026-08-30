@@ -77,7 +77,10 @@ Store each result in `KLAXOND_INGEST_SECRET_GRAFANA`,
 sender with the same bearer/shared secret. A source without a secret is disabled
 and returns a non-success response; there is no unauthenticated compatibility
 mode. `blackstart` has a dedicated `/blackstart/{severity}` route so its token is
-not confused with the generic `/webhook/{severity}` (`grafana`) identity. Never
+not confused with the generic `/webhook/{severity}` (`grafana`) identity.
+GitHub issue watchers use `/github/{severity}` and their own
+`KLAXOND_INGEST_SECRET_GITHUB`; GitHub account tokens belong only in the watcher
+and must never be supplied to Klaxond. Never
 put `.env`, exported settings bundles or `/data` backups in source control.
 
 The public legal pages and health endpoint intentionally remain reachable; the

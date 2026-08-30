@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.17.2
+  version: 0.18.0
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -473,6 +473,28 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /github/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestGithubIssueComment
+      summary: Receive a normalized GitHub issue-comment event.
+      security: *ingestSecurity
+      parameters:
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
   /api/auth/login:
     get:
       tags: [Auth]

@@ -13,6 +13,7 @@ pub const INGEST_SOURCES: &[&str] = &[
     "decypharr",
     "pve",
     "blackstart",
+    "github",
 ];
 
 pub const DEDUP_SOURCES: &[&str] = &[
@@ -25,6 +26,7 @@ pub const DEDUP_SOURCES: &[&str] = &[
     "shelfmark",
     "prowlarr",
     "decypharr",
+    "github",
 ];
 
 pub const TIER_TIMEOUT_MIN_SECONDS: u64 = 1;

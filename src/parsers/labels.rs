@@ -20,6 +20,7 @@ pub fn normalize_labels(source: &str, payload: &Value) -> Labels {
         "prowlarr" => normalize_prowlarr_labels(payload, &mut out),
         "decypharr" => normalize_decypharr_labels(payload, &mut out),
         "pve" => normalize_pve_labels(payload, &mut out),
+        "github" => normalize_github_labels(payload, &mut out),
         _ => {}
     }
     out
@@ -208,6 +209,26 @@ fn normalize_pve_labels(payload: &Value, out: &mut Labels) {
     );
     out.insert("service".into(), ntype.to_string());
     out.insert("job".into(), "pve".into());
+}
+
+fn normalize_github_labels(payload: &Value, out: &mut Labels) {
+    let repository = json_get_str(payload, "repository").trim();
+    if !repository.is_empty() {
+        out.insert("repository".into(), repository.into());
+    }
+    let issue_number = payload
+        .get("issue_number")
+        .map(scalar_to_string)
+        .unwrap_or_default();
+    if !issue_number.is_empty() {
+        out.insert("issue_number".into(), issue_number);
+    }
+    let actor = json_get_str(payload, "comment_author").trim();
+    if !actor.is_empty() {
+        out.insert("actor".into(), actor.into());
+    }
+    out.insert("alertname".into(), "github-issue-comment".into());
+    out.insert("job".into(), "github".into());
 }
 
 fn is_resolved_status(payload: &Value, values: &[&str]) -> bool {

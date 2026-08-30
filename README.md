@@ -52,15 +52,15 @@ reverse proxy are deliberately configured.
 ```bash
 gh repo clone luigibarretta/klaxond klaxond
 cd klaxond
-git checkout v0.17.2
+git checkout v0.18.0
 cp .env.example .env
 chmod 600 .env
 
 # Fill NTFY_URL, the topic names and matching NTFY_TOKEN_* values.
-# Set KLAXOND_IMAGE=klaxond:0.17.2 while registry publication is paused.
+# Set KLAXOND_IMAGE=klaxond:0.18.0 while registry publication is paused.
 ${EDITOR:-vi} .env
 docker compose config --quiet
-docker build --pull=false --tag klaxond:0.17.2 .
+docker build --pull=false --tag klaxond:0.18.0 .
 docker compose up -d --pull never
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz
@@ -160,6 +160,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `POST` | `/webhook/<severity>` | Alertmanager / Grafana |
 | `POST` | `/beszel/<severity>` | Beszel UI webhook channel |
 | `POST` | `/uptime-kuma/<severity>` | Uptime Kuma webhook; heartbeat state overrides recovery severity |
+| `POST` | `/github/<severity>` | Normalized GitHub issue-comment events |
 
 `<severity>` is one of `info`, `warning`, `critical`.
 

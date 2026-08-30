@@ -90,6 +90,56 @@ fn beszel_authentik_and_pve_parsers_match_python_golden() {
 }
 
 #[test]
+fn github_issue_comment_parser_keeps_identity_context_and_action() {
+    let (_tmp, cfg) = cfg();
+    let (severity, github) = parse_source(
+        "github",
+        &json!({
+            "event": "issue_comment",
+            "repository": "owner/project",
+            "issue_number": 42,
+            "issue_title": "Concurrent client close can panic",
+            "issue_url": "https://github.com/owner/project/issues/42",
+            "comment_id": 1234,
+            "comment_author": "maintainer",
+            "comment_body": "Fixed on main and scheduled for the next release.",
+            "comment_url": "https://github.com/owner/project/issues/42#issuecomment-1234"
+        }),
+        "info",
+        &cfg,
+    );
+    assert_eq!(severity, "info");
+    assert_eq!(
+        github.title,
+        "ℹ️ GitHub: owner/project#42 — reply from maintainer"
+    );
+    assert_eq!(
+        github.body,
+        "Concurrent client close can panic\n\nFixed on main and scheduled for the next release."
+    );
+    assert_eq!(
+        github.tags,
+        vec![
+            "information_source",
+            "info",
+            "github",
+            "speech_balloon",
+            "github-analysis-enqueued"
+        ]
+    );
+    assert_eq!(
+        github.actions[0],
+        [
+            "view",
+            "Open reply",
+            "https://github.com/owner/project/issues/42#issuecomment-1234"
+        ]
+    );
+    assert_eq!(github.alertname, "github-issue-comment");
+    assert!(github.skip_snooze);
+}
+
+#[test]
 fn uptime_kuma_parser_enriches_down_and_recovery_without_leaking_url_secrets() {
     let (_tmp, cfg) = cfg();
     let down_payload = json!({

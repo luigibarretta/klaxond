@@ -13,8 +13,9 @@ mod uptime_kuma;
 pub use core_sources::{parse_beszel_payload, parse_healthchecks_payload, parse_pve_payload};
 pub use grafana::parse_grafana_payload;
 pub use integrations::{
-    decypharr_severity, parse_authentik_payload, parse_decypharr_payload, parse_prowlarr_payload,
-    parse_shelfmark_payload, parse_wud_payload, prowlarr_severity, shelfmark_severity,
+    decypharr_severity, parse_authentik_payload, parse_decypharr_payload, parse_github_payload,
+    parse_prowlarr_payload, parse_shelfmark_payload, parse_wud_payload, prowlarr_severity,
+    shelfmark_severity,
 };
 pub use labels::normalize_labels;
 pub use uptime_kuma::parse_uptime_kuma_payload;
@@ -111,6 +112,10 @@ pub fn parse_source(
         "pve" => (
             severity.to_string(),
             parse_pve_payload(payload, severity, cfg),
+        ),
+        "github" => (
+            severity.to_string(),
+            parse_github_payload(payload, severity, cfg),
         ),
         _ => (
             severity.to_string(),

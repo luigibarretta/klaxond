@@ -104,6 +104,36 @@ test("ingest routes are fail-closed and Blackstart has a dedicated identity", as
   });
 });
 
+test("GitHub issue replies use their dedicated authenticated source", async ({ request }) => {
+  const payload = {
+    event: "issue_comment",
+    repository: "owner/project",
+    issue_number: 42,
+    issue_title: "Concurrent client close can panic",
+    issue_url: "https://github.com/owner/project/issues/42",
+    comment_id: 1234,
+    comment_author: "maintainer",
+    comment_body: "Fixed on main and scheduled for the next release.",
+    comment_url: "https://github.com/owner/project/issues/42#issuecomment-1234"
+  };
+
+  const anonymous = await request.post("/github/info?dry_run=1", { data: payload });
+  expect(anonymous.status()).toBe(401);
+
+  const res = await request.post("/github/info?dry_run=1", {
+    headers: { Authorization: "Bearer e2e-github-secret" },
+    data: payload
+  });
+  await expect(res).toBeOK();
+  const body = await res.json();
+  expect(body).toMatchObject({ dry_run: true, source: "github", severity: "info" });
+  expect(body.parsed.title).toBe("ℹ️ GitHub: owner/project#42 — reply from maintainer");
+  expect(body.parsed.body).toContain("Fixed on main");
+  expect(body.parsed.actions).toEqual([
+    ["view", "Open reply", "https://github.com/owner/project/issues/42#issuecomment-1234"]
+  ]);
+});
+
 test("inhibition rule simulator reports source and suppression matches", async ({ request }) => {
   const source = await request.post("/api/inhibition-rules/test", {
     data: {

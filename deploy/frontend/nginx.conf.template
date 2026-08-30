@@ -51,7 +51,7 @@ server {
     proxy_pass ${KLAXOND_BACKEND_URL};
   }
 
-  location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve|blackstart)(/|$) {
+  location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve|blackstart|github)(/|$) {
     proxy_pass ${KLAXOND_BACKEND_URL};
   }
 

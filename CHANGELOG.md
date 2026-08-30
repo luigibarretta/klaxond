@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.18.0 — 2026-08-30
+
+- Add a dedicated, authenticated GitHub ingest source at
+  `/github/{severity}`, including bounded issue/comment rendering, repository
+  and actor labels, stable comment-ID deduplication, OpenAPI coverage and
+  browser/runtime configuration.
+- Preserve a direct action to the original GitHub reply and identify events
+  already queued for local analysis, preventing the phone copy from being
+  analyzed a second time.
+
 ## 0.17.2 — 2026-08-29
 
 - Make inbound webhook routes fail closed: configuring a per-source secret now

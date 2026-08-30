@@ -36,6 +36,7 @@ fn source_key(
         "shelfmark" => shelfmark_key(payload),
         "prowlarr" => prowlarr_key(payload),
         "decypharr" => decypharr_key(payload),
+        "github" => github_key(payload),
         _ => None,
     }
 }
@@ -164,6 +165,18 @@ fn decypharr_key(payload: &Value) -> Option<String> {
     let event = trimmed_lowercase(payload, "event");
     let hash = trimmed_lowercase(payload, "hash");
     (!event.is_empty() || !hash.is_empty()).then(|| format!("decypharr:{event}:{hash}"))
+}
+
+fn github_key(payload: &Value) -> Option<String> {
+    payload
+        .get("comment_id")
+        .map(|value| match value {
+            Value::Number(number) => number.to_string(),
+            Value::String(value) => value.trim().to_string(),
+            _ => String::new(),
+        })
+        .filter(|value| !value.is_empty())
+        .map(|comment_id| format!("github:{comment_id}"))
 }
 
 fn trimmed_lowercase(payload: &Value, key: &str) -> String {

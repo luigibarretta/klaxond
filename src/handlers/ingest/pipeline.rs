@@ -61,6 +61,7 @@ fn ingest_source(path: &str) -> Option<&'static str> {
         ("/decypharr/", "decypharr"),
         ("/pve/", "pve"),
         ("/blackstart/", "blackstart"),
+        ("/github/", "github"),
     ]
     .iter()
     .find_map(|(prefix, source)| path.starts_with(prefix).then_some(*source))
@@ -243,5 +244,11 @@ mod tests {
     fn dedicated_blackstart_route_preserves_source_identity() {
         assert_eq!(ingest_source("/blackstart/critical"), Some("blackstart"));
         assert_eq!(ingest_source("/webhook/critical"), Some("grafana"));
+    }
+
+    #[test]
+    fn dedicated_github_route_preserves_source_identity() {
+        assert_eq!(ingest_source("/github/info"), Some("github"));
+        assert_eq!(ingest_source("/webhook/info"), Some("grafana"));
     }
 }
