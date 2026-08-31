@@ -52,15 +52,15 @@ reverse proxy are deliberately configured.
 ```bash
 gh repo clone luigibarretta/klaxond klaxond
 cd klaxond
-git checkout v0.18.0
+git checkout v0.18.1
 cp .env.example .env
 chmod 600 .env
 
 # Fill NTFY_URL, the topic names and matching NTFY_TOKEN_* values.
-# Set KLAXOND_IMAGE=klaxond:0.18.0 while registry publication is paused.
+# Set KLAXOND_IMAGE=klaxond:0.18.1 while registry publication is paused.
 ${EDITOR:-vi} .env
 docker compose config --quiet
-docker build --pull=false --tag klaxond:0.18.0 .
+docker build --pull=false --tag klaxond:0.18.1 .
 docker compose up -d --pull never
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz

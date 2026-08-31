@@ -70,10 +70,13 @@ pub fn parse_source(
     cfg: &RuntimeConfig,
 ) -> (String, Parts) {
     match source {
-        "grafana" | "blackstart" => (
-            severity.to_string(),
-            parse_grafana_payload(payload, severity, cfg),
-        ),
+        "grafana" | "blackstart" => {
+            let delivery_severity = grafana_delivery_severity(payload, severity);
+            (
+                delivery_severity,
+                parse_grafana_payload(payload, severity, cfg),
+            )
+        }
         "beszel" => (
             severity.to_string(),
             parse_beszel_payload(payload, severity, cfg),
@@ -124,6 +127,18 @@ pub fn parse_source(
     }
 }
 
+fn grafana_delivery_severity(payload: &Value, fallback: &str) -> String {
+    if payload
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| status.trim().eq_ignore_ascii_case("resolved"))
+    {
+        "resolved".into()
+    } else {
+        fallback.to_string()
+    }
+}
+
 pub fn scalar_to_string(v: &Value) -> String {
     match v {
         Value::Null => String::new(),
@@ -131,6 +146,30 @@ pub fn scalar_to_string(v: &Value) -> String {
         Value::Bool(b) => b.to_string(),
         Value::Number(n) => n.to_string(),
         _ => v.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grafana_delivery_severity;
+    use serde_json::json;
+
+    #[test]
+    fn grafana_recovery_overrides_the_firing_route_severity() {
+        let payload = json!({"status": "resolved"});
+        assert_eq!(grafana_delivery_severity(&payload, "critical"), "resolved");
+    }
+
+    #[test]
+    fn grafana_firing_keeps_the_route_severity() {
+        let payload = json!({"status": "firing"});
+        assert_eq!(grafana_delivery_severity(&payload, "critical"), "critical");
+    }
+
+    #[test]
+    fn grafana_recovery_status_is_case_insensitive() {
+        let payload = json!({"status": " RESOLVED "});
+        assert_eq!(grafana_delivery_severity(&payload, "warning"), "resolved");
     }
 }
 

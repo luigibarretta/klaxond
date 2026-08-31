@@ -17,7 +17,8 @@ static HOST_IN_TEXT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b([a-z][a-z0-9-]*-\d+)\b").unwrap());
 
 pub fn parse_grafana_payload(payload: &Value, severity: &str, cfg: &RuntimeConfig) -> Parts {
-    let status = json_get_str(payload, "status").if_empty("firing");
+    let normalized_status = json_get_str(payload, "status").trim().to_ascii_lowercase();
+    let status = normalized_status.as_str().if_empty("firing");
     let common_labels = payload.get("commonLabels").and_then(|v| v.as_object());
     let common_annot = payload.get("commonAnnotations").and_then(|v| v.as_object());
     let alertname = grafana_alertname(common_labels);

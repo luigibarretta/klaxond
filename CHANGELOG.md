@@ -1,6 +1,11 @@
 # Klaxond — CHANGELOG
 
-## Unreleased
+## 0.18.1 — 2026-08-31
+
+- Treat a Grafana or Alertmanager payload with `status=resolved` as the
+  `resolved` delivery severity even when it arrives through a critical webhook
+  endpoint. Durable emergency receipts now close on producer recovery instead
+  of coalescing the recovery as another firing event.
 
 ## 0.18.0 — 2026-08-30
 
