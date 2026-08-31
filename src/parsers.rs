@@ -149,30 +149,6 @@ pub fn scalar_to_string(v: &Value) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::grafana_delivery_severity;
-    use serde_json::json;
-
-    #[test]
-    fn grafana_recovery_overrides_the_firing_route_severity() {
-        let payload = json!({"status": "resolved"});
-        assert_eq!(grafana_delivery_severity(&payload, "critical"), "resolved");
-    }
-
-    #[test]
-    fn grafana_firing_keeps_the_route_severity() {
-        let payload = json!({"status": "firing"});
-        assert_eq!(grafana_delivery_severity(&payload, "critical"), "critical");
-    }
-
-    #[test]
-    fn grafana_recovery_status_is_case_insensitive() {
-        let payload = json!({"status": " RESOLVED "});
-        assert_eq!(grafana_delivery_severity(&payload, "warning"), "resolved");
-    }
-}
-
 pub fn first_non_empty(values: &[&str]) -> String {
     values
         .iter()
@@ -207,5 +183,29 @@ fn capitalize(s: &str) -> String {
     match chars.next() {
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::grafana_delivery_severity;
+    use serde_json::json;
+
+    #[test]
+    fn grafana_recovery_overrides_the_firing_route_severity() {
+        let payload = json!({"status": "resolved"});
+        assert_eq!(grafana_delivery_severity(&payload, "critical"), "resolved");
+    }
+
+    #[test]
+    fn grafana_firing_keeps_the_route_severity() {
+        let payload = json!({"status": "firing"});
+        assert_eq!(grafana_delivery_severity(&payload, "critical"), "critical");
+    }
+
+    #[test]
+    fn grafana_recovery_status_is_case_insensitive() {
+        let payload = json!({"status": " RESOLVED "});
+        assert_eq!(grafana_delivery_severity(&payload, "warning"), "resolved");
     }
 }
