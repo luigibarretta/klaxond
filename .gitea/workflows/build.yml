@@ -201,7 +201,7 @@ jobs:
   promote-release:
     needs: check
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: docker
+    runs-on: deploy
     timeout-minutes: 15
     permissions:
       contents: read
@@ -242,7 +242,7 @@ jobs:
     # Mutable branch tags are useful for testing images, but production must
     # only ever be recreated from an immutable release tag.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: docker
+    runs-on: deploy
     timeout-minutes: 60
     env:
       SEMAPHORE_TEMPLATE_ID: "101"
