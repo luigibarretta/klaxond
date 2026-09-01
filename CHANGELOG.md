@@ -6,6 +6,9 @@
   identity instead of mutable common labels, so adding an alert instance does
   not create a second receipt and the final recovery closes the original one;
   retain compatibility with receipts created before the upgrade.
+- Give the authentication-aware public "Back to app" action exclusive
+  ownership of its navigation, preventing the SPA router from racing the full
+  redirect and intermittently aborting browser transitions.
 
 ## 0.19.0 — 2026-09-01
 
