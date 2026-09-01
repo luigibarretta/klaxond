@@ -46,8 +46,10 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   await expect(page.locator('#public-legal-bar [data-public-language-option="it"]')).toBeHidden();
   await expect(page.locator(".public-login-link")).toHaveText("Back to app");
   await expect(page.locator(".public-login-link")).toHaveAttribute("href", "/status");
-  await page.click(".public-login-link");
-  await expect(page).toHaveURL(/\/status$/);
+  await Promise.all([
+    page.waitForURL(/\/status$/, { waitUntil: "load" }),
+    page.click(".public-login-link"),
+  ]);
 
   await page.goto("/legal/privacy");
   await expect(page.locator(".app-footer")).toContainText("klaxond");

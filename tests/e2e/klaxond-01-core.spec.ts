@@ -83,6 +83,79 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator("#stat-log-severity")).toContainText(/WARN \d+ \/ ERROR \d+/);
 });
 
+test("mobile shell is full-width, keyboard operable, and closes after navigation", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/setup");
+
+  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await expect(page.locator("#sidebar-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator("nav.tabs")).toBeHidden();
+  await expect(page.locator(".brand-name")).toBeVisible();
+  await expect(page.locator("main")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+
+  await page.click("#sidebar-toggle");
+  await expect(page.locator("#sidebar-toggle")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("nav.tabs")).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+
+  await page.click('[data-tab="deliveries"]');
+  await expect(page).toHaveURL(/\/deliveries$/);
+  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await expect(page.locator("nav.tabs")).toBeHidden();
+
+  await page.click("#sidebar-toggle");
+  await page.keyboard.press("Escape");
+  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await expect(page.locator("#sidebar-toggle")).toBeFocused();
+});
+
+test("keyboard users can skip navigation and see a visible focus indicator", async ({ page }) => {
+  await page.goto("/status");
+  await page.keyboard.press("Tab");
+  await expect(page.locator(".skip-link")).toBeFocused();
+  const outline = await page.locator(".skip-link").evaluate(element => getComputedStyle(element).outlineStyle);
+  expect(outline).not.toBe("none");
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#main-content")).toBeFocused();
+});
+
+test("setup separates release blockers from recommended hardening", async ({ page, request }) => {
+  const setup = await request.get("/api/setup-status");
+  await expect(setup).toBeOK();
+  const payload = await setup.json();
+  expect(payload.summary.required).toBe(6);
+
+  await page.goto("/setup");
+  await expect(page.locator('[data-setup-group="required"] .setup-item')).toHaveCount(6);
+  await expect(page.locator('[data-setup-group="recommended"] .setup-item')).toHaveCount(2);
+  await expect(page.locator('[data-setup-group="required"] .setup-step-number')).toHaveCount(6);
+  await expect(page.locator('[data-setup-group="recommended"] .setup-step-label')).toHaveCount(2);
+  await expect(page.locator('[data-setup-group="required"] .log-level').first()).not.toHaveText(/^(ok|warn|error|partial|info)$/);
+  await expect(page.locator("#setup-next")).toBeVisible();
+});
+
+test("unconfigured channels are neutral and the empty delivery state has next actions", async ({ page, request }) => {
+  const status = await request.get("/api/status");
+  await expect(status).toBeOK();
+  const payload = await status.json();
+  expect(payload.channel_configured).toEqual({ ntfy: true, telegram: false, smtp: false });
+
+  await page.goto("/status");
+  await expect(page.locator("#ch-telegram .dot")).toHaveClass(/unknown/);
+  await expect(page.locator("#ch-telegram .ch-status-text")).toHaveText("not configured");
+  await expect(page.locator("#ch-smtp .dot")).toHaveClass(/unknown/);
+  await expect(page.locator("#ch-smtp .ch-action")).toHaveAttribute("href", "/routing");
+
+  await page.route("**/api/deliveries*", async route => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+  });
+  await page.goto("/deliveries");
+  await expect(page.locator(".table-empty-state")).toBeVisible();
+  await expect(page.locator('.table-empty-state a[href="/test"]')).toBeVisible();
+  await expect(page.locator('.table-empty-state a[href="/setup"]')).toBeVisible();
+});
+
 test("legacy UI URLs and hash URLs migrate to path routes", async ({ page, request }) => {
   const tabRoute = await request.get("/ui/deliveries", { maxRedirects: 0 });
   expect(tabRoute.status()).toBe(302);

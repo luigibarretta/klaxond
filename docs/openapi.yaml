@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.18.1
+  version: 0.19.0
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -268,7 +268,9 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /beszel/{severity}:
     post:
       tags: [Ingest]
@@ -290,7 +292,9 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /healthchecks/{severity}:
     post:
       tags: [Ingest]
@@ -311,6 +315,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /uptime-kuma/{severity}:
     post:
       tags: [Ingest]
@@ -332,7 +340,9 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /wud/{severity}:
     post:
       tags: [Ingest]
@@ -353,6 +363,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /authentik/{severity}:
     post:
       tags: [Ingest]
@@ -373,6 +387,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /shelfmark/{severity}:
     post:
       tags: [Ingest]
@@ -393,6 +411,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /prowlarr/{severity}:
     post:
       tags: [Ingest]
@@ -413,6 +435,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /decypharr/{severity}:
     post:
       tags: [Ingest]
@@ -433,6 +459,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /pve/{severity}:
     post:
       tags: [Ingest]
@@ -453,6 +483,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /blackstart/{severity}:
     post:
       tags: [Ingest]
@@ -473,6 +507,10 @@ paths:
           $ref: "#/components/responses/IngestAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /github/{severity}:
     post:
       tags: [Ingest]
@@ -494,7 +532,9 @@ paths:
         "400":
           $ref: "#/components/responses/BadRequest"
         "401":
-          $ref: "#/components/responses/Unauthorized"
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /api/auth/login:
     get:
       tags: [Auth]
@@ -2383,6 +2423,18 @@ components:
           description: Login URL returned to browser fetch clients.
           schema:
             type: string
+      content:
+        text/plain:
+          schema:
+            type: string
+    IngestUnauthorized:
+      description: The ingest source is enabled, but its per-source credential is missing or invalid.
+      content:
+        text/plain:
+          schema:
+            type: string
+    IngestSourceDisabled:
+      description: The ingest source is disabled because no per-source secret is configured.
       content:
         text/plain:
           schema:

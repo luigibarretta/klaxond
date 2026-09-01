@@ -122,8 +122,11 @@ jobs:
       - name: Lint OpenAPI
         run: npm run openapi:lint
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Check release version contract
+        run: npm run release:check
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Test browser workflows
         run: npm run test:e2e

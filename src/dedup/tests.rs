@@ -1,9 +1,10 @@
-use super::dedup_key;
 use super::render::{highest_severity, render_batch};
+use super::{SubmitInput, dedup_key, submit};
 use crate::config::{Paths, load_runtime_config};
+use crate::emergency::{self, PrepareResult};
 use crate::parsers::Parts;
-use crate::state::DedupItem;
-use serde_json::json;
+use crate::state::{AppState, DedupItem};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -52,6 +53,37 @@ fn item(title: &str) -> DedupItem {
         with_cascade: true,
         dedup_key: title.into(),
     }
+}
+
+async fn submit_grafana(
+    state: &AppState,
+    severity: &str,
+    payload: Value,
+    parts: Parts,
+    common_labels: HashMap<String, String>,
+) -> bool {
+    submit(
+        state,
+        SubmitInput {
+            source: "grafana".into(),
+            severity: severity.into(),
+            payload,
+            parts,
+            common_labels,
+            with_cascade: true,
+        },
+    )
+    .await
+}
+
+fn enable_emergency_and_grafana_dedup(state: &AppState) {
+    let mut cfg = state.cfg();
+    cfg.emergency.enabled = true;
+    let grafana = cfg.dedup.get_mut("grafana").unwrap();
+    grafana.enabled = true;
+    grafana.strategy = "time".into();
+    grafana.window_s = 3_600;
+    state.replace_config(cfg);
 }
 
 #[test]
@@ -128,6 +160,63 @@ fn highest_severity_is_independent_of_batch_order() {
 
     assert_eq!(highest_severity(&[info.clone(), resolved.clone()]), "info");
     assert_eq!(highest_severity(&[resolved, info]), "info");
+}
+
+#[tokio::test]
+async fn resolved_bypasses_enabled_dedup_and_closes_an_active_emergency() {
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    enable_emergency_and_grafana_dedup(&state);
+
+    let mut alert = item("Host down").parts;
+    alert.alertname = "HostDown".into();
+    let labels = HashMap::from([
+        ("alertname".into(), "HostDown".into()),
+        ("host".into(), "node-a".into()),
+    ]);
+    let receipt_id = match emergency::prepare(&state, "critical", &alert, &labels, "grafana").await
+    {
+        PrepareResult::Managed { receipt_id, .. } => receipt_id,
+        _ => panic!("critical Grafana alert should create an emergency receipt"),
+    };
+
+    assert!(
+        submit_grafana(
+            &state,
+            "info",
+            json!({"status": "firing", "message": "concurrent event"}),
+            item("Concurrent info").parts,
+            HashMap::new(),
+        )
+        .await
+    );
+    assert!(
+        !submit_grafana(
+            &state,
+            "resolved",
+            json!({"status": "resolved"}),
+            alert.clone(),
+            labels.clone(),
+        )
+        .await
+    );
+
+    {
+        let dedup = state.dedup.lock().await;
+        let queued = dedup.queues.get("grafana").unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].severity, "info");
+    }
+
+    assert!(matches!(
+        emergency::prepare(&state, "resolved", &alert, &labels, "grafana").await,
+        PrepareResult::Normal
+    ));
+    let incident = emergency::get(&state, &receipt_id)
+        .unwrap()
+        .expect("emergency receipt should remain queryable");
+    assert_eq!(incident.state, "resolved");
+    assert_eq!(incident.terminal_by, "source-recovery");
 }
 
 #[test]

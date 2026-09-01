@@ -1,70 +1,103 @@
 # Klaxond
 
-Application integrations should use the canonical event contract and SDKs in
-[`docs/application-event-contract.md`](docs/application-event-contract.md)
-instead of inventing source-specific payloads.
+[![Release validation](https://github.com/luigibarretta/klaxond/actions/workflows/release.yml/badge.svg)](https://github.com/luigibarretta/klaxond/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/luigibarretta/klaxond)](https://github.com/luigibarretta/klaxond/releases/latest)
+[![License](https://img.shields.io/github/license/luigibarretta/klaxond)](LICENSE)
 
-> Notification bridge for homelab alerting — turns Grafana Alertmanager and Beszel webhooks into clean ntfy pushes, with built-in cascade fallback (ntfy → Telegram → SMTP), declarative inhibition rules, and a single-page admin UI.
+Klaxond is a self-hosted alert-delivery gateway for operators who need important
+events to arrive clearly, without repeated noise and without depending on one
+notification channel.
+
+It normalizes events from monitoring tools, renders phone-friendly
+notifications, records every delivery decision and can fall back from ntfy to
+Telegram and SMTP. Selected emergencies remain active until acknowledgement,
+producer recovery or a bounded expiry.
+
+## The need it serves
+
+When something important changes in your systems, you need to understand it at
+a glance, know that a channel accepted it and retain enough evidence to act or
+investigate later. A raw webhook-to-push bridge solves only the formatting
+problem; Klaxond also addresses delivery uncertainty, alert fatigue and missing
+operational history.
+
+The primary user is a hands-on self-hosted operator, DevOps engineer or SRE
+running a personal lab or a small infrastructure estate. They are comfortable
+with Docker Compose and an HTTPS reverse proxy, but should not need to read the
+source to complete setup. See the full [product definition](docs/product.md),
+including jobs to be done, effectiveness criteria and non-goals.
+
+Klaxond is not a public multi-tenant notification service or a replacement for
+an enterprise incident-management platform with staffing schedules, compliance
+workflows and contractual support.
+
+## How it works
 
 ```
-┌──────────────┐   ┌────────┐                            ┌──────────────────────────┐
-│ Alertmanager │ ──┤        ├──→  POST /webhook/<sev> ──→│                          │
-└──────────────┘   │ klaxond │                            │   render → cascade tiers │
-┌──────────────┐   │        │                            │   1. ntfy       (15s)    │
-│   Beszel     │ ──┤        ├──→  POST /beszel/<sev>  ──→│   2. Telegram   (8s)     │
-└──────────────┘   └────────┘                            │   3. Gmail SMTP (10s)    │
-                                                         └──────────────────────────┘
+┌──────────────────────┐     ┌─────────────────────────────────────────────┐
+│ Monitoring and apps  │────→│ Klaxond                                     │
+│ Grafana, Kuma, WUD,  │     │ authenticate → normalize → control noise    │
+│ Healthchecks, SDKs…  │     │ → route → record → retry emergencies        │
+└──────────────────────┘     └───────────┬──────────┬──────────┬───────────┘
+                                         │          │          │
+                                       ntfy     Telegram     SMTP
 ```
-
-## Why
-
-Grafana's webhook contact-point and Beszel's webhook channel both POST JSON that ntfy can't render legibly on its own. Klaxond parses both formats, builds a clean ntfy push with title/emoji/tags/priority/action-buttons, and — if ntfy is down — falls back to Telegram and then SMTP, so an alert never silently disappears.
-
-A small admin UI lets you watch deliveries in real time, edit channel routing without restarts, manage inhibition rules, and preview how an alert will look on the phone before you ship a new rule.
 
 ## Features
 
-- **Multiple webhook formats**: Grafana Alertmanager, Beszel, Healthchecks, WUD, Authentik, Shelfmark, Prowlarr and Decypharr.
-- **3-tier cascade fallback** — ntfy → Telegram → SMTP. Always on for Beszel, gated for Grafana.
+- **Authenticated webhook formats** for Grafana Alertmanager, Beszel, Uptime
+  Kuma, Healthchecks, WUD, Authentik, Shelfmark, Prowlarr, Decypharr, PVE,
+  Blackstart and GitHub issue-reply events.
+- **Application event SDKs** for Rust and Go, backed by a versioned JSON schema.
+- **3-tier cascade fallback** — ntfy → Telegram → SMTP, with per-policy routing.
 - **Durable emergency delivery** — selected severities repeat until a signed
   acknowledgement, source recovery or bounded expiry, with cross-device state,
   restart-safe SQLite/PostgreSQL receipts and staged Telegram/SMTP escalation.
-- **Rich ntfy push rendering**: severity emoji in title (RFC 2047 base64-encoded for non-ASCII), priority + tag mapping, up to 2 action buttons via `component` label → dashboard URL.
-- **In-memory inhibition** safety net (Alertmanager owns the canonical layer if you're using it).
-- **Full settings export/import**: TOML plus sidecar JSON files, import preview, automatic pre-restore backup and validated restore.
-- **Authentication**: local Argon2id username/password login, LDAP, magic links, optional TOTP/MFA, OIDC, trusted proxy, passkeys, API keys and PATs with granular scopes plus read-only viewer support.
-- **MFA / step-up policy**: require a second factor after primary authentication, with passkey, hardware key or TOTP as the step-up factor before the app session is issued.
-- **Operational diagnostics**: audit log, backend/frontend log search, setup checklist, notification test matrix and policy simulator.
-- **Persistent delivery history**: SQLite by default under `/data`, with optional PostgreSQL for shared multi-backend history and a built-in migration command.
-- **TOML bootstrap config** (`klaxond.toml`) — defines cascade tiers, delivery policies, render mappings, inhibition rules and schedules. Auto-bootstrapped on first run from the bundled default.
-- **Admin UI** (vanilla HTML+JS, zero build) at `/`: channel health, active inhibitions, recent deliveries, logs, audit, import/export, render config CRUD, visual ntfy push preview, cascade tier editor, channel routing config and auth management.
-- **Prometheus/Grafana ready**: `/metrics` exposes runtime counters/gauges, with importable Grafana dashboard and Prometheus/VictoriaMetrics scrape examples under `docs/`.
-- **Documented API contract**: `docs/openapi.yaml` is bundled and served at `/openapi.yaml` and `/api/openapi.yaml`; Swagger UI is available at `/api/docs`, `/api/swagger` and `/api/swagger-ui`.
-- **Rust backend** — single `klaxond` binary built with Cargo, served from a small Alpine runtime image.
+- **Noise control** through grouping, repeat suppression, selective rules,
+  inhibition and schedules, while keeping critical overrides explicit.
+- **Rich ntfy rendering** with severity, priority, tags and direct action links.
+- **Guided production Setup** that remains fail-closed until authentication,
+  protected ingress, delivery and backup prerequisites are satisfied.
+- **Authentication** with local Argon2id credentials, LDAP, magic links, TOTP,
+  OIDC, trusted proxy, passkeys, scoped API tokens and read-only viewers.
+- **Full settings export/import**, preview, automatic pre-restore backup and
+  transactional validation.
+- **Persistent history and audit evidence** in SQLite by default or PostgreSQL
+  for shared multi-backend deployments.
+- **Prometheus metrics, Grafana dashboard, OpenAPI 3.1 and self-hosted Swagger
+  UI** for inspection and automation.
+- **Zero-build admin UI** and a Rust/Axum backend, published as amd64 and arm64
+  container images.
 
 ## Quick start
 
-During private incubation, an authorized checkout is the supported installation
-source. GitHub release/GHCR publication is paused; build the numbered source tag
-locally. The service binds the UI to loopback until authentication and an HTTPS
-reverse proxy are deliberately configured.
+Use the latest numbered bundle from
+[GitHub Releases](https://github.com/luigibarretta/klaxond/releases/latest).
+It contains `docker-compose.yml`, `.env.example` and `SHA256SUMS`. The service
+binds the UI to loopback until authentication and an HTTPS reverse proxy are
+deliberately configured.
 
 ```bash
-gh repo clone luigibarretta/klaxond klaxond
-cd klaxond
-git checkout v0.18.1
+mkdir klaxond-release
+tar -xzf klaxond-*-compose.tar.gz -C klaxond-release
+cd klaxond-release
+sha256sum --check SHA256SUMS
 cp .env.example .env
 chmod 600 .env
 
 # Fill NTFY_URL, the topic names and matching NTFY_TOKEN_* values.
-# Set KLAXOND_IMAGE=klaxond:0.18.1 while registry publication is paused.
 ${EDITOR:-vi} .env
 docker compose config --quiet
-docker build --pull=false --tag klaxond:0.18.1 .
-docker compose up -d --pull never
+docker compose pull
+docker compose up -d
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz
 ```
+
+The numbered GHCR images are public and multi-architecture. To build from
+source instead, clone this repository, check out the same numbered tag and set
+`KLAXOND_IMAGE` to your local image before starting Compose. Never deploy an
+unreviewed mutable branch tag as a production rollback target.
 
 Open `http://127.0.0.1:8181/` locally. An incomplete instance opens the guided
 Setup page, which identifies every production blocker and links directly to the
@@ -96,6 +129,9 @@ The two explicit escape hatches (`ALLOW_INSECURE_PUBLIC_URL` and
 `ALLOW_NTFY_ONLY`) are intended only for deliberate local testing. See
 [`docs/production-deployment.md`](docs/production-deployment.md) for reverse
 proxy, authentication, backup, upgrade, rollback and image-verification steps.
+
+The supported browser policy covers current Chrome/Edge, Firefox and Safari;
+see the [browser support and release matrix](docs/browser-support.md).
 
 ### Public legal and accessibility pages
 
@@ -757,6 +793,7 @@ npm run static:check
 npm run loc:check
 npm run nasa:warn
 npm run openapi:lint
+npm run release:check
 cargo fmt --all -- --check
 cargo check --locked --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
@@ -768,19 +805,12 @@ npm run test:e2e
 docker buildx build -t klaxond:local .
 ```
 
-The live Authentik canary is intentionally separate from the portable suite. In
-the homelab checkout, run it through the serialized account lifecycle and the
-bounded Klaxond access hook:
-
-```bash
-E2E_BASE_URL=https://klaxond.example.com \
-AUTHENTIK_E2E_ACCESS_PLAYBOOK=/opt/ansible/homelab-ansible/playbooks/manage-klaxond-authentik-e2e-access.yml \
-  /opt/ansible/homelab-ansible/scripts/run-authentik-e2e.sh -- \
-  npm run test:e2e:authentik
-```
+The live identity-provider canary is intentionally separate from the portable
+suite because it requires a disposable account in a real OIDC provider. It is a
+maintainer deployment check, not a prerequisite for contributors.
 
 The reviewed `auth-modules` crate is vendored under `vendor/auth-modules` so an
-authorized checkout builds without private dependencies. Its immutable upstream
+ordinary checkout builds without private dependencies. Its immutable upstream
 commit and selected license are recorded in the vendored README; upgrades are
 explicit, reviewed and covered by the complete authentication test suite.
 
@@ -795,8 +825,8 @@ a cohesive `match`, linear function, or domain module is clearer.
 
 `npm run openapi:lint` runs the pinned Redocly CLI from `package-lock.json`
 against [`docs/openapi.yaml`](docs/openapi.yaml) using `.redocly.yaml`.
-Redocly CLI 2.x requires Node 20.19+ with npm 10+; the Gitea workflow pins
-Node 20.19.0 for that check.
+Redocly CLI 2.x requires Node 20.19+ with npm 10+; the CI workflows pin Node
+20.19.0 for that check.
 Redocly checks the quality and consistency of the OpenAPI document; it does not
 replace backend tests, contract behavior tests, or the custom route/spec coverage
 checks in the Rust test suite.
@@ -826,8 +856,8 @@ The threat model and review checklist are tracked in
 Apache-2.0 — see [LICENSE](./LICENSE).
 
 ---
-> The maintainer's Gitea repository is the canonical write source and is mirrored
-> to the private GitHub repository with exact-SHA verification. Tags promote the
-> already-tested internal image for the maintainer deployment. GitHub registry
-> and release publication remain paused throughout private incubation. Mutable
-> branch images never deploy to production.
+The maintainer's Gitea repository is the canonical write source and GitHub is
+the public release surface. Exact-SHA mirroring keeps both histories aligned.
+Numbered tags promote already-tested GHCR manifests without rebuilding them;
+mutable branch images never deploy to the maintainer's production instance.
+See [RELEASING.md](RELEASING.md) for the public release contract.

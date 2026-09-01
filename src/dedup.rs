@@ -31,6 +31,11 @@ pub async fn submit(state: &AppState, input: SubmitInput) -> bool {
     let cfg = state.cfg();
     let source = input.source;
     let severity = input.severity;
+    // Recoveries are control signals: delaying or coalescing one can leave an
+    // emergency receipt active after the producer has reported recovery.
+    if severity.eq_ignore_ascii_case("resolved") {
+        return false;
+    }
     let Some(setting) = cfg.dedup.get(&source) else {
         return false;
     };

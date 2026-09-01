@@ -34,6 +34,11 @@ pub(super) async fn status_payload(state: &AppState) -> Value {
         "cascade_enabled_runtime": state.cascade_runtime_enabled.load(Ordering::Relaxed),
         "cascade_enabled_default": cfg.cascade_default,
         "channels": check_channel_reachability(state).await,
+        "channel_configured": {
+            "ntfy": !cfg.ntfy_url.is_empty() && !cfg.ntfy_topics.is_empty(),
+            "telegram": !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),
+            "smtp": !cfg.smtp_host.is_empty() && !cfg.smtp_from.is_empty() && !cfg.smtp_to.is_empty(),
+        },
         "ntfy_url": cfg.ntfy_url,
         "smtp_host": cfg.smtp_host,
         "telegram_configured": !cfg.tg_token.is_empty() && !cfg.tg_chat.is_empty(),

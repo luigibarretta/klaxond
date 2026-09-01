@@ -1,9 +1,7 @@
 # Production deployment
 
-This guide is the supported path for an authorized operator deploying Klaxond
-without access to Luigi Barretta's private infrastructure. The source repository
-is in private incubation, but the application has no dependency on the
-maintainer's runtime infrastructure.
+This guide is the supported path for an operator deploying Klaxond without any
+dependency on the maintainer's runtime infrastructure.
 
 ## 1. Prerequisites
 
@@ -12,17 +10,20 @@ maintainer's runtime infrastructure.
 - a DNS name and HTTPS reverse proxy before enabling emergency ACK callbacks
 - Telegram or authenticated SMTP as an independent emergency fallback
 
-GitHub registry and release publication are paused during private incubation.
-Build a numbered source tag and never deploy a mutable branch checkout.
+Use a numbered GitHub release and its matching public GHCR images. Never deploy
+a mutable branch checkout or use one as a rollback target.
 
 ## 2. Install safely on loopback
 
-Clone the numbered source tag through an authenticated GitHub CLI:
+Download the Compose bundle attached to the
+[latest numbered release](https://github.com/luigibarretta/klaxond/releases/latest),
+then extract and verify it:
 
 ```bash
-gh repo clone luigibarretta/klaxond klaxond
-cd klaxond
-git checkout v0.17.2
+mkdir klaxond-release
+tar -xzf klaxond-*-compose.tar.gz -C klaxond-release
+cd klaxond-release
+sha256sum --check SHA256SUMS
 cp .env.example .env
 chmod 600 .env
 ```
@@ -35,12 +36,16 @@ The shipped defaults never point at the maintainer's infrastructure.
 
 ```bash
 docker compose config --quiet
-docker build --pull=false --tag klaxond:0.17.2 .
-# Set KLAXOND_IMAGE=klaxond:0.17.2 in .env.
-docker compose up -d --pull never
+docker compose pull
+docker compose up -d
 docker compose exec klaxond klaxond doctor --offline
 curl -fsS http://127.0.0.1:8181/healthz
 ```
+
+The release bundle pins the backend and frontend images to its own numbered
+version. For a source build, check out that same tag, build a local image and
+replace `KLAXOND_IMAGE` in `.env`; do not mix files and images from different
+versions.
 
 Use an SSH tunnel from an administrator workstation when Docker runs remotely:
 
@@ -151,21 +156,24 @@ Keep the prior numbered image tag and volume backup. Roll back by restoring the
 compatible backup, changing the image tag in `docker-compose.yml`, and recreating
 the container. Do not use a mutable tag as a rollback target.
 
-## 7. Verify the private-incubation image
+## 7. Verify the public image
 
-Run the same clean-install gate used by CI against the locally built image,
-then record its immutable image ID before rollout:
+Record the numbered image digest before rollout and run the same clean-install
+gate used by CI when validating a source build:
 
 ```bash
-KLAXOND_CLEAN_INSTALL_IMAGE=klaxond:0.17.2 scripts/test-clean-install.sh
-docker image inspect klaxond:0.17.2 --format '{{.Id}}'
+docker compose pull
+docker image inspect "$(docker compose config --images | head -n1)" --format '{{.Id}}'
 docker inspect klaxond --format '{{.Image}}'
+
+# Source-build validation, from a matching numbered checkout:
+KLAXOND_CLEAN_INSTALL_IMAGE=klaxond:local scripts/test-clean-install.sh
 ```
 
-Multi-architecture GHCR publication, SBOM/provenance attestations and keyless
-Cosign signing remain implemented in the suspended GitHub workflow and must be
-re-enabled only after package visibility and the next public launch are
-explicitly approved.
+The public workflow builds amd64 and arm64 images on native runners, scans every
+platform, creates SBOM/provenance attestations, signs immutable digests and
+promotes a numbered tag only from the already-tested commit manifest. See
+[`RELEASING.md`](../RELEASING.md) for the maintainer release gate.
 
 Report suspected vulnerabilities through GitHub's private security-advisory
 flow described in [`SECURITY.md`](../SECURITY.md), not in a public issue.

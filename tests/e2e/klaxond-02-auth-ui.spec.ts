@@ -3,7 +3,6 @@ import {
   BASIC_AUTH,
   BASIC_USER,
   LOCAL_ORIGIN,
-  addVirtualAuthenticator,
   createAdminBearer,
   enableBasicAuth,
   exportConfigBundle,
@@ -143,12 +142,11 @@ test("API keys and PATs support prefixes, last-use tracking, revocation and scop
 test("passkeys can be registered, used for login, and deleted", async ({ page, request }) => {
   const originalBundle = await exportConfigBundle(request);
   const cleanupBearer = await createAdminBearer(request, "e2e-passkey-cleanup");
-  let cleanupAuthenticator: (() => Promise<void>) | undefined;
 
   try {
     await enableBasicAuth(request);
     await page.setExtraHTTPHeaders({ Authorization: BASIC_AUTH });
-    cleanupAuthenticator = await addVirtualAuthenticator(page);
+    await page.context().credentials.install();
 
     await page.goto(`${LOCAL_ORIGIN}/authentication`);
     await expect(page.locator("#auth-current-user")).toContainText("admin (mode=basic)");
@@ -179,7 +177,6 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     await page.locator(".app-dialog .danger").click();
     await expect(page.locator("#t-passkeys tbody")).toContainText("No passkeys registered.");
   } finally {
-    await cleanupAuthenticator?.();
     await restoreConfigBundle(request, originalBundle, { Authorization: cleanupBearer });
     await page.setExtraHTTPHeaders({});
   }

@@ -1,5 +1,25 @@
 # Klaxond — CHANGELOG
 
+## 0.19.0 — 2026-09-01
+
+- Define the primary self-hosted operator persona, core alert-delivery need,
+  product non-goals and outcome-based effectiveness criteria for the public
+  project.
+- Restore the public GHCR and GitHub release path with native amd64/arm64
+  builds, immutable commit-manifest promotion, signed attestations, vulnerability
+  gates and a self-verifying Compose bundle.
+- Make Chromium, Firefox and WebKit part of both continuous-integration browser
+  gates, exercise the full passkey lifecycle in all three engines with a
+  context-scoped virtual authenticator, and document the final physical Safari
+  and iOS release boundary.
+- Replace private-incubation installation guidance with a public numbered-image
+  path and add release, support, conduct, issue and pull-request guidance for
+  external users and contributors.
+- Deliver producer recoveries immediately even when burst deduplication is
+  enabled, so a concurrent lower-severity event cannot keep an emergency
+  receipt active; document the fail-closed 401/404 ingest contract for every
+  supported source.
+
 ## 0.18.1 — 2026-08-31
 
 - Treat a Grafana or Alertmanager payload with `status=resolved` as the

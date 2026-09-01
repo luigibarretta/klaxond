@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a reproducible Klaxond problem
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Remove credentials, private hostnames and notification payload data.
+        Security issues belong in private vulnerability reporting.
+  - type: input
+    id: version
+    attributes:
+      label: Version or image digest
+      placeholder: "0.19.0 or sha256:..."
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installation or upgrade
+        - Webhook ingestion
+        - Notification delivery
+        - Emergency acknowledgement
+        - Authentication
+        - Admin UI
+        - Storage or backup
+        - API or SDK
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Give the smallest sanitized sequence that reproduces the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, deployment shape, and browser/version for UI issues.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Redacted logs, doctor output, screenshots, or request IDs.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed secrets, private payloads and personal data.
+          required: true
+        - label: This is not a vulnerability report.
+          required: true

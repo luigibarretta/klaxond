@@ -16,8 +16,16 @@ cargo test --manifest-path sdk/rust/Cargo.toml --locked
 npm ci
 npm run static:check
 npm run openapi:lint
+npm run release:check
 npm run test:e2e
 ```
+
+The matrix deliberately starts a clean local server for Chromium, Firefox, and WebKit in sequence. This prevents configuration mutations in one browser run from leaking into the next one.
+
+`npm run test:e2e` runs the portable UI suite, including the full virtual
+passkey lifecycle, in Chromium, Firefox and WebKit. Numbered releases
+additionally require the physical Safari/macOS and iOS smoke tests documented
+in `docs/browser-support.md`.
 
 Do not edit `vendor/auth-modules` ad hoc. A vendor refresh must name an immutable
 upstream commit in its README and pass the full authentication/security suite.

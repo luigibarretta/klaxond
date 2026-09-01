@@ -27,6 +27,7 @@ const IT_STATIC_MESSAGES = {
   "nav.settings": "Impostazioni",
   "nav.tools": "Strumenti",
   "nav.toggle_sidebar": "Comprimi/espandi sidebar",
+  "nav.skip_to_content": "Vai al contenuto principale",
   "tab.status": "Stato",
   "tab.flow": "Flusso",
   "tab.inhibitions": "Inibizioni",

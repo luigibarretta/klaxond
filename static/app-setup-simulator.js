@@ -105,7 +105,9 @@ async function saveHistoryConfig() {
 function statusBadge(status) {
   const label = status || "info";
   const cls = label === "ok" ? "info" : label === "error" ? "error" : "warn";
-  return `<span class="log-level ${cls}">${escapeHtml(label)}</span>`;
+  const key = `setup.status.${label}`;
+  const translated = tr(key);
+  return `<span class="log-level ${cls}">${escapeHtml(translated === key ? label : translated)}</span>`;
 }
 
 function renderSetupChecklist(payload) {
@@ -132,15 +134,26 @@ function renderSetupChecklist(payload) {
     next.textContent = setupActionLabel(nextAction);
   }
   window.setTabBadge?.("setup", summary.blocking || 0, summary.blocking ? "warn" : "");
-  box.innerHTML = items.map((item, index) => `
+  const required = items.filter(item => item.required !== false);
+  const optional = items.filter(item => item.required === false);
+  const renderItems = (group, isOptional) => group.map((item, index) => `
     <div class="setup-item">
-      <div class="setup-step-number" aria-hidden="true">${index + 1}</div>
+      ${isOptional
+        ? `<div class="setup-step-label">${escapeHtml(tr("setup.recommended_badge"))}</div>`
+        : `<div class="setup-step-number" aria-hidden="true">${index + 1}</div>`}
       <div>
         <div class="setup-item-heading"><strong>${escapeHtml(setupItemLabel(item))}</strong>${statusBadge(item.status)}</div>
         <p class="muted">${escapeHtml(setupItemDetail(item))}</p>
         ${item.action?.path ? `<a class="btn setup-item-action" href="${escapeHtml(item.action.path)}">${escapeHtml(setupActionLabel(item.action))}</a>` : ""}
       </div>
     </div>`).join("");
+  const renderGroup = (key, group, isOptional) => group.length ? `
+    <section class="setup-group" data-setup-group="${key}">
+      <h3 class="setup-group-heading">${escapeHtml(tr(`setup.${key}_title`))}</h3>
+      <p class="muted setup-group-description">${escapeHtml(tr(`setup.${key}_desc`))}</p>
+      <div class="setup-items">${renderItems(group, isOptional)}</div>
+    </section>` : "";
+  box.innerHTML = renderGroup("required", required, false) + renderGroup("recommended", optional, true);
 }
 
 function setupActionLabel(action) {

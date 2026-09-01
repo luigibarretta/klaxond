@@ -29,6 +29,7 @@ const EN_STATIC_MESSAGES = {
   "nav.settings": "Settings",
   "nav.tools": "Tools",
   "nav.toggle_sidebar": "Toggle sidebar",
+  "nav.skip_to_content": "Skip to main content",
   "tab.status": "Status",
   "tab.flow": "Flow",
   "tab.inhibitions": "Inhibitions",

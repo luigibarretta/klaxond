@@ -126,6 +126,7 @@ export const IT_AUTH_MESSAGES = {
   "auth.not_set": "non impostato",
   "auth.error_loading": "Errore caricamento: {message}",
   "auth.saved": "Salvato ✓ (mode={mode}). Ricarica la pagina per applicare.",
+  "auth.save_settings": "Salva autenticazione",
   "auth.session_expired": "Sessione scaduta. Reindirizzamento al login…",
   "auth.viewer_readonly": "Modalità viewer: i controlli di scrittura sono disabilitati."
 };

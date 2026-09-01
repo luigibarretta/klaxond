@@ -189,6 +189,40 @@ fn all_runtime_operations_are_documented_in_openapi() {
 }
 
 #[test]
+fn all_ingest_operations_document_fail_closed_auth_responses() {
+    let openapi = include_str!("../../docs/openapi.yaml");
+    let paths = [
+        "/webhook/{severity}",
+        "/beszel/{severity}",
+        "/healthchecks/{severity}",
+        "/uptime-kuma/{severity}",
+        "/wud/{severity}",
+        "/authentik/{severity}",
+        "/shelfmark/{severity}",
+        "/prowlarr/{severity}",
+        "/decypharr/{severity}",
+        "/pve/{severity}",
+        "/blackstart/{severity}",
+        "/github/{severity}",
+    ];
+
+    for path in paths {
+        let block = openapi_operation_block(openapi, path, "post")
+            .unwrap_or_else(|| panic!("OpenAPI missing ingest operation POST {path}"));
+        assert!(
+            block.contains("\"401\":")
+                && block.contains("#/components/responses/IngestUnauthorized"),
+            "OpenAPI ingest operation POST {path} must document invalid credentials as 401"
+        );
+        assert!(
+            block.contains("\"404\":")
+                && block.contains("#/components/responses/IngestSourceDisabled"),
+            "OpenAPI ingest operation POST {path} must document a disabled source as 404"
+        );
+    }
+}
+
+#[test]
 fn csrf_required_mutations_are_documented_with_csrf_header() {
     let openapi = include_str!("../../docs/openapi.yaml");
     for policy in ENDPOINT_POLICIES

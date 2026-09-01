@@ -47,7 +47,18 @@ export function renderDeliv(opts = {}) {
   }
   const cnt = $("#deliv-count");
   if (cnt) cnt.textContent = total === shown ? tr("deliveries.event_count", { count: total }) : tr("deliveries.event_count_filtered", { shown, total });
-  if (!shown) tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(total ? tr("deliveries.no_match") : tr("deliveries.no_deliveries"))}</td></tr>`;
+  if (!shown && total) {
+    tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("deliveries.no_match"))}</td></tr>`;
+  } else if (!shown) {
+    tb.innerHTML = `<tr><td colspan="5"><div class="table-empty-state">
+      <strong>${escapeHtml(tr("deliveries.empty_title"))}</strong>
+      <p class="muted">${escapeHtml(tr("deliveries.empty_desc"))}</p>
+      <div class="table-empty-actions">
+        <a class="btn primary" href="/test">${escapeHtml(tr("deliveries.empty_test"))}</a>
+        <a class="btn" href="/setup">${escapeHtml(tr("deliveries.empty_setup"))}</a>
+      </div>
+    </div></td></tr>`;
+  }
   applyTablePager("t-deliv", { reset: opts.reset });
 }
 

@@ -13,11 +13,14 @@ export { loadConfigBackups } from "./app-config-backups.js";
 export async function loadStatus(opts = {}) {
   try {
     const s = await queryGet("status", "/api/status", { force: opts.force });
-    const setCh = (id, up, url) => {
+    const setCh = (id, configured, up, detail) => {
       const card = $("#" + id);
       const dot = card.querySelector(".dot");
-      dot.className = "dot " + (up ? "up" : "down");
-      dot.title = up ? tr("channel.reachable") : tr("channel.unreachable");
+      const state = !configured ? "unknown" : up ? "up" : "down";
+      dot.className = `dot ${state}`;
+      dot.title = !configured
+        ? tr("channel.state_not_configured")
+        : up ? tr("channel.reachable") : tr("channel.unreachable");
       // Add a textual status next to the dot (accessibility — color alone
       // isn't enough for colorblind users + screen readers).
       let statusText = card.querySelector(".ch-status-text");
@@ -27,13 +30,24 @@ export async function loadStatus(opts = {}) {
         statusText.style.marginLeft = "6px";
         dot.insertAdjacentElement("afterend", statusText);
       }
-      statusText.textContent = up ? tr("channel.up") : tr("channel.down");
-      statusText.style.color = up ? "var(--green)" : "var(--red)";
-      card.querySelector(".ch-url").textContent = url || "";
+      statusText.textContent = !configured
+        ? tr("channel.state_not_configured")
+        : up ? tr("channel.up") : tr("channel.down");
+      statusText.style.color = !configured ? "var(--muted)" : up ? "var(--green)" : "var(--red)";
+      card.querySelector(".ch-url").textContent = detail || "";
     };
-    setCh("ch-ntfy", s.channels.ntfy, s.ntfy_url);
-    setCh("ch-telegram", s.channels.telegram, s.telegram_configured ? tr("channel.bot_configured") : tr("channel.not_configured"));
-    setCh("ch-smtp", s.channels.smtp, s.smtp_host ? `${s.smtp_host}` : tr("channel.not_configured"));
+    const configured = s.channel_configured || {
+      ntfy: Boolean(s.ntfy_url),
+      telegram: Boolean(s.telegram_configured),
+      smtp: Boolean(s.smtp_host),
+    };
+    const channelDetail = (value, isConfigured) => [
+      value,
+      isConfigured ? "" : tr("channel.not_configured"),
+    ].filter(Boolean).join(" · ");
+    setCh("ch-ntfy", configured.ntfy, s.channels.ntfy, channelDetail(s.ntfy_url, configured.ntfy));
+    setCh("ch-telegram", configured.telegram, s.channels.telegram, channelDetail(configured.telegram ? tr("channel.bot_configured") : "", configured.telegram));
+    setCh("ch-smtp", configured.smtp, s.channels.smtp, channelDetail(s.smtp_host, configured.smtp));
     updateAppVersion(s.version);
     $("#cas-default").textContent = s.cascade_enabled_default;
     $("#cas-runtime").textContent = s.cascade_enabled_runtime;
@@ -103,7 +117,7 @@ export function applyReadOnlyViewerMode(user = {}) {
     "#btn-cascade-toggle", "#cfg-import-apply", "#inhib-add", "#inhib-save", "#inhib-clear-all",
     "#sched-add", "#sched-save", "#btn-rc-add", "#btn-rc-save", "#ntfy-topic-add",
     "#ntfy-topics-save", "#btn-routing-save", "#btn-cas-add", "#btn-cas-save",
-    "#btn-pol-add", "#btn-rule-add", "#btn-delivery-save", "[data-dedup-save]", "#auth-save",
+    "#btn-pol-add", "#btn-rule-add", "#btn-delivery-save", "[data-dedup-save]", "[data-auth-save]",
     "#token-create", "#passkey-register", "#totp-start", "#totp-enable", "#totp-disable", "#btn-preview", "#inhib-test-run", "#btn-test-fire",
     "button.danger", "[data-clear-suppression]", "[data-clear-ack]", "[data-del]", "[data-revoke]", "[data-passkey-del]", "button[data-act]", "button[data-emergency-action]"
   ];
@@ -147,20 +161,43 @@ export async function loadCurrentUser() {
 }
 
 (function setupSidebar() {
-  const collapsed = (() => {
+  const media = window.matchMedia?.("(max-width: 760px)");
+  const savedDesktopState = () => {
     try {
       const saved = localStorage.getItem("klaxond.sidebarCollapsed");
       if (saved === "1" || saved === "0") return saved === "1";
     } catch (e) {}
-    return window.matchMedia?.("(max-width: 760px)")?.matches || false;
-  })();
-  document.body.classList.toggle("sidebar-collapsed", collapsed);
+    return false;
+  };
+  const setCollapsed = (collapsed, persist = false) => {
+    document.body.classList.toggle("sidebar-collapsed", collapsed);
+    const toggle = $("#sidebar-toggle");
+    toggle?.setAttribute("aria-expanded", String(!collapsed));
+    if (persist && !media?.matches) {
+      try { localStorage.setItem("klaxond.sidebarCollapsed", collapsed ? "1" : "0"); } catch (e) {}
+    }
+  };
+  setCollapsed(media?.matches ? true : savedDesktopState());
   onReady(() => {
-    $("#sidebar-toggle")?.addEventListener("click", () => {
+    const toggle = $("#sidebar-toggle");
+    toggle?.setAttribute("aria-controls", "sidebar");
+    toggle?.addEventListener("click", () => {
       const next = !document.body.classList.contains("sidebar-collapsed");
-      document.body.classList.toggle("sidebar-collapsed", next);
-      try { localStorage.setItem("klaxond.sidebarCollapsed", next ? "1" : "0"); } catch (e) {}
+      setCollapsed(next, true);
     });
+    document.querySelectorAll(".tab").forEach(tab => {
+      tab.addEventListener("click", () => {
+        if (media?.matches) setCollapsed(true);
+      });
+    });
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || !media?.matches || document.body.classList.contains("sidebar-collapsed")) return;
+      setCollapsed(true);
+      toggle?.focus();
+    });
+    const handleViewportChange = event => setCollapsed(event.matches ? true : savedDesktopState());
+    if (media?.addEventListener) media.addEventListener("change", handleViewportChange);
+    else media?.addListener?.(handleViewportChange);
   });
 })();
 

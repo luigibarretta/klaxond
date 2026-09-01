@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose an operator outcome or integration
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Operator problem
+      description: Describe the job that is difficult today, not only the desired control or setting.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround or alternatives
+  - type: textarea
+    id: safety
+    attributes:
+      label: Delivery, security, or compatibility considerations

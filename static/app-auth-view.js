@@ -195,7 +195,7 @@ document.querySelectorAll("[data-token-kind-option]").forEach(btn => {
   btn.addEventListener("click", () => setTokenKind(btn.dataset.tokenKindOption));
 });
 
-$("#auth-save")?.addEventListener("click", async () => {
+async function saveAuth() {
   const mode = document.querySelector('input[name="auth-mode"]:checked')?.value || "none";
   const basicPassword = $("#auth-basic-pwd").value;
   const passwordPolicy = getAuthPasswordPolicy();
@@ -274,6 +274,10 @@ $("#auth-save")?.addEventListener("click", async () => {
   } catch (e) {
     notifyError("auth-save", e, { status: "#auth-status" });
   }
+}
+
+document.querySelectorAll("[data-auth-save]").forEach(button => {
+  button.addEventListener("click", saveAuth);
 });
 
 $("#token-create")?.addEventListener("click", createAuthToken);

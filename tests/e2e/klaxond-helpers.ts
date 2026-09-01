@@ -117,25 +117,6 @@ export function totp(secret: string, atSeconds = Math.floor(Date.now() / 1000)) 
   return String(bin % 1_000_000).padStart(6, "0");
 }
 
-export async function addVirtualAuthenticator(page: Page) {
-  const client = await page.context().newCDPSession(page);
-  await client.send("WebAuthn.enable");
-  const { authenticatorId } = await client.send("WebAuthn.addVirtualAuthenticator", {
-    options: {
-      protocol: "ctap2",
-      transport: "usb",
-      hasResidentKey: true,
-      hasUserVerification: true,
-      isUserVerified: true,
-      automaticPresenceSimulation: true
-    }
-  });
-  return async () => {
-    await client.send("WebAuthn.removeVirtualAuthenticator", { authenticatorId }).catch(() => {});
-    await client.send("WebAuthn.disable").catch(() => {});
-  };
-}
-
 export async function countPagerRows(page: Page, tableId: string) {
   return page.locator(`#${tableId} tbody tr`).evaluateAll(rows =>
     rows.filter(row => (row as HTMLElement).style.display !== "none").length

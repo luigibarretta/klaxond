@@ -308,3 +308,70 @@ body.public-info-route .app-shell {
 body.public-info-route .app-main {
   grid-column: 1 / -1;
 }
+
+/* This breakpoint intentionally lives after the desktop collapsed rules.
+ * It is the final authority for the mobile shell in every import order. */
+@media (max-width: 760px) {
+  .app-shell,
+  body.sidebar-collapsed .app-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .sidebar,
+  body.sidebar-collapsed .sidebar {
+    position: sticky;
+    top: 0;
+    width: 100%;
+    height: auto;
+    max-height: min(78vh, 680px);
+    padding: 12px;
+    align-items: stretch;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .sidebar-head,
+  body.sidebar-collapsed .sidebar-head {
+    min-height: 38px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .brand-lockup,
+  body.sidebar-collapsed .brand-lockup { flex: 1 1 auto; }
+  .brand-lockup h1,
+  body.sidebar-collapsed .brand-lockup h1 { justify-content: flex-start; }
+  body.sidebar-collapsed .brand-name { display: inline; }
+  body.sidebar-collapsed .brand-lockup small { display: block; }
+  body.sidebar-collapsed .brand-logo {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
+  }
+  #sidebar-toggle,
+  .sidebar-user a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  body.sidebar-collapsed .sidebar {
+    height: auto;
+    max-height: 68px;
+    overflow: hidden;
+  }
+  body:not(.sidebar-collapsed) .sidebar {
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    overscroll-behavior: contain;
+  }
+  body.sidebar-collapsed nav.tabs,
+  body.sidebar-collapsed .prefs,
+  body.sidebar-collapsed .sidebar-user { display: none; }
+  body:not(.sidebar-collapsed) nav.tabs,
+  body:not(.sidebar-collapsed) .prefs,
+  body:not(.sidebar-collapsed) .sidebar-user { display: flex; }
+  body:not(.sidebar-collapsed) .tab { min-height: 44px; }
+}
