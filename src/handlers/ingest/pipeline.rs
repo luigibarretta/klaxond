@@ -179,7 +179,7 @@ fn common_labels(source: &str, payload: &Value) -> HashMap<String, String> {
     if !matches!(source, "grafana" | "blackstart") {
         return HashMap::new();
     }
-    payload
+    let mut labels: HashMap<String, String> = payload
         .get("commonLabels")
         .and_then(Value::as_object)
         .map(|labels| {
@@ -188,7 +188,50 @@ fn common_labels(source: &str, payload: &Value) -> HashMap<String, String> {
                 .map(|(key, value)| (key.clone(), crate::parsers::scalar_to_string(value)))
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if let Some(key) = alertmanager_incident_key(payload) {
+        // Alertmanager can remove labels from commonLabels when a group gains
+        // another instance. Keep its stable group identity separate from
+        // producer labels so an expansion and the final recovery reconcile
+        // the same emergency receipt.
+        labels.insert("__klaxond_incident_key".into(), key);
+    }
+    labels
+}
+
+fn alertmanager_incident_key(payload: &Value) -> Option<String> {
+    let group_key = payload
+        .get("groupKey")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(group_key) = group_key {
+        return Some(format!("group-key:{group_key}"));
+    }
+    let group_labels = payload.get("groupLabels")?.as_object()?;
+    if group_labels.is_empty() {
+        return None;
+    }
+    let mut entries = group_labels
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.trim().to_ascii_lowercase(),
+                crate::parsers::scalar_to_string(value)
+                    .trim()
+                    .to_ascii_lowercase(),
+            )
+        })
+        .collect::<Vec<_>>();
+    entries.sort_unstable();
+    Some(format!(
+        "group-labels:{}",
+        entries
+            .into_iter()
+            .map(|(key, value)| { format!("{}:{}={}:{}", key.len(), key, value.len(), value) })
+            .collect::<Vec<_>>()
+            .join("|")
+    ))
 }
 
 pub(super) fn dry_run_delivery_response(
@@ -238,7 +281,8 @@ pub(super) async fn maybe_buffer_dedup(
 
 #[cfg(test)]
 mod tests {
-    use super::ingest_source;
+    use super::{common_labels, ingest_source};
+    use serde_json::json;
 
     #[test]
     fn dedicated_blackstart_route_preserves_source_identity() {
@@ -250,5 +294,44 @@ mod tests {
     fn dedicated_github_route_preserves_source_identity() {
         assert_eq!(ingest_source("/github/info"), Some("github"));
         assert_eq!(ingest_source("/webhook/info"), Some("grafana"));
+    }
+
+    #[test]
+    fn alertmanager_group_key_survives_common_label_expansion() {
+        let initial = json!({
+            "groupKey": "{}:{alertname=\"TrivyFixableCriticalNewEntry\"}",
+            "commonLabels": {
+                "alertname": "TrivyFixableCriticalNewEntry",
+                "host": "it1-prd-mgmt-01",
+                "container": "alertmanager"
+            }
+        });
+        let expanded = json!({
+            "groupKey": "{}:{alertname=\"TrivyFixableCriticalNewEntry\"}",
+            "commonLabels": {"alertname": "TrivyFixableCriticalNewEntry"}
+        });
+
+        let initial = common_labels("grafana", &initial);
+        let expanded = common_labels("grafana", &expanded);
+        assert_eq!(
+            initial.get("__klaxond_incident_key"),
+            expanded.get("__klaxond_incident_key")
+        );
+        assert_ne!(initial.get("host"), expanded.get("host"));
+    }
+
+    #[test]
+    fn alertmanager_group_labels_are_a_canonical_fallback() {
+        let first = json!({
+            "groupLabels": {"severity": "critical", "alertname": "DiskFull"}
+        });
+        let reordered = json!({
+            "groupLabels": {"alertname": "DiskFull", "severity": "critical"}
+        });
+
+        assert_eq!(
+            common_labels("grafana", &first).get("__klaxond_incident_key"),
+            common_labels("grafana", &reordered).get("__klaxond_incident_key")
+        );
     }
 }

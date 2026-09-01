@@ -19,6 +19,10 @@
   enabled, so a concurrent lower-severity event cannot keep an emergency
   receipt active; document the fail-closed 401/404 ingest contract for every
   supported source.
+- Correlate Grafana/Alertmanager emergencies with the stable webhook group
+  identity instead of mutable common labels, so adding an alert instance does
+  not create a second receipt and the final recovery closes the original one;
+  retain compatibility with receipts created before the upgrade.
 
 ## 0.18.1 — 2026-08-31
 

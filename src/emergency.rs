@@ -6,13 +6,17 @@ use crate::state::AppState;
 use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch, token_urlsafe};
 use auth_modules::secrets::constant_time_eq;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 const ACK_HEADER: &str = "x-klaxond-emergency-token";
 
+mod identity;
 mod lifecycle;
 mod scheduler;
+#[cfg(test)]
+mod tests;
+
+use identity::{fingerprint, legacy_fingerprint};
 
 pub use lifecycle::{
     acknowledge, active_stats, cancel, confirmation_page, confirmation_token_receipt, get, list,
@@ -38,33 +42,64 @@ pub async fn prepare(
 ) -> PrepareResult {
     let cfg = state.cfg();
     let fingerprint = fingerprint(source, parts, labels);
+    let legacy_fingerprint = legacy_fingerprint(source, parts, labels);
     if severity == "resolved" {
         if cfg.emergency.enabled && cfg.emergency.auto_resolve {
-            match state.history_store().emergency_terminalize_fingerprint(
-                &fingerprint,
-                "resolved",
-                "source-recovery",
-                now_epoch(),
-            ) {
-                Ok(Some(incident)) if incident.state == "resolved" => {
-                    transition_audit(state, &incident, "resolved", "source-recovery");
-                    publish_terminal(
-                        state,
-                        &cfg,
-                        &incident,
-                        "Resolved automatically",
-                        "The source reported recovery; emergency retries have stopped.",
-                    )
-                    .await;
+            let mut fingerprints = vec![fingerprint.clone()];
+            if legacy_fingerprint != fingerprint {
+                // Receipts created before the stable Alertmanager group-key
+                // rollout remain recoverable during an in-flight upgrade.
+                fingerprints.push(legacy_fingerprint.clone());
+            }
+            for recovery_fingerprint in fingerprints {
+                match state.history_store().emergency_terminalize_fingerprint(
+                    &recovery_fingerprint,
+                    "resolved",
+                    "source-recovery",
+                    now_epoch(),
+                ) {
+                    Ok(Some(incident)) if incident.state == "resolved" => {
+                        transition_audit(state, &incident, "resolved", "source-recovery");
+                        publish_terminal(
+                            state,
+                            &cfg,
+                            &incident,
+                            "Resolved automatically",
+                            "The source reported recovery; emergency retries have stopped.",
+                        )
+                        .await;
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::error!("emergency recovery reconciliation failed: {err}")
+                    }
                 }
-                Ok(_) => {}
-                Err(err) => tracing::error!("emergency recovery reconciliation failed: {err}"),
             }
         }
         return PrepareResult::Normal;
     }
     if !should_manage(&cfg.emergency, severity, labels, source) {
         return PrepareResult::Normal;
+    }
+    if legacy_fingerprint != fingerprint {
+        match state.history_store().emergencies(Some("active"), 1_000) {
+            Ok(active) => {
+                if let Some(incident) = active
+                    .into_iter()
+                    .find(|incident| incident.fingerprint == legacy_fingerprint)
+                {
+                    state.metric_inc(
+                        "klaxond_emergency_incidents_total",
+                        &[("outcome", "coalesced")],
+                        1,
+                    );
+                    return PrepareResult::Duplicate(incident.receipt_id);
+                }
+            }
+            Err(err) => tracing::error!(
+                "legacy emergency fingerprint reconciliation failed; continuing with stable identity: {err}"
+            ),
+        }
     }
     let now = now_epoch();
     let payload = EmergencyPayload {
@@ -184,33 +219,6 @@ fn should_manage(
     cfg.severities
         .iter()
         .any(|value| value.eq_ignore_ascii_case(severity))
-}
-
-fn fingerprint(source: &str, parts: &Parts, labels: &HashMap<String, String>) -> String {
-    let alertname = labels
-        .get("alertname")
-        .map(String::as_str)
-        .filter(|v| !v.is_empty())
-        .unwrap_or({
-            if parts.alertname.is_empty() {
-                parts.title.as_str()
-            } else {
-                parts.alertname.as_str()
-            }
-        });
-    let host = labels
-        .get("host")
-        .or_else(|| labels.get("instance_name"))
-        .or_else(|| labels.get("instance"))
-        .map(String::as_str)
-        .unwrap_or("");
-    let component = labels.get("component").map(String::as_str).unwrap_or("");
-    let mut hash = Sha256::new();
-    for value in [source, alertname, host, component] {
-        hash.update(value.trim().to_ascii_lowercase().as_bytes());
-        hash.update(b"\0");
-    }
-    hex::encode(hash.finalize())
 }
 
 fn decorate_parts(
@@ -351,37 +359,4 @@ fn format_epoch(value: f64) -> String {
     chrono::DateTime::from_timestamp(value as i64, 0)
         .map(|dt| dt.to_rfc3339())
         .unwrap_or_else(|| "unknown time".into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn explicit_label_overrides_severity_policy() {
-        let cfg = EmergencyConfig {
-            enabled: true,
-            ..EmergencyConfig::default()
-        };
-        assert!(should_manage(&cfg, "critical", &HashMap::new(), "grafana"));
-        assert!(!should_manage(&cfg, "warning", &HashMap::new(), "grafana"));
-        assert!(should_manage(
-            &cfg,
-            "warning",
-            &HashMap::from([("emergency".into(), "true".into())]),
-            "grafana"
-        ));
-        assert!(!should_manage(
-            &cfg,
-            "critical",
-            &HashMap::from([("emergency".into(), "false".into())]),
-            "grafana"
-        ));
-        assert!(!should_manage(
-            &cfg,
-            "critical",
-            &HashMap::new(),
-            "api-test"
-        ));
-    }
 }
