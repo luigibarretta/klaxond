@@ -94,6 +94,10 @@ export function setupPublicLoginLinks() {
   links.forEach(link => {
     link.addEventListener("click", async e => {
       e.preventDefault();
+      // This link owns an authentication-aware full navigation. Do not let
+      // the delegated SPA router also handle the same click and race the
+      // later location.assign() with a history-only route transition.
+      e.stopPropagation();
       try {
         const res = await fetch("/api/auth/me", {
           headers: { "X-Klaxond-Request": "fetch" },
