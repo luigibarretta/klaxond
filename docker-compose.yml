@@ -8,7 +8,7 @@
 
 services:
   klaxond:
-    image: ${KLAXOND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.19.0}
+    image: ${KLAXOND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.19.1}
     # Comment image: above and uncomment build: to build locally:
     # build:
     #   context: .
