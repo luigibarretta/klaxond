@@ -37,6 +37,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Checkout pinned repository tooling
+        uses: actions/checkout@v4
+        with:
+          repository: luigibarretta/repo-tooling
+          ref: 7686291766ce5d185fefd4f60b1cb15b9a34c3da
+          path: vendor/repo-tooling
+
+      - name: Verify pinned repository tooling
+        run: scripts/check-repo-tooling-sync.sh
+
       - name: Install check tools
         run: |
           apt-get update
@@ -123,7 +133,12 @@ jobs:
         run: npm run openapi:lint
 
       - name: Check release version contract
-        run: npm run release:check
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            npm run release:check -- --tag "$GITHUB_REF_NAME"
+          else
+            npm run release:check
+          fi
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit

@@ -3,10 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "loc:check": "node scripts/check-loc.mjs",
-    "nasa:warn": "node scripts/check-nasa-warnings.mjs",
+    "loc:check": "node third_party/repo-tooling/check-loc.mjs",
+    "nasa:warn": "node third_party/repo-tooling/check-nasa-warnings.mjs",
     "openapi:lint": "REDOCLY_SUPPRESS_UPDATE_NOTICE=true redocly lint docs/openapi.yaml --config .redocly.yaml",
-    "release:check": "bash scripts/check-release-version.sh",
+    "release:check": "node third_party/repo-tooling/check-release-contract.mjs",
     "security:rsa-guard": "bash scripts/check-rsa-private-usage.sh",
     "static:check": "find static -type f -name '*.js' ! -path 'static/vendor/*' ! -name 'mermaid.min.js' -exec node --check {} \\;",
     "test:e2e": "npm run test:e2e:chromium && npm run test:e2e:firefox && npm run test:e2e:webkit",

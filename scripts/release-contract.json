@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "versionSources": [
+    {
+      "path": "Cargo.toml",
+      "regex": "^version\\s*=\\s*\"([^\"]+)\"",
+      "label": "Cargo.toml package"
+    }
+  ],
+  "requiredLiterals": [
+    { "path": "Cargo.lock", "template": "version = \"{version}\"" },
+    { "path": "docs/openapi.yaml", "template": "version: {version}" },
+    { "path": "docker-compose.yml", "template": "ghcr.io/luigibarretta/klaxond:{version}" },
+    { "path": "docker-compose.split.yml", "template": "ghcr.io/luigibarretta/klaxond:{version}" },
+    { "path": "docker-compose.split.yml", "template": "ghcr.io/luigibarretta/klaxond-frontend:{version}" },
+    { "path": ".env.example", "template": "KLAXOND_IMAGE=ghcr.io/luigibarretta/klaxond:{version}" },
+    { "path": ".env.example", "template": "KLAXOND_BACKEND_IMAGE=ghcr.io/luigibarretta/klaxond:{version}" },
+    { "path": ".env.example", "template": "KLAXOND_FRONTEND_IMAGE=ghcr.io/luigibarretta/klaxond-frontend:{version}" },
+    { "path": "CHANGELOG.md", "template": "## {version}" }
+  ],
+  "tagPrefix": "v"
+}

@@ -1,12 +1,11 @@
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
+import { resolve } from 'node:path'
 import { buildNasaWarningReport } from './nasa-warning-lib.mjs'
 import { printNasaWarningReport } from './nasa-warning-output.mjs'
 
-const repoRoot = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '')
-const locBaseline = JSON.parse(readFileSync(join(repoRoot, 'scripts/loc-baseline.json'), 'utf8'))
+const repoRoot = resolve(process.env.REPO_TOOLING_ROOT || process.cwd())
+const baselinePath = resolve(repoRoot, process.env.LOC_BASELINE || 'scripts/loc-baseline.json')
+const locBaseline = JSON.parse(readFileSync(baselinePath, 'utf8'))
 
 const policy = {
   fileWarnLines: numberFromEnv('NASA_WARN_FILE_LINES', 300),

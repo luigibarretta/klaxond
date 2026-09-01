@@ -1,9 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { extname, join, relative, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const repoRoot = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '')
-const baselinePath = join(repoRoot, 'scripts/loc-baseline.json')
+import { extname, join, relative, resolve, sep } from 'node:path'
+const repoRoot = resolve(process.env.REPO_TOOLING_ROOT || process.cwd())
+const baselinePath = resolve(repoRoot, process.env.LOC_BASELINE || 'scripts/loc-baseline.json')
 const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'))
 
 const defaultIgnoredDirs = new Set([

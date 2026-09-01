@@ -2,6 +2,9 @@
 
 ## 0.19.1 — 2026-09-01
 
+- Replace the duplicated LOC, NASA-warning, and version scripts with the
+  commit-pinned, byte-verified shared `repo-tooling` distribution; tag builds
+  now bind `vX.Y.Z` to the same reconciled release contract used locally.
 - Correlate Grafana/Alertmanager emergencies with the stable webhook group
   identity instead of mutable common labels, so adding an alert instance does
   not create a second receipt and the final recovery closes the original one;
