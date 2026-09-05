@@ -1,5 +1,12 @@
 # Klaxond — CHANGELOG
 
+## 0.19.2 — 2026-09-05
+
+- In mixed Grafana/Alertmanager group updates, render only the alert instances
+  matching the webhook's firing or resolved state. Resolved findings can no
+  longer reappear as apparently active items while another instance remains
+  firing, and affected-host summaries follow the same state boundary.
+
 ## 0.19.1 — 2026-09-01
 
 - Replace the duplicated LOC, NASA-warning, and version scripts with the

@@ -134,7 +134,7 @@ fn grafana_body(input: GrafanaBodyInput<'_>) -> String {
     // instances render different values (for example one Trivy service/image
     // per instance). Preserve those actionable details as a compact list.
     if input.summary.is_empty() {
-        let (summaries, omitted) = alert_summaries(input.payload, 12);
+        let (summaries, omitted) = alert_summaries(input.payload, input.status, 12);
         if !summaries.is_empty() {
             body_parts.push(
                 summaries
@@ -148,7 +148,7 @@ fn grafana_body(input: GrafanaBodyInput<'_>) -> String {
             }
         }
     }
-    let affected = affected_hosts(input.payload);
+    let affected = affected_hosts(input.payload, input.status);
     if affected.len() > 1 || (!affected.is_empty() && affected[0] != input.host) {
         body_parts.push(format!("Affected: {}", affected.join(", ")));
     }
@@ -166,12 +166,15 @@ fn grafana_body(input: GrafanaBodyInput<'_>) -> String {
     body
 }
 
-fn alert_summaries(payload: &Value, limit: usize) -> (Vec<String>, usize) {
+fn alert_summaries(payload: &Value, status: &str, limit: usize) -> (Vec<String>, usize) {
     let Some(alerts) = payload.get("alerts").and_then(|v| v.as_array()) else {
         return (Vec::new(), 0);
     };
     let mut unique = Vec::new();
     for alert in alerts {
+        if !alert_matches_status(alert, status) {
+            continue;
+        }
         let summary = alert
             .get("annotations")
             .and_then(|v| v.as_object())
@@ -186,10 +189,14 @@ fn alert_summaries(payload: &Value, limit: usize) -> (Vec<String>, usize) {
     (unique, omitted)
 }
 
-fn affected_hosts(payload: &Value) -> Vec<String> {
+fn affected_hosts(payload: &Value, status: &str) -> Vec<String> {
     let mut affected = Vec::new();
     if let Some(alerts) = payload.get("alerts").and_then(|v| v.as_array()) {
-        for alert in alerts.iter().take(5) {
+        for alert in alerts
+            .iter()
+            .filter(|alert| alert_matches_status(alert, status))
+            .take(5)
+        {
             if let Some(host) = alert_host(alert)
                 && !affected.contains(&host)
             {
@@ -198,6 +205,22 @@ fn affected_hosts(payload: &Value) -> Vec<String> {
         }
     }
     affected
+}
+
+fn alert_matches_status(alert: &Value, delivery_status: &str) -> bool {
+    let alert_status = alert
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if alert_status.is_empty() {
+        return true;
+    }
+    if delivery_status.eq_ignore_ascii_case("resolved") {
+        alert_status.eq_ignore_ascii_case("resolved")
+    } else {
+        !alert_status.eq_ignore_ascii_case("resolved")
+    }
 }
 
 fn alert_host(alert: &Value) -> Option<String> {

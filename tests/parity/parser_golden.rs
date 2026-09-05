@@ -105,6 +105,44 @@ fn grafana_grouped_alert_lists_per_instance_summaries() {
 }
 
 #[test]
+fn grafana_mixed_group_lists_only_alerts_matching_the_delivery_state() {
+    let (_tmp, cfg) = cfg();
+    let payload = json!({
+        "status": "firing",
+        "commonLabels": {
+            "alertname": "Trivy — new running services with fixable CRITICAL CVE",
+            "severity": "critical",
+            "component": "security"
+        },
+        "commonAnnotations": {},
+        "alerts": [
+            {
+                "status": "firing",
+                "labels": {"host": "it1-prd-dns-01"},
+                "annotations": {"summary": "current AdGuard finding"}
+            },
+            {
+                "status": "resolved",
+                "labels": {"host": "it1-prd-dev-01"},
+                "annotations": {"summary": "stale Crawl4AI finding"}
+            }
+        ]
+    });
+
+    let firing = parse_grafana_payload(&payload, "critical", &cfg);
+    assert!(firing.body.contains("current AdGuard finding"));
+    assert!(!firing.body.contains("stale Crawl4AI finding"));
+    assert!(!firing.body.contains("it1-prd-dev-01"));
+
+    let mut resolved_payload = payload;
+    resolved_payload["status"] = json!("resolved");
+    let resolved = parse_grafana_payload(&resolved_payload, "critical", &cfg);
+    assert!(resolved.body.contains("stale Crawl4AI finding"));
+    assert!(!resolved.body.contains("current AdGuard finding"));
+    assert!(resolved.body.contains("Status: RESOLVED"));
+}
+
+#[test]
 fn healthchecks_resolved_parser_matches_python_golden() {
     let (_tmp, cfg) = cfg();
     let payload = json!({
