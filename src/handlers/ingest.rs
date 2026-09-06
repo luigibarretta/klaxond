@@ -88,7 +88,21 @@ pub(super) async fn ingest(
         return suppressed_ingest_response(state, source, &route.severity, &norm, reason, dry_run);
     }
 
-    let delivery = delivery_candidate(state, source, &route.severity, &payload);
+    // A newly firing inhibition source may arrive after dependent emergencies
+    // have already been delivered. Reconcile them immediately: Alertmanager
+    // suppresses future target webhooks but does not send a synthetic resolved
+    // callback for the receipts Klaxond already owns.
+    if !dry_run && reason == "source" {
+        let closed = crate::emergency::reconcile_inhibited(state).await;
+        if closed > 0 {
+            tracing::info!(
+                closed,
+                "terminalized emergencies covered by inhibition source"
+            );
+        }
+    }
+
+    let delivery = delivery_candidate(state, source, &route.severity, &payload, &norm);
 
     if dry_run {
         return dry_run_delivery_response(state, source, delivery, reason);

@@ -85,9 +85,14 @@ fn grafana_host(
     summary: &str,
     component: &str,
 ) -> String {
+    let affected_host_label = object_scalar_cow(common_labels, "affected_host");
     let host_label = object_scalar_cow(common_labels, "host");
     let instance_label = object_scalar_cow(common_labels, "instance");
-    let mut host = first_non_empty(&[host_label.as_ref(), instance_label.as_ref()]);
+    let mut host = first_non_empty(&[
+        usable_host_label(affected_host_label.as_ref()),
+        usable_host_label(host_label.as_ref()),
+        usable_host_label(instance_label.as_ref()),
+    ]);
     if host.is_empty() && SHORT_HOST_RE.is_match(component) {
         return component.to_string();
     }
@@ -98,6 +103,15 @@ fn grafana_host(
         }
     }
     host
+}
+
+fn usable_host_label(value: &str) -> &str {
+    let value = value.trim();
+    if value.contains("{{") || value.contains("}}") {
+        ""
+    } else {
+        value
+    }
 }
 
 fn grafana_title(
@@ -227,14 +241,13 @@ fn alert_host(alert: &Value) -> Option<String> {
     alert
         .get("labels")
         .and_then(|v| v.as_object())
-        .map(|lbls| {
-            lbls.get("host")
-                .or_else(|| lbls.get("instance"))
-                .or_else(|| lbls.get("container_name"))
+        .and_then(|labels| {
+            ["affected_host", "host", "instance", "container_name"]
+                .into_iter()
+                .filter_map(|key| labels.get(key))
                 .map(scalar_to_string)
-                .unwrap_or_default()
+                .find(|host| !usable_host_label(host).is_empty())
         })
-        .filter(|host| !host.is_empty())
 }
 
 fn grafana_tags(status: &str, severity: &str, component: &str, cfg: &RuntimeConfig) -> Vec<String> {

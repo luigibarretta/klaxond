@@ -23,7 +23,7 @@ pub async fn acknowledge(
             .ok_or_else(|| "receipt-not-found".to_string())?;
         return if matches!(
             incident.state.as_str(),
-            "resolved" | "acknowledged" | "cancelled" | "expired"
+            "resolved" | "acknowledged" | "inhibited" | "cancelled" | "expired"
         ) {
             Ok(incident)
         } else {

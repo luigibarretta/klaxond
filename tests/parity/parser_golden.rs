@@ -105,6 +105,34 @@ fn grafana_grouped_alert_lists_per_instance_summaries() {
 }
 
 #[test]
+fn grafana_prefers_real_affected_host_over_unexpanded_label_template() {
+    let (_tmp, cfg) = cfg();
+    let payload = json!({
+        "status": "firing",
+        "commonLabels": {
+            "alertname": "PveKernelOom",
+            "severity": "critical",
+            "component": "host",
+            "host": "{{ .affected_host }}",
+            "affected_host": "it1-prd-gpu-01"
+        },
+        "commonAnnotations": {"summary": "PVE selected an OOM victim"},
+        "alerts": [{
+            "status": "firing",
+            "labels": {
+                "affected_host": "{{ .affected_host }}",
+                "host": "it1-prd-gpu-01"
+            }
+        }]
+    });
+
+    let parts = parse_grafana_payload(&payload, "critical", &cfg);
+
+    assert_eq!(parts.title, "🚨 Grafana: PveKernelOom — it1-prd-gpu-01");
+    assert!(!parts.title.contains("{{"));
+}
+
+#[test]
 fn grafana_mixed_group_lists_only_alerts_matching_the_delivery_state() {
     let (_tmp, cfg) = cfg();
     let payload = json!({

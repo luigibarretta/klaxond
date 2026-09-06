@@ -51,8 +51,9 @@ support.
 3. Avoid repeated low-value notifications without hiding a real emergency.
 4. Continue delivery through an independent fallback when the primary channel
    fails.
-5. Keep a critical incident active until it is acknowledged or the producer
-   reports recovery.
+5. Keep a critical incident active until it is acknowledged, the producer
+   reports recovery, or an explicitly configured inhibition source supersedes
+   it; retain those three terminal causes as distinct audit states.
 6. Reconstruct what was received, suppressed, attempted and acknowledged after
    the event.
 

@@ -330,7 +330,7 @@ code { background: var(--panel-light); padding: 1px 6px; border-radius: 3px; fon
 .sev-warning { color: var(--yellow); }
 .sev-critical { color: var(--red); font-weight: 600; }
 .sev-active { color: var(--red); font-weight: 700; }
-.sev-acknowledged, .sev-resolved { color: var(--green); }
+.sev-acknowledged, .sev-resolved, .sev-inhibited { color: var(--green); }
 .sev-expired, .sev-cancelled { color: var(--muted); }
 .ch-ntfy { color: var(--green); }
 .ch-telegram { color: #06b6d4; }

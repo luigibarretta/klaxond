@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.19.3 — 2026-09-06
+
+- Reconcile active emergency receipts when a matching Alertmanager inhibition
+  source arrives, recording an audited `inhibited` terminal state instead of
+  fabricating a human acknowledgement; persisted source labels keep the
+  behavior correct across restarts and remain backward-compatible.
+- Prefer a concrete Grafana `affected_host` label and reject unresolved
+  template placeholders when rendering incident hosts.
+
 ## 0.19.2 — 2026-09-05
 
 - In mixed Grafana/Alertmanager group updates, render only the alert instances

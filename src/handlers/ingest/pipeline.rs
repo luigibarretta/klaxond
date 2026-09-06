@@ -157,6 +157,7 @@ pub(super) fn delivery_candidate(
     source: &str,
     severity: &str,
     payload: &Value,
+    normalized_labels: &HashMap<String, String>,
 ) -> DeliveryCandidate {
     let (severity, parts, with_cascade) = state.with_cfg(|cfg| {
         let (severity, parts) = parse_source(source, payload, severity, cfg);
@@ -167,11 +168,17 @@ pub(super) fn delivery_candidate(
         };
         (severity, parts, with_cascade)
     });
+    let mut common_labels = common_labels(source, payload);
+    for (key, value) in normalized_labels {
+        common_labels
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
     DeliveryCandidate {
         severity,
         parts,
         with_cascade,
-        common_labels: common_labels(source, payload),
+        common_labels,
     }
 }
 

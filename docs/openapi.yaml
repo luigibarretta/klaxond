@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.19.2
+  version: 0.19.3
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -1254,7 +1254,7 @@ paths:
       parameters:
         - name: state
           in: query
-          schema: { type: string, enum: [all, active, acknowledged, resolved, expired, cancelled] }
+          schema: { type: string, enum: [all, active, acknowledged, resolved, inhibited, expired, cancelled] }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }

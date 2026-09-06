@@ -371,7 +371,11 @@ fingerprint. Further firings coalesce into that receipt, while a background
 scheduler repeats ntfy with a stable sequence ID. A signed POST action in the
 push acknowledges the receipt without exposing an admin session; Telegram and
 SMTP carry a signed confirmation link. Recovery from the original source closes
-the receipt automatically.
+the receipt automatically. A firing Klaxond inhibition source also terminalizes
+already-active dependent receipts as `inhibited`: this covers the Alertmanager
+contract where inhibited targets stop being routed but do not receive a
+synthetic resolved webhook. The transition stays distinct from a human ACK and
+is retained in emergency history.
 
 ```toml
 [emergency]
@@ -625,6 +629,11 @@ Three match modes:
 - `match_all: true` — suppress everything except the source itself.
 
 Klaxond's inhibition is a safety net for direct posts. If you're using Alertmanager as the upstream router, configure inhibition rules there too — that's the canonical layer (declarative, UI silences, audit trail).
+
+Route the inhibition source itself to Klaxond as well. If a dependent emergency
+was delivered before that source began firing, Klaxond uses the same inhibition
+rule to close its durable receipt as `inhibited`; when the source resolves, a
+still-firing dependent alert can be routed again and opens a fresh receipt.
 
 ## High availability (optional)
 

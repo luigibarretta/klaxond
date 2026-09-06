@@ -1,11 +1,20 @@
 use crate::parsers::Parts;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub const EMERGENCY_ACTIVE: &str = "active";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmergencyPayload {
     pub parts: Parts,
+    /// Normalized producer labels captured when the receipt was created.
+    ///
+    /// Older durable payloads contain only `parts`, so this must remain
+    /// backward-compatible. The labels let a later inhibition source close
+    /// dependent receipts even when Alertmanager suppresses their resolved
+    /// webhook.
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
