@@ -100,6 +100,7 @@ pub const ENDPOINT_POLICIES: &[EndpointPolicy] = &[
     },
     get("/api/cascade-config", "status:read"),
     get("/api/emergency-config", "status:read"),
+    get("/api/emergency-config/export", "config:read"),
     get("/api/history-config", "status:read"),
     get("/api/setup-status", "status:read"),
     get("/api/channel-test-matrix", "status:read"),

@@ -1,54 +1,92 @@
 use super::super::config_admin::persist_reload;
 use super::super::{json_body, json_response, text};
-use crate::config::{EmergencyConfig, validate_runtime_config};
+use crate::config::{
+    EmergencyConfig, EmergencyProfile, INGEST_SOURCES, emergency_timeline,
+    select_emergency_profile, validate_emergency_config, validate_runtime_config,
+};
 use crate::state::AppState;
 use crate::util::toml_table_mut;
 use axum::body::{Body, Bytes};
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-const FIELD_ENV: &[(&str, &str)] = &[
+const GLOBAL_FIELD_ENV: &[(&str, &str)] = &[
     ("enabled", "KLAXOND_EMERGENCY_ENABLED"),
     (
         "allow_insecure_public_url",
         "KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL",
     ),
     ("allow_ntfy_only", "KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY"),
+    ("exclude_sources", "KLAXOND_EMERGENCY_EXCLUDE_SOURCES"),
+];
+
+const LEGACY_PROFILE_ENV: &[(&str, &str)] = &[
     ("severities", "KLAXOND_EMERGENCY_SEVERITIES"),
     ("retry_seconds", "KLAXOND_EMERGENCY_RETRY_SECONDS"),
     ("expire_seconds", "KLAXOND_EMERGENCY_EXPIRE_SECONDS"),
     ("max_attempts", "KLAXOND_EMERGENCY_MAX_ATTEMPTS"),
     ("lease_seconds", "KLAXOND_EMERGENCY_LEASE_SECONDS"),
     (
-        "telegram_after_attempts",
+        "telegram.after_attempts",
         "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
     ),
     (
-        "smtp_after_attempts",
+        "smtp.after_attempts",
         "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
     ),
     ("notify_on_expiry", "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY"),
     ("auto_resolve", "KLAXOND_EMERGENCY_AUTO_RESOLVE"),
-    ("exclude_sources", "KLAXOND_EMERGENCY_EXCLUDE_SOURCES"),
 ];
 
 pub(in crate::handlers) fn emergency_config_payload(state: &AppState) -> Value {
     let cfg = state.cfg();
-    let managed_fields = managed_fields();
+    let managed_fields = managed_fields(&cfg.emergency.fallback_profile);
+    let ownership = if managed_fields.is_empty() {
+        "ui"
+    } else if managed_fields.len() == GLOBAL_FIELD_ENV.len() + LEGACY_PROFILE_ENV.len() {
+        "environment"
+    } else {
+        "mixed"
+    };
+    let known_severities = configured_severities(&cfg);
+    let timeout = |name: &str, fallback: u64| {
+        cfg.tiers
+            .iter()
+            .find(|tier| tier.name == name)
+            .map(|tier| tier.timeout_seconds)
+            .unwrap_or(fallback)
+    };
     json!({
         "settings": cfg.emergency,
         "constraints": {
+            "profiles": {"max": 32},
             "retry_seconds": {"min": 30, "max": 3_600},
             "expire_seconds": {"min": 30, "max": 10_800},
             "max_attempts": {"min": 1, "max": 50},
             "lease_seconds": {"min": 5, "max": 300},
             "escalation_attempts": {"min": 1, "max_field": "max_attempts"},
         },
+        "known_severities": known_severities,
+        "known_sources": INGEST_SOURCES,
+        "channel_timeouts": {
+            "ntfy": timeout("ntfy", 15),
+            "telegram": timeout("telegram", 8),
+            "smtp": timeout("smtp", 10),
+            "lease_margin": 5,
+        },
+        "precedence": "Highest priority wins; equal priorities use configured order.",
+        "emergency_label": {
+            "false": "Absolute bypass after global source exclusions.",
+            "true": "Selects a matching profile or the configured fallback profile.",
+        },
+        "diagnostics": profile_diagnostics(&cfg.emergency, &known_severities),
         "managed_fields": managed_fields,
-        "managed_by_environment": !managed_fields.is_empty(),
-        "writeable": managed_fields.len() < FIELD_ENV.len(),
+        "managed_by_environment": ownership != "ui",
+        "source_of_truth": ownership,
+        "config_path": state.paths.config.to_string_lossy(),
+        "writeable": ownership != "environment",
     })
 }
 
@@ -59,11 +97,14 @@ pub(in crate::handlers) fn update_emergency_config(
     let Ok(value) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let mut patch: EmergencyConfigPatch = match serde_json::from_value(value) {
+    let patch: EmergencyConfigPatch = match serde_json::from_value(value) {
         Ok(patch) => patch,
         Err(error) => return text(StatusCode::BAD_REQUEST, &format!("invalid policy: {error}")),
     };
-    if let Err(error) = patch.reject_managed_fields(&managed_fields()) {
+    let current = state.cfg();
+    if let Err(error) =
+        patch.reject_managed_fields(&managed_fields(&current.emergency.fallback_profile))
+    {
         return text(StatusCode::CONFLICT, &error);
     }
 
@@ -72,21 +113,15 @@ pub(in crate::handlers) fn update_emergency_config(
             let mut cfg = state.cfg();
             let mut candidate = cfg.emergency.clone();
             patch.apply_to_config(&mut candidate);
-            if let Err(error) = validate_emergency(&mut candidate) {
+            if let Err(error) = validate_emergency_config(&mut candidate) {
                 return text(StatusCode::BAD_REQUEST, &error);
             }
-            if patch.severities.is_some() {
-                patch.severities = Some(candidate.severities.clone());
-            }
-            if patch.exclude_sources.is_some() {
-                patch.exclude_sources = Some(candidate.exclude_sources.clone());
-            }
             let mut prospective = cfg.clone();
-            prospective.emergency = candidate;
+            prospective.emergency = candidate.clone();
             if let Err(error) = validate_runtime_config(&prospective) {
                 return text(StatusCode::BAD_REQUEST, &error.to_string());
             }
-            patch.apply_to_toml(&mut cfg.toml);
+            apply_config_to_toml(&candidate, &mut cfg.toml);
             match persist_reload(state, cfg.toml) {
                 Ok(()) => json_response(json!({
                     "ok": true,
@@ -98,12 +133,20 @@ pub(in crate::handlers) fn update_emergency_config(
         .unwrap_or_else(|error| text(StatusCode::INTERNAL_SERVER_ERROR, &error))
 }
 
-fn managed_fields() -> BTreeMap<String, String> {
-    FIELD_ENV
-        .iter()
-        .filter(|(_, env)| std::env::var_os(env).is_some())
-        .map(|(field, env)| ((*field).to_string(), (*env).to_string()))
-        .collect()
+pub(in crate::handlers) fn export_emergency_config(state: &AppState) -> Response<Body> {
+    let cfg = state.cfg();
+    let mut root = toml::Value::Table(toml::Table::new());
+    apply_config_to_toml(&cfg.emergency, &mut root);
+    let body = toml::to_string_pretty(&root).unwrap_or_default();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/toml; charset=utf-8")
+        .header(
+            "content-disposition",
+            "attachment; filename=klaxond-emergency.toml",
+        )
+        .body(Body::from(body))
+        .unwrap_or_else(|_| text(StatusCode::INTERNAL_SERVER_ERROR, "build export response"))
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -112,46 +155,36 @@ struct EmergencyConfigPatch {
     enabled: Option<bool>,
     allow_insecure_public_url: Option<bool>,
     allow_ntfy_only: Option<bool>,
-    severities: Option<Vec<String>>,
-    retry_seconds: Option<u64>,
-    expire_seconds: Option<u64>,
-    max_attempts: Option<u32>,
-    lease_seconds: Option<u64>,
-    telegram_after_attempts: Option<u32>,
-    smtp_after_attempts: Option<u32>,
-    notify_on_expiry: Option<bool>,
-    auto_resolve: Option<bool>,
     exclude_sources: Option<Vec<String>>,
+    fallback_profile: Option<String>,
+    profiles: Option<Vec<EmergencyProfile>>,
 }
 
 impl EmergencyConfigPatch {
     fn reject_managed_fields(&self, managed: &BTreeMap<String, String>) -> Result<(), String> {
-        let supplied = [
+        let mut conflicts = Vec::new();
+        for (field, present) in [
             ("enabled", self.enabled.is_some()),
             (
                 "allow_insecure_public_url",
                 self.allow_insecure_public_url.is_some(),
             ),
             ("allow_ntfy_only", self.allow_ntfy_only.is_some()),
-            ("severities", self.severities.is_some()),
-            ("retry_seconds", self.retry_seconds.is_some()),
-            ("expire_seconds", self.expire_seconds.is_some()),
-            ("max_attempts", self.max_attempts.is_some()),
-            ("lease_seconds", self.lease_seconds.is_some()),
-            (
-                "telegram_after_attempts",
-                self.telegram_after_attempts.is_some(),
-            ),
-            ("smtp_after_attempts", self.smtp_after_attempts.is_some()),
-            ("notify_on_expiry", self.notify_on_expiry.is_some()),
-            ("auto_resolve", self.auto_resolve.is_some()),
             ("exclude_sources", self.exclude_sources.is_some()),
-        ];
-        let conflicts = supplied
-            .into_iter()
-            .filter(|(field, present)| *present && managed.contains_key(*field))
-            .map(|(field, _)| format!("{field} ({})", managed[field]))
-            .collect::<Vec<_>>();
+            ("fallback_profile", self.fallback_profile.is_some()),
+        ] {
+            if present && managed.contains_key(field) {
+                conflicts.push(format!("{field} ({})", managed[field]));
+            }
+        }
+        if self.profiles.is_some() {
+            conflicts.extend(
+                managed
+                    .iter()
+                    .filter(|(field, _)| field.starts_with("profiles."))
+                    .map(|(field, owner)| format!("{field} ({owner})")),
+            );
+        }
         if conflicts.is_empty() {
             Ok(())
         } else {
@@ -169,117 +202,164 @@ impl EmergencyConfigPatch {
             self.allow_insecure_public_url,
         );
         apply_option(&mut config.allow_ntfy_only, self.allow_ntfy_only);
-        if let Some(value) = self.severities.as_ref() {
-            config.severities = value.clone();
+        if let Some(value) = &self.exclude_sources {
+            config.exclude_sources.clone_from(value);
         }
-        apply_option(&mut config.retry_seconds, self.retry_seconds);
-        apply_option(&mut config.expire_seconds, self.expire_seconds);
-        apply_option(&mut config.max_attempts, self.max_attempts);
-        apply_option(&mut config.lease_seconds, self.lease_seconds);
-        apply_option(
-            &mut config.telegram_after_attempts,
-            self.telegram_after_attempts,
-        );
-        apply_option(&mut config.smtp_after_attempts, self.smtp_after_attempts);
-        apply_option(&mut config.notify_on_expiry, self.notify_on_expiry);
-        apply_option(&mut config.auto_resolve, self.auto_resolve);
-        if let Some(value) = self.exclude_sources.as_ref() {
-            config.exclude_sources = value.clone();
+        if let Some(value) = &self.fallback_profile {
+            config.fallback_profile.clone_from(value);
         }
-    }
-
-    fn apply_to_toml(&self, root: &mut toml::Value) {
-        let table = toml_table_mut(root, &["emergency"]);
-        insert_bool(table, "enabled", self.enabled);
-        insert_bool(
-            table,
-            "allow_insecure_public_url",
-            self.allow_insecure_public_url,
-        );
-        insert_bool(table, "allow_ntfy_only", self.allow_ntfy_only);
-        insert_list(table, "severities", self.severities.as_ref());
-        insert_integer(table, "retry_seconds", self.retry_seconds);
-        insert_integer(table, "expire_seconds", self.expire_seconds);
-        insert_integer(table, "max_attempts", self.max_attempts.map(u64::from));
-        insert_integer(table, "lease_seconds", self.lease_seconds);
-        insert_integer(
-            table,
-            "telegram_after_attempts",
-            self.telegram_after_attempts.map(u64::from),
-        );
-        insert_integer(
-            table,
-            "smtp_after_attempts",
-            self.smtp_after_attempts.map(u64::from),
-        );
-        insert_bool(table, "notify_on_expiry", self.notify_on_expiry);
-        insert_bool(table, "auto_resolve", self.auto_resolve);
-        insert_list(table, "exclude_sources", self.exclude_sources.as_ref());
+        if let Some(value) = &self.profiles {
+            config.profiles.clone_from(value);
+        }
     }
 }
 
-fn validate_emergency(config: &mut EmergencyConfig) -> Result<(), String> {
-    config.severities = normalize_list(&config.severities, "severities", false)?;
-    config.exclude_sources = normalize_list(&config.exclude_sources, "exclude_sources", true)?;
-    ensure_range("retry_seconds", config.retry_seconds, 30, 3_600)?;
-    ensure_range("expire_seconds", config.expire_seconds, 30, 10_800)?;
-    ensure_range("max_attempts", u64::from(config.max_attempts), 1, 50)?;
-    ensure_range("lease_seconds", config.lease_seconds, 5, 300)?;
-    ensure_range(
+fn managed_fields(fallback_profile: &str) -> BTreeMap<String, String> {
+    let mut managed = GLOBAL_FIELD_ENV
+        .iter()
+        .filter(|(_, env)| std::env::var_os(env).is_some())
+        .map(|(field, env)| ((*field).to_string(), (*env).to_string()))
+        .collect::<BTreeMap<_, _>>();
+    for (field, env) in LEGACY_PROFILE_ENV {
+        if std::env::var_os(env).is_some() {
+            managed.insert(
+                format!("profiles.{fallback_profile}.{field}"),
+                (*env).to_string(),
+            );
+        }
+    }
+    managed
+}
+
+fn apply_config_to_toml(config: &EmergencyConfig, root: &mut toml::Value) {
+    let table = toml_table_mut(root, &["emergency"]);
+    for legacy in [
+        "severities",
+        "retry_seconds",
+        "expire_seconds",
+        "max_attempts",
+        "lease_seconds",
         "telegram_after_attempts",
-        u64::from(config.telegram_after_attempts),
-        1,
-        u64::from(config.max_attempts),
-    )?;
-    ensure_range(
         "smtp_after_attempts",
-        u64::from(config.smtp_after_attempts),
-        1,
-        u64::from(config.max_attempts),
-    )?;
-    if config.expire_seconds < config.retry_seconds {
-        return Err("expire_seconds must be greater than or equal to retry_seconds".into());
+        "notify_on_expiry",
+        "auto_resolve",
+    ] {
+        table.remove(legacy);
     }
-    Ok(())
+    table.insert("enabled".into(), toml::Value::Boolean(config.enabled));
+    table.insert(
+        "allow_insecure_public_url".into(),
+        toml::Value::Boolean(config.allow_insecure_public_url),
+    );
+    table.insert(
+        "allow_ntfy_only".into(),
+        toml::Value::Boolean(config.allow_ntfy_only),
+    );
+    table.insert(
+        "exclude_sources".into(),
+        toml::Value::Array(
+            config
+                .exclude_sources
+                .iter()
+                .cloned()
+                .map(toml::Value::String)
+                .collect(),
+        ),
+    );
+    table.insert(
+        "fallback_profile".into(),
+        toml::Value::String(config.fallback_profile.clone()),
+    );
+    table.insert(
+        "profiles".into(),
+        toml::Value::try_from(&config.profiles).unwrap_or_else(|_| toml::Value::Array(Vec::new())),
+    );
 }
 
-fn normalize_list(
-    values: &[String],
-    field: &str,
-    allow_empty: bool,
-) -> Result<Vec<String>, String> {
-    if values.len() > 64 {
-        return Err(format!("{field} cannot contain more than 64 values"));
+fn configured_severities(cfg: &crate::config::RuntimeConfig) -> Vec<String> {
+    let mut severities = cfg.known_severities();
+    for profile in &cfg.emergency.profiles {
+        severities.extend(
+            profile
+                .severities
+                .iter()
+                .filter(|value| !value.starts_with("re:"))
+                .cloned(),
+        );
     }
-    let mut normalized = Vec::new();
-    for raw in values {
-        let value = raw.trim().to_ascii_lowercase();
-        if value.is_empty() {
-            continue;
-        }
-        if value.len() > 64
-            || !value
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
-        {
-            return Err(format!("{field} contains an invalid value: {value}"));
-        }
-        if !normalized.contains(&value) {
-            normalized.push(value);
-        }
-    }
-    if normalized.is_empty() && !allow_empty {
-        return Err(format!("{field} cannot be empty"));
-    }
-    Ok(normalized)
+    severities.retain(|severity| severity != "resolved");
+    severities.sort();
+    severities.dedup();
+    severities
 }
 
-fn ensure_range(field: &str, value: u64, min: u64, max: u64) -> Result<(), String> {
-    if (min..=max).contains(&value) {
-        Ok(())
-    } else {
-        Err(format!("{field} must be between {min} and {max}"))
-    }
+fn profile_diagnostics(config: &EmergencyConfig, severities: &[String]) -> Value {
+    let shadowed = config
+        .profiles
+        .iter()
+        .enumerate()
+        .filter_map(|(index, profile)| {
+            if !profile.enabled {
+                return None;
+            }
+            config
+                .profiles
+                .iter()
+                .enumerate()
+                .filter(|(candidate_index, candidate)| {
+                    *candidate_index != index
+                        && candidate.enabled
+                        && (candidate.priority > profile.priority
+                            || (candidate.priority == profile.priority && *candidate_index < index))
+                })
+                .find(|(_, candidate)| {
+                    candidate.severities == profile.severities
+                        && candidate.sources == profile.sources
+                        && candidate.label_match == profile.label_match
+                })
+                .map(|(_, winner)| json!({"profile": profile.id, "shadowed_by": winner.id}))
+        })
+        .collect::<Vec<_>>();
+    let mut routing_config = config.clone();
+    routing_config.enabled = true;
+    let unrouted_severities = severities
+        .iter()
+        .filter(|severity| {
+            INGEST_SOURCES.iter().all(|source| {
+                select_emergency_profile(&routing_config, severity, source, "", &HashMap::new())
+                    .selected
+                    .is_none()
+            })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let timelines = config
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.clone(), emergency_timeline(profile)))
+        .collect::<BTreeMap<_, _>>();
+    let priorities = config
+        .profiles
+        .iter()
+        .map(|profile| profile.priority)
+        .collect::<Vec<_>>();
+    let duplicate_priorities = priorities
+        .iter()
+        .filter(|priority| {
+            priorities
+                .iter()
+                .filter(|value| *value == *priority)
+                .count()
+                > 1
+        })
+        .copied()
+        .collect::<HashSet<_>>();
+    json!({
+        "shadowed_profiles": shadowed,
+        "unrouted_severities": unrouted_severities,
+        "equal_priorities": duplicate_priorities,
+        "timelines": timelines,
+    })
 }
 
 fn apply_option<T: Copy>(target: &mut T, value: Option<T>) {
@@ -288,77 +368,52 @@ fn apply_option<T: Copy>(target: &mut T, value: Option<T>) {
     }
 }
 
-fn insert_bool(table: &mut toml::Table, field: &str, value: Option<bool>) {
-    if let Some(value) = value {
-        table.insert(field.into(), toml::Value::Boolean(value));
-    }
-}
-
-fn insert_integer(table: &mut toml::Table, field: &str, value: Option<u64>) {
-    if let Some(value) = value {
-        table.insert(field.into(), toml::Value::Integer(value as i64));
-    }
-}
-
-fn insert_list(table: &mut toml::Table, field: &str, values: Option<&Vec<String>>) {
-    if let Some(values) = values {
-        table.insert(
-            field.into(),
-            toml::Value::Array(
-                values
-                    .iter()
-                    .map(|value| toml::Value::String(value.clone()))
-                    .collect(),
-            ),
-        );
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn patch_normalizes_lists_and_applies_partial_updates() {
+    fn patch_replaces_profiles_and_normalizes_values() {
         let patch: EmergencyConfigPatch = serde_json::from_value(json!({
             "enabled": true,
-            "severities": [" Critical ", "critical", "PAGE"],
-            "retry_seconds": 90,
-            "exclude_sources": [" API-Test "]
+            "fallback_profile": "page",
+            "profiles": [{
+                "id": "PAGE", "name": "Page", "enabled": true, "priority": 200,
+                "severities": [" Critical ", "PAGE"], "sources": [], "match": {},
+                "retry_seconds": 90, "expire_seconds": 3600, "max_attempts": 20,
+                "lease_seconds": 60,
+                "telegram": {"enabled": true, "after_attempts": 3},
+                "smtp": {"enabled": false, "after_attempts": 5},
+                "notify_on_expiry": true, "auto_resolve": true
+            }]
         }))
         .unwrap();
         let mut config = EmergencyConfig::default();
         patch.apply_to_config(&mut config);
-        validate_emergency(&mut config).unwrap();
+        validate_emergency_config(&mut config).unwrap();
         assert!(config.enabled);
-        assert_eq!(config.severities, ["critical", "page"]);
-        assert_eq!(config.retry_seconds, 90);
-        assert_eq!(config.exclude_sources, ["api-test"]);
-        assert_eq!(config.max_attempts, 50);
+        assert_eq!(config.profiles[0].id, "page");
+        assert_eq!(config.profiles[0].severities, ["critical", "page"]);
     }
 
     #[test]
-    fn validation_rejects_incoherent_or_unsafe_values() {
-        let mut config = EmergencyConfig {
-            retry_seconds: 120,
-            expire_seconds: 60,
-            ..EmergencyConfig::default()
-        };
-        assert!(validate_emergency(&mut config).is_err());
-        config.expire_seconds = 3_600;
-        config.telegram_after_attempts = 51;
-        assert!(validate_emergency(&mut config).is_err());
-    }
-
-    #[test]
-    fn managed_fields_are_rejected_instead_of_silently_ignored() {
-        let patch: EmergencyConfigPatch =
-            serde_json::from_value(json!({"enabled": true, "retry_seconds": 60})).unwrap();
+    fn managed_profile_fields_reject_a_profile_replacement() {
+        let patch: EmergencyConfigPatch = serde_json::from_value(json!({"profiles": []})).unwrap();
         let managed = BTreeMap::from([(
-            "enabled".to_string(),
-            "KLAXOND_EMERGENCY_ENABLED".to_string(),
+            "profiles.critical-default.retry_seconds".to_string(),
+            "KLAXOND_EMERGENCY_RETRY_SECONDS".to_string(),
         )]);
         let error = patch.reject_managed_fields(&managed).unwrap_err();
-        assert!(error.contains("KLAXOND_EMERGENCY_ENABLED"));
+        assert!(error.contains("KLAXOND_EMERGENCY_RETRY_SECONDS"));
+    }
+
+    #[test]
+    fn canonical_export_contains_profiles_without_secrets() {
+        let mut root = toml::Value::Table(toml::Table::new());
+        apply_config_to_toml(&EmergencyConfig::default(), &mut root);
+        let output = toml::to_string_pretty(&root).unwrap();
+        assert!(output.contains("critical-default"));
+        assert!(!output.contains("token"));
+        assert!(!output.contains("password"));
     }
 }

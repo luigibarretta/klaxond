@@ -1,6 +1,9 @@
-use crate::config::{EmergencyConfig, RuntimeConfig};
+use crate::config::{EmergencyProfile, RuntimeConfig, select_emergency_profile};
 use crate::delivery::channels::post_to_ntfy_with_config;
-use crate::history::{EmergencyAttempt, EmergencyCandidate, EmergencyIncident, EmergencyPayload};
+use crate::history::{
+    EmergencyAttempt, EmergencyCandidate, EmergencyChannelSnapshot, EmergencyIncident,
+    EmergencyPayload, EmergencyPolicySnapshot,
+};
 use crate::parsers::{Parts, action};
 use crate::state::AppState;
 use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch, token_urlsafe};
@@ -32,6 +35,7 @@ pub enum PrepareResult {
     Managed {
         receipt_id: String,
         parts: Box<Parts>,
+        policy: EmergencyPolicySnapshot,
     },
 }
 
@@ -46,43 +50,54 @@ pub async fn prepare(
     let fingerprint = fingerprint(source, parts, labels);
     let legacy_fingerprint = legacy_fingerprint(source, parts, labels);
     if severity == "resolved" {
-        if cfg.emergency.enabled && cfg.emergency.auto_resolve {
-            let mut fingerprints = vec![fingerprint.clone()];
-            if legacy_fingerprint != fingerprint {
-                // Receipts created before the stable Alertmanager group-key
-                // rollout remain recoverable during an in-flight upgrade.
-                fingerprints.push(legacy_fingerprint.clone());
+        let mut fingerprints = vec![fingerprint.clone()];
+        if legacy_fingerprint != fingerprint {
+            // Receipts created before the stable Alertmanager group-key
+            // rollout remain recoverable during an in-flight upgrade.
+            fingerprints.push(legacy_fingerprint.clone());
+        }
+        for recovery_fingerprint in fingerprints {
+            let active = state
+                .history_store()
+                .emergencies(Some("active"), 1_000)
+                .unwrap_or_default()
+                .into_iter()
+                .find(|incident| incident.fingerprint == recovery_fingerprint);
+            if active
+                .as_ref()
+                .is_none_or(|incident| !snapshot_for_incident(&cfg, incident).auto_resolve)
+            {
+                continue;
             }
-            for recovery_fingerprint in fingerprints {
-                match state.history_store().emergency_terminalize_fingerprint(
-                    &recovery_fingerprint,
-                    "resolved",
-                    "source-recovery",
-                    now_epoch(),
-                ) {
-                    Ok(Some(incident)) if incident.state == "resolved" => {
-                        transition_audit(state, &incident, "resolved", "source-recovery");
-                        publish_terminal(
-                            state,
-                            &cfg,
-                            &incident,
-                            "Resolved automatically",
-                            "The source reported recovery; emergency retries have stopped.",
-                        )
-                        .await;
-                    }
-                    Ok(_) => {}
-                    Err(err) => {
-                        tracing::error!("emergency recovery reconciliation failed: {err}")
-                    }
+            match state.history_store().emergency_terminalize_fingerprint(
+                &recovery_fingerprint,
+                "resolved",
+                "source-recovery",
+                now_epoch(),
+            ) {
+                Ok(Some(incident)) if incident.state == "resolved" => {
+                    transition_audit(state, &incident, "resolved", "source-recovery");
+                    publish_terminal(
+                        state,
+                        &cfg,
+                        &incident,
+                        "Resolved automatically",
+                        "The source reported recovery; emergency retries have stopped.",
+                    )
+                    .await;
                 }
+                Ok(_) => {}
+                Err(err) => tracing::error!("emergency recovery reconciliation failed: {err}"),
             }
         }
         return PrepareResult::Normal;
     }
-    if !should_manage(&cfg.emergency, severity, labels, source) {
+    let routing =
+        select_emergency_profile(&cfg.emergency, severity, source, &parts.alertname, labels);
+    let Some(profile) = routing.selected else {
         return PrepareResult::Normal;
-    }
+    };
+    let policy_snapshot = snapshot_from_profile(&profile);
     if legacy_fingerprint != fingerprint {
         match state.history_store().emergencies(Some("active"), 1_000) {
             Ok(active) => {
@@ -92,7 +107,10 @@ pub async fn prepare(
                 {
                     state.metric_inc(
                         "klaxond_emergency_incidents_total",
-                        &[("outcome", "coalesced")],
+                        &[
+                            ("outcome", "coalesced"),
+                            ("profile_id", &incident.policy_id),
+                        ],
                         1,
                     );
                     return PrepareResult::Duplicate(incident.receipt_id);
@@ -121,16 +139,33 @@ pub async fn prepare(
                 return PrepareResult::Normal;
             }
         },
+        policy_id: profile.id.clone(),
+        policy_name: profile.name.clone(),
+        policy_snapshot_json: match serde_json::to_string(&policy_snapshot) {
+            Ok(value) => value,
+            Err(err) => {
+                tracing::error!("serialize emergency policy snapshot failed: {err}");
+                return PrepareResult::Normal;
+            }
+        },
         now,
-        next_retry_at: now + cfg.emergency.retry_seconds as f64,
-        expires_at: now + cfg.emergency.expire_seconds as f64,
-        max_attempts: cfg.emergency.max_attempts,
+        next_retry_at: now + profile.retry_seconds as f64,
+        expires_at: now + profile.expire_seconds as f64,
+        max_attempts: profile.max_attempts,
     };
     match state.history_store().emergency_register(&candidate) {
         Ok(registration) if registration.created => {
             state.metric_inc(
                 "klaxond_emergency_incidents_total",
-                &[("outcome", "created")],
+                &[("outcome", "created"), ("profile_id", &profile.id)],
+                1,
+            );
+            state.metric_inc(
+                "klaxond_emergency_profile_matches_total",
+                &[
+                    ("profile_id", &profile.id),
+                    ("forced", if routing.forced { "1" } else { "0" }),
+                ],
                 1,
             );
             transition_audit(state, &registration.incident, "active", "ingest");
@@ -142,12 +177,16 @@ pub async fn prepare(
                     &registration.incident,
                     parts.clone(),
                 )),
+                policy: policy_snapshot,
             }
         }
         Ok(registration) => {
             state.metric_inc(
                 "klaxond_emergency_incidents_total",
-                &[("outcome", "coalesced")],
+                &[
+                    ("outcome", "coalesced"),
+                    ("profile_id", &registration.incident.policy_id),
+                ],
                 1,
             );
             PrepareResult::Duplicate(registration.incident.receipt_id)
@@ -173,12 +212,19 @@ pub fn record_initial_attempt(
     smtp_ok: Option<bool>,
 ) {
     let cfg = state.cfg();
+    let snapshot = state
+        .history_store()
+        .emergency_get(receipt_id)
+        .ok()
+        .flatten()
+        .map(|incident| snapshot_for_incident(&cfg, &incident))
+        .unwrap_or_else(|| snapshot_from_profile(&EmergencyProfile::legacy_default()));
     let now = now_epoch();
     let attempt = EmergencyAttempt {
         receipt_id: receipt_id.to_string(),
         reservation_token: String::new(),
         now,
-        next_retry_at: now + cfg.emergency.retry_seconds as f64,
+        next_retry_at: now + snapshot.retry_seconds as f64,
         ntfy_ok,
         telegram_ok,
         smtp_ok,
@@ -197,31 +243,12 @@ pub fn record_initial_attempt(
         );
     }
     attempt_metric(state, "ntfy", ntfy_ok);
-}
-
-fn should_manage(
-    cfg: &EmergencyConfig,
-    severity: &str,
-    labels: &HashMap<String, String>,
-    source: &str,
-) -> bool {
-    if !cfg.enabled
-        || cfg
-            .exclude_sources
-            .iter()
-            .any(|item| item == &source.to_ascii_lowercase())
-    {
-        return false;
+    if let Some(ok) = telegram_ok {
+        attempt_metric(state, "telegram", ok);
     }
-    if let Some(value) = labels.get("emergency") {
-        return matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        );
+    if let Some(ok) = smtp_ok {
+        attempt_metric(state, "smtp", ok);
     }
-    cfg.severities
-        .iter()
-        .any(|value| value.eq_ignore_ascii_case(severity))
 }
 
 fn decorate_parts(
@@ -332,13 +359,57 @@ fn timeout_for(cfg: &RuntimeConfig, channel: &str, fallback: u64) -> u64 {
 fn transition_audit(state: &AppState, incident: &EmergencyIncident, transition: &str, actor: &str) {
     tracing::info!(
         "AUDIT {}",
-        json!({"audit":"emergency","receipt_id":incident.receipt_id,"source":incident.source,"severity":incident.severity,"transition":transition,"actor":actor,"attempts":incident.attempts,"timestamp": (now_epoch()*1000.0) as i64})
+        json!({"audit":"emergency","receipt_id":incident.receipt_id,"source":incident.source,"severity":incident.severity,"policy_id":incident.policy_id,"policy_name":incident.policy_name,"transition":transition,"actor":actor,"attempts":incident.attempts,"timestamp": (now_epoch()*1000.0) as i64})
     );
     state.metric_inc(
         "klaxond_emergency_transitions_total",
-        &[("transition", transition)],
+        &[
+            ("transition", transition),
+            ("profile_id", &incident.policy_id),
+        ],
         1,
     );
+}
+
+pub(crate) fn snapshot_from_profile(profile: &EmergencyProfile) -> EmergencyPolicySnapshot {
+    EmergencyPolicySnapshot {
+        schema_version: 1,
+        profile_id: profile.id.clone(),
+        profile_name: profile.name.clone(),
+        retry_seconds: profile.retry_seconds,
+        expire_seconds: profile.expire_seconds,
+        max_attempts: profile.max_attempts,
+        lease_seconds: profile.lease_seconds,
+        telegram: EmergencyChannelSnapshot {
+            enabled: profile.telegram.enabled,
+            after_attempts: profile.telegram.after_attempts,
+        },
+        smtp: EmergencyChannelSnapshot {
+            enabled: profile.smtp.enabled,
+            after_attempts: profile.smtp.after_attempts,
+        },
+        notify_on_expiry: profile.notify_on_expiry,
+        auto_resolve: profile.auto_resolve,
+    }
+}
+
+pub(crate) fn snapshot_for_incident(
+    cfg: &RuntimeConfig,
+    incident: &EmergencyIncident,
+) -> EmergencyPolicySnapshot {
+    incident.policy_snapshot().unwrap_or_else(|_| {
+        let profile = cfg
+            .emergency
+            .profiles
+            .iter()
+            .find(|profile| profile.id == cfg.emergency.fallback_profile)
+            .cloned()
+            .unwrap_or_else(EmergencyProfile::legacy_default);
+        let mut snapshot = snapshot_from_profile(&profile);
+        snapshot.max_attempts = incident.max_attempts;
+        snapshot.expire_seconds = (incident.expires_at - incident.created_at).max(0.0) as u64;
+        snapshot
+    })
 }
 
 fn attempt_metric(state: &AppState, channel: &str, ok: bool) {

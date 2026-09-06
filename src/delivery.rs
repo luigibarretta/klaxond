@@ -28,6 +28,7 @@ pub async fn deliver(
     let labels = delivery_labels(severity, labels);
     let cfg = state.cfg();
     let mut emergency_receipt = None;
+    let mut emergency_snapshot = None;
     match crate::emergency::prepare(state, severity, &parts, &labels, source).await {
         crate::emergency::PrepareResult::Normal => {}
         crate::emergency::PrepareResult::Duplicate(receipt_id) => {
@@ -37,12 +38,64 @@ pub async fn deliver(
         crate::emergency::PrepareResult::Managed {
             receipt_id,
             parts: emergency_parts,
+            policy,
         } => {
             emergency_receipt = Some(receipt_id);
+            emergency_snapshot = Some(policy);
             parts = *emergency_parts;
         }
     }
-    let (policy, reason) = pick_policy(&cfg, &labels);
+    let (mut policy, mut reason) = pick_policy(&cfg, &labels);
+    if emergency_receipt.is_some() {
+        let snapshot = emergency_snapshot
+            .as_ref()
+            .expect("managed emergency always includes its policy snapshot");
+        let mut tiers = vec![Tier {
+            name: "ntfy".to_string(),
+            timeout_seconds: cfg
+                .tiers
+                .iter()
+                .find(|tier| tier.name == "ntfy")
+                .map(|tier| tier.timeout_seconds)
+                .unwrap_or(15),
+        }];
+        for (name, enabled, after_attempts, fallback_timeout) in [
+            (
+                "telegram",
+                snapshot.telegram.enabled,
+                snapshot.telegram.after_attempts,
+                8,
+            ),
+            (
+                "smtp",
+                snapshot.smtp.enabled,
+                snapshot.smtp.after_attempts,
+                10,
+            ),
+        ] {
+            if enabled && after_attempts == 1 {
+                tiers.push(Tier {
+                    name: name.to_string(),
+                    timeout_seconds: cfg
+                        .tiers
+                        .iter()
+                        .find(|tier| tier.name == name)
+                        .map(|tier| tier.timeout_seconds)
+                        .unwrap_or(fallback_timeout),
+                });
+            }
+        }
+        policy = DeliveryPolicy {
+            name: "emergency-initial".to_string(),
+            mode: if tiers.len() > 1 {
+                "broadcast".to_string()
+            } else {
+                "cascade".to_string()
+            },
+            tiers,
+        };
+        reason = "emergency-profile→initial-attempt".to_string();
+    }
     tracing::info!(
         "policy picked: {} (mode={}, {} tiers)",
         reason,

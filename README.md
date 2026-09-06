@@ -50,9 +50,10 @@ workflows and contractual support.
   Blackstart and GitHub issue-reply events.
 - **Application event SDKs** for Rust and Go, backed by a versioned JSON schema.
 - **3-tier cascade fallback** — ntfy → Telegram → SMTP, with per-policy routing.
-- **Durable emergency delivery** — selected severities repeat until a signed
-  acknowledgement, source recovery or bounded expiry, with cross-device state,
-  restart-safe SQLite/PostgreSQL receipts and staged Telegram/SMTP escalation.
+- **Durable emergency profiles** — ordered severity/source/label policies repeat
+  selected incidents until a signed acknowledgement, source recovery or bounded
+  expiry, with restart-safe policy snapshots and independent Telegram/SMTP
+  escalation.
 - **Noise control** through grouping, repeat suppression, selective rules,
   inhibition and schedules, while keeping critical overrides explicit.
 - **Rich ntfy rendering** with severity, priority, tags and direct action links.
@@ -114,10 +115,12 @@ Set a unique `KLAXOND_INGEST_SECRET_<SOURCE>` for every webhook source you use.
 The named `/data` volume contains the database, ACK signing key and configuration;
 back it up as one unit.
 
-For Pushover-style emergency delivery, first configure a canonical
-`KLAXOND_PUBLIC_URL` using HTTPS, a token-bearing ntfy topic for every emergency
-severity, and at least one complete Telegram or SMTP fallback. Then enable
-`KLAXOND_EMERGENCY_ENABLED=true`, restart, and run the online preflight:
+For acknowledgement-backed emergency delivery, first configure a canonical
+`KLAXOND_PUBLIC_URL` using HTTPS, a token-bearing ntfy topic for every routed
+severity, and at least one complete Telegram or SMTP fallback. Then use the
+**Emergency receipts** editor to define ordered profiles, inspect their
+timelines, verify representative inputs in the side-effect-free **Policy
+simulator**, enable the feature, and run the online preflight:
 
 ```bash
 docker compose up -d
@@ -127,6 +130,7 @@ docker compose exec klaxond klaxond doctor
 Klaxond refuses to start emergency mode when these guarantees are incomplete.
 The two explicit escape hatches (`ALLOW_INSECURE_PUBLIC_URL` and
 `ALLOW_NTFY_ONLY`) are intended only for deliberate local testing. See
+the [ACK/emergency profile guide](docs/emergency-profiles.md) and
 [`docs/production-deployment.md`](docs/production-deployment.md) for reverse
 proxy, authentication, backup, upgrade, rollback and image-verification steps.
 
@@ -225,6 +229,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/emergencies` | Durable emergency receipts, filterable by state |
 | `GET` | `/api/emergencies/<id>` | Receipt state, attempts, deadlines and escalation history |
 | `GET` / `POST` | `/api/emergency-config` | Read or transactionally update durable emergency policy |
+| `GET` | `/api/emergency-config/export` | Download canonical non-secret emergency profile TOML |
 | `POST` | `/api/emergencies/<id>/<ack\|retry\|cancel>` | Audited lifecycle action; local browser sessions require recent reauthentication |
 | `POST` | `/api/emergency/<id>/ack` | Signed one-tap ntfy acknowledgement using a request header token |
 | `GET` | `/api/logs` | Runtime/backend/frontend log buffer with keyword, level and pagination filters |
@@ -254,7 +259,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `GET` | `/api/channel-config` | ntfy URL + topics, Telegram chat_id, SMTP host/port/from/to. Secrets shown as configured/missing badges only. |
 | `POST` | `/api/channel-config` | Update non-secret channel fields (persists to `/data/klaxond.toml`) |
 | `POST` | `/api/render-preview` | Body `{severity, payload}` → returns ntfy headers + body without sending |
-| `POST` | `/api/policy-simulate` | Dry-run inhibition, delivery policy and dedup decisions |
+| `POST` | `/api/policy-simulate` | Side-effect-free dry run of inhibition, delivery, dedup and emergency profile selection |
 | `POST` | `/api/test/<sev>` | Fire a synthetic alert through the cascade |
 | `POST` | `/api/cascade/toggle` | Body `{enabled: bool}` or empty (flip) — runtime override of CASCADE_ENABLED |
 

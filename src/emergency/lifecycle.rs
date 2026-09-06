@@ -42,7 +42,10 @@ pub async fn acknowledge(
     .await;
     state.metric_inc(
         "klaxond_emergency_incidents_total",
-        &[("outcome", "acknowledged")],
+        &[
+            ("outcome", "acknowledged"),
+            ("profile_id", &incident.policy_id),
+        ],
         1,
     );
     state.metric_set(

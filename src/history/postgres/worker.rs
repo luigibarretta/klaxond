@@ -54,6 +54,12 @@ pub(super) enum PostgresCommand {
         candidate: EmergencyCandidate,
         reply: mpsc::Sender<Result<EmergencyRegistration>>,
     },
+    EmergencyMaterializePolicySnapshot {
+        policy_id: String,
+        policy_name: String,
+        snapshot_json: String,
+        reply: mpsc::Sender<Result<usize>>,
+    },
     EmergencyInitialAttempt {
         attempt: EmergencyAttempt,
         reply: mpsc::Sender<Result<()>>,
@@ -63,6 +69,12 @@ pub(super) enum PostgresCommand {
         lease_until: f64,
         token: String,
         reply: mpsc::Sender<Result<Option<EmergencyIncident>>>,
+    },
+    EmergencyAdjustLease {
+        receipt: String,
+        token: String,
+        lease_until: f64,
+        reply: mpsc::Sender<Result<bool>>,
     },
     EmergencyComplete {
         attempt: EmergencyAttempt,
@@ -156,6 +168,22 @@ impl WorkerContext {
                 let r = self.with_retry(|c| emergency::register(c, &candidate));
                 let _ = reply.send(r);
             }
+            PostgresCommand::EmergencyMaterializePolicySnapshot {
+                policy_id,
+                policy_name,
+                snapshot_json,
+                reply,
+            } => {
+                let r = self.with_retry(|c| {
+                    emergency::materialize_policy_snapshot(
+                        c,
+                        &policy_id,
+                        &policy_name,
+                        &snapshot_json,
+                    )
+                });
+                let _ = reply.send(r);
+            }
             PostgresCommand::EmergencyInitialAttempt { attempt, reply } => {
                 let r = self.with_retry(|c| emergency::record_initial_attempt(c, &attempt));
                 let _ = reply.send(r);
@@ -167,6 +195,16 @@ impl WorkerContext {
                 reply,
             } => {
                 let r = self.with_retry(|c| emergency::reserve_due(c, now, lease_until, &token));
+                let _ = reply.send(r);
+            }
+            PostgresCommand::EmergencyAdjustLease {
+                receipt,
+                token,
+                lease_until,
+                reply,
+            } => {
+                let r =
+                    self.with_retry(|c| emergency::adjust_lease(c, &receipt, &token, lease_until));
                 let _ = reply.send(r);
             }
             PostgresCommand::EmergencyComplete { attempt, reply } => {

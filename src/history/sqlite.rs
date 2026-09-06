@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS klaxond_emergencies (
   severity TEXT NOT NULL,
   title TEXT NOT NULL,
   payload_json TEXT NOT NULL,
+  policy_id TEXT NOT NULL DEFAULT '',
+  policy_name TEXT NOT NULL DEFAULT '',
+  policy_snapshot_json TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL,
   created_at REAL NOT NULL,
   updated_at REAL NOT NULL,
@@ -178,6 +181,21 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_created
     }
     if !sqlite_column_exists(conn, "klaxond_repeat_state", "matched_rule")? {
         conn.execute_batch("ALTER TABLE klaxond_repeat_state ADD COLUMN matched_rule TEXT;")?;
+    }
+    if !sqlite_column_exists(conn, "klaxond_emergencies", "policy_id")? {
+        conn.execute_batch(
+            "ALTER TABLE klaxond_emergencies ADD COLUMN policy_id TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    if !sqlite_column_exists(conn, "klaxond_emergencies", "policy_name")? {
+        conn.execute_batch(
+            "ALTER TABLE klaxond_emergencies ADD COLUMN policy_name TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    if !sqlite_column_exists(conn, "klaxond_emergencies", "policy_snapshot_json")? {
+        conn.execute_batch(
+            "ALTER TABLE klaxond_emergencies ADD COLUMN policy_snapshot_json TEXT NOT NULL DEFAULT '';",
+        )?;
     }
     conn.execute(
         "UPDATE klaxond_auth_sessions SET family_hash = id_hash WHERE family_hash = ''",

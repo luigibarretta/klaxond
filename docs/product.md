@@ -51,9 +51,10 @@ support.
 3. Avoid repeated low-value notifications without hiding a real emergency.
 4. Continue delivery through an independent fallback when the primary channel
    fails.
-5. Keep a critical incident active until it is acknowledged, the producer
-   reports recovery, or an explicitly configured inhibition source supersedes
-   it; retain those three terminal causes as distinct audit states.
+5. Keep any incident selected by an explicit ACK/emergency profile active until
+   it is acknowledged, the producer reports recovery, or an explicitly
+   configured inhibition source supersedes it; retain those terminal causes as
+   distinct audit states.
 6. Reconstruct what was received, suppressed, attempted and acknowledged after
    the event.
 
@@ -71,6 +72,8 @@ effectiveness. A public release should be evaluated against these outcomes:
 - every delivery attempt has an inspectable result and a successful fallback
   prevents unnecessary upstream retries;
 - acknowledgement and source recovery stop future emergency retries;
+- an operator can explain which emergency profile won, simulate the same input
+  without side effects, and understand the complete retry/escalation timeline;
 - the main Setup, Status, Deliveries, Emergencies and test-notification flows
   work with keyboard navigation and on the supported browser matrix;
 - failures explain what the operator can do next without exposing credentials.

@@ -173,13 +173,14 @@ fn emergency_item(cfg: &RuntimeConfig) -> Value {
         "status": if cfg.emergency.enabled { "ok" } else { "info" },
         "detail": if cfg.emergency.enabled {
             format!(
-                "enabled: retry every {}s, expire after {}s",
-                cfg.emergency.retry_seconds, cfg.emergency.expire_seconds
+                "enabled: {} ordered profile(s), fallback {}",
+                cfg.emergency.profiles.iter().filter(|profile| profile.enabled).count(),
+                cfg.emergency.fallback_profile
             )
         } else {
             "optional durable retries are disabled".to_string()
         },
-        "values": {"enabled": cfg.emergency.enabled},
+        "values": {"enabled": cfg.emergency.enabled, "profiles": cfg.emergency.profiles.len(), "fallback_profile": cfg.emergency.fallback_profile},
         "required": false,
         "action": {"key": "emergency", "path": "/emergencies", "label": "Configure emergency mode"},
     })

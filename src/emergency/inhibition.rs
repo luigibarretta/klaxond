@@ -1,4 +1,4 @@
-use super::{publish_terminal, storage_error, transition_audit};
+use super::{publish_terminal, snapshot_for_incident, storage_error, transition_audit};
 use crate::state::AppState;
 use crate::util::now_epoch;
 
@@ -11,9 +11,6 @@ use crate::util::now_epoch;
 /// operator acknowledgement or producer recovery.
 pub async fn reconcile_inhibited(state: &AppState) -> usize {
     let cfg = state.cfg();
-    if !cfg.emergency.enabled || !cfg.emergency.auto_resolve {
-        return 0;
-    }
     let active = match state.history_store().emergencies(Some("active"), 1_000) {
         Ok(active) => active,
         Err(err) => {
@@ -23,6 +20,9 @@ pub async fn reconcile_inhibited(state: &AppState) -> usize {
     };
     let mut transitioned = 0;
     for incident in active {
+        if !snapshot_for_incident(&cfg, &incident).auto_resolve {
+            continue;
+        }
         let payload = match incident.payload() {
             Ok(payload) => payload,
             Err(err) => {
@@ -59,7 +59,10 @@ pub async fn reconcile_inhibited(state: &AppState) -> usize {
                 .await;
                 state.metric_inc(
                     "klaxond_emergency_incidents_total",
-                    &[("outcome", "inhibited")],
+                    &[
+                        ("outcome", "inhibited"),
+                        ("profile_id", &terminal.policy_id),
+                    ],
                     1,
                 );
                 transitioned += 1;

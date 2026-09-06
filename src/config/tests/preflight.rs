@@ -94,7 +94,7 @@ fn emergency_preflight_requires_independent_fallback_by_default() {
     fs::write(&paths.config, config).unwrap();
 
     let error = load_runtime_config(&paths).unwrap_err().to_string();
-    assert!(error.contains("requires a complete Telegram or SMTP fallback"));
+    assert!(error.contains("requires a Telegram or SMTP fallback"));
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn emergency_preflight_rejects_lease_shorter_than_channel_budget() {
     fs::write(&paths.config, config).unwrap();
 
     let error = load_runtime_config(&paths).unwrap_err().to_string();
-    assert!(error.contains("emergency.lease_seconds must be at least"));
+    assert!(error.contains("lease_seconds must be at least"));
 }
 
 #[test]

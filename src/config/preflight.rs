@@ -29,7 +29,43 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
     )?;
 
     let mut max_ntfy_targets = 0_u64;
-    for severity in &cfg.emergency.severities {
+    let known_severities = cfg
+        .known_severities()
+        .into_iter()
+        .filter(|severity| severity != "resolved")
+        .collect::<Vec<_>>();
+    let routed_severities = cfg
+        .emergency
+        .profiles
+        .iter()
+        .filter(|profile| profile.enabled)
+        .flat_map(|profile| {
+            if profile.severities.is_empty() {
+                known_severities.clone()
+            } else {
+                profile
+                    .severities
+                    .iter()
+                    .flat_map(|matcher| {
+                        if let Some(pattern) = matcher.strip_prefix("re:") {
+                            regex::Regex::new(pattern)
+                                .map(|regex| {
+                                    known_severities
+                                        .iter()
+                                        .filter(|severity| regex.is_match(severity))
+                                        .cloned()
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default()
+                        } else {
+                            vec![matcher.clone()]
+                        }
+                    })
+                    .collect()
+            }
+        })
+        .collect::<std::collections::HashSet<_>>();
+    for severity in &routed_severities {
         let targets = cfg
             .topics_for(severity)
             .into_iter()
@@ -70,22 +106,56 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
         !smtp_any || smtp_ready,
         "emergency SMTP fallback is incomplete: configure host, user, password, from and to"
     );
-    ensure!(
-        cfg.emergency.allow_ntfy_only || telegram_ready || smtp_ready,
-        "emergency mode requires a complete Telegram or SMTP fallback; set emergency.allow_ntfy_only=true only for a deliberate single-channel deployment"
-    );
+    for profile in cfg
+        .emergency
+        .profiles
+        .iter()
+        .filter(|profile| profile.enabled)
+    {
+        ensure!(
+            !profile.telegram.enabled || !telegram_any || telegram_ready,
+            "emergency profile '{}' enables Telegram but the fallback is incomplete",
+            profile.id
+        );
+        ensure!(
+            !profile.smtp.enabled || !smtp_any || smtp_ready,
+            "emergency profile '{}' enables SMTP but the fallback is incomplete",
+            profile.id
+        );
+        ensure!(
+            cfg.emergency.allow_ntfy_only
+                || (profile.telegram.enabled && telegram_ready)
+                || (profile.smtp.enabled && smtp_ready),
+            "emergency profile '{}' requires a Telegram or SMTP fallback; set emergency.allow_ntfy_only=true only for a deliberate single-channel deployment",
+            profile.id
+        );
+    }
 
     let ntfy_budget = tier_timeout(cfg, "ntfy", 15).saturating_mul(max_ntfy_targets);
-    let telegram_budget = telegram_ready.then(|| tier_timeout(cfg, "telegram", 8));
-    let smtp_budget = smtp_ready.then(|| tier_timeout(cfg, "smtp", 10));
-    let required_lease = ntfy_budget
-        .saturating_add(telegram_budget.unwrap_or_default())
-        .saturating_add(smtp_budget.unwrap_or_default())
-        .saturating_add(EMERGENCY_LEASE_MARGIN_SECONDS);
-    ensure!(
-        cfg.emergency.lease_seconds >= required_lease,
-        "emergency.lease_seconds must be at least {required_lease} for the configured sequential channel timeouts"
-    );
+    for profile in cfg
+        .emergency
+        .profiles
+        .iter()
+        .filter(|profile| profile.enabled)
+    {
+        let required_lease = ntfy_budget
+            .saturating_add(if profile.telegram.enabled && telegram_ready {
+                tier_timeout(cfg, "telegram", 8)
+            } else {
+                0
+            })
+            .saturating_add(if profile.smtp.enabled && smtp_ready {
+                tier_timeout(cfg, "smtp", 10)
+            } else {
+                0
+            })
+            .saturating_add(EMERGENCY_LEASE_MARGIN_SECONDS);
+        ensure!(
+            profile.lease_seconds >= required_lease,
+            "emergency profile '{}' lease_seconds must be at least {required_lease} for the configured sequential channel timeouts",
+            profile.id
+        );
+    }
 
     Ok(())
 }

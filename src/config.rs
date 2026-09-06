@@ -7,6 +7,7 @@ use std::sync::Mutex;
 mod auth_sidecar;
 mod dedup_config;
 mod defaults;
+mod emergency_policy;
 mod models;
 mod ntfy_topics;
 mod paths;
@@ -26,11 +27,16 @@ pub use defaults::{
     default_inhibition_rules, default_priorities, default_tag_prefixes, default_tiers,
     recommended_tier_timeout,
 };
+pub use emergency_policy::{
+    EmergencyRoutingDecision, EmergencyTimelineEvent, emergency_timeline, select_emergency_profile,
+    validate_emergency_config,
+};
 pub use models::{
     AuthConfig, AuthStepUpConfig, AuthToken, BasicAuthConfig, DedupSetting, DeliveryConfig,
-    DeliveryPolicy, DeliveryRule, EmergencyConfig, HistoryConfig, InhibitionRule, LdapConfig,
-    NoiseControlRule, NoiseMatchField, NoiseMatchOperator, NoiseRuleAction, NtfyTopic, OidcConfig,
-    PasskeyRecord, RuntimeConfig, Schedule, Tier, TotpRecord, TrustedProxyConfig, WebauthnConfig,
+    DeliveryPolicy, DeliveryRule, EmergencyConfig, EmergencyFallback, EmergencyProfile,
+    HistoryConfig, InhibitionRule, LdapConfig, NoiseControlRule, NoiseMatchField,
+    NoiseMatchOperator, NoiseRuleAction, NtfyTopic, OidcConfig, PasskeyRecord, RuntimeConfig,
+    Schedule, Tier, TotpRecord, TrustedProxyConfig, WebauthnConfig,
 };
 pub use ntfy_topics::save_ntfy_topics;
 pub use paths::Paths;

@@ -32,6 +32,22 @@ impl PostgresWorker {
             "emergency register",
         )
     }
+    pub(in crate::history) fn emergency_materialize_policy_snapshot(
+        &self,
+        policy_id: &str,
+        policy_name: &str,
+        snapshot_json: &str,
+    ) -> Result<usize> {
+        self.emergency_request(
+            |reply| PostgresCommand::EmergencyMaterializePolicySnapshot {
+                policy_id: policy_id.to_string(),
+                policy_name: policy_name.to_string(),
+                snapshot_json: snapshot_json.to_string(),
+                reply,
+            },
+            "emergency policy snapshot materialization",
+        )
+    }
     pub(in crate::history) fn emergency_initial_attempt(
         &self,
         attempt: &EmergencyAttempt,
@@ -58,6 +74,22 @@ impl PostgresWorker {
                 reply,
             },
             "emergency reserve",
+        )
+    }
+    pub(in crate::history) fn emergency_adjust_lease(
+        &self,
+        receipt: &str,
+        token: &str,
+        lease_until: f64,
+    ) -> Result<bool> {
+        self.emergency_request(
+            |reply| PostgresCommand::EmergencyAdjustLease {
+                receipt: receipt.to_string(),
+                token: token.to_string(),
+                lease_until,
+                reply,
+            },
+            "emergency adjust lease",
         )
     }
     pub(in crate::history) fn emergency_complete(

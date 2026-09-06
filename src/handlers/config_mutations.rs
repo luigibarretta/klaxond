@@ -20,7 +20,9 @@ pub(super) use self::cascade::update_cascade_config;
 pub(super) use self::channel::update_channel_config;
 pub(super) use self::dedup::update_dedup_config;
 pub(super) use self::delivery::update_delivery_config;
-pub(super) use self::emergency::{emergency_config_payload, update_emergency_config};
+pub(super) use self::emergency::{
+    emergency_config_payload, export_emergency_config, update_emergency_config,
+};
 pub(super) use self::history::{history_config_payload, update_history_config};
 pub(super) use self::ntfy_topics::update_ntfy_topics;
 pub(super) use self::render::{render_preview, update_render_config};

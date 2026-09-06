@@ -23,5 +23,38 @@
       "reason": "Vendored minified Mermaid bundle; update from upstream instead of hand-editing."
     }
   },
-  "allow": {}
+  "allow": {
+    "src/config/emergency_policy.rs": {
+      "linesAtBaseline": 455,
+      "reason": "Cohesive emergency profile matching, validation, diagnostics, and timeline model introduced in 0.20.0."
+    },
+    "src/config/readers.rs": {
+      "linesAtBaseline": 588,
+      "reason": "Central compatibility reader keeps legacy and profile environment precedence auditable in one module."
+    },
+    "src/emergency.rs": {
+      "linesAtBaseline": 440,
+      "reason": "Emergency lifecycle coordinator remains centralized so receipt snapshot and delivery ordering are reviewable together."
+    },
+    "src/handlers/config_mutations/emergency.rs": {
+      "linesAtBaseline": 419,
+      "reason": "Emergency configuration API keeps ownership, validation, persistence, export, and simulation behavior cohesive."
+    },
+    "src/history/postgres/worker.rs": {
+      "linesAtBaseline": 401,
+      "reason": "Existing PostgreSQL worker crossed the threshold by one line while adding schema 7 receipt snapshot migration."
+    },
+    "static/i18n-en.js": {
+      "linesAtBaseline": 466,
+      "reason": "Single English locale dictionary keeps static UI translation coverage mechanically verifiable."
+    },
+    "static/i18n-it.js": {
+      "linesAtBaseline": 464,
+      "reason": "Single Italian locale dictionary mirrors the English product surface for parity checks."
+    },
+    "static/style-components.css": {
+      "linesAtBaseline": 454,
+      "reason": "Existing component stylesheet contains the responsive emergency profile editor additions in the shared design system."
+    }
+  }
 }

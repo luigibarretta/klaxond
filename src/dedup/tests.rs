@@ -163,7 +163,7 @@ fn highest_severity_is_independent_of_batch_order() {
 }
 
 #[tokio::test]
-async fn resolved_bypasses_enabled_dedup_and_closes_an_active_emergency() {
+async fn resolved_bypasses_dedup_and_closes_an_active_receipt_after_routing_is_disabled() {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(temp_paths(&tmp)).unwrap();
     enable_emergency_and_grafana_dedup(&state);
@@ -179,6 +179,9 @@ async fn resolved_bypasses_enabled_dedup_and_closes_an_active_emergency() {
         PrepareResult::Managed { receipt_id, .. } => receipt_id,
         _ => panic!("critical Grafana alert should create an emergency receipt"),
     };
+    crate::state::write_lock(&state.config, "test")
+        .emergency
+        .enabled = false;
 
     assert!(
         submit_grafana(

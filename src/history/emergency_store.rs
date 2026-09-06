@@ -5,6 +5,25 @@ use crate::history::{
 use anyhow::Result;
 
 impl HistoryStore {
+    pub fn emergency_materialize_policy_snapshot(
+        &self,
+        policy_id: &str,
+        policy_name: &str,
+        snapshot_json: &str,
+    ) -> Result<usize> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => super::sqlite::emergency::materialize_policy_snapshot(
+                &mut lock(conn, "sqlite history connection"),
+                policy_id,
+                policy_name,
+                snapshot_json,
+            ),
+            HistoryBackend::Postgres(worker) => {
+                worker.emergency_materialize_policy_snapshot(policy_id, policy_name, snapshot_json)
+            }
+        }
+    }
+
     pub fn emergency_register(
         &self,
         candidate: &EmergencyCandidate,
@@ -42,6 +61,25 @@ impl HistoryStore {
                 token,
             ),
             HistoryBackend::Postgres(worker) => worker.emergency_reserve(now, lease_until, token),
+        }
+    }
+
+    pub fn emergency_adjust_lease(
+        &self,
+        receipt: &str,
+        token: &str,
+        lease_until: f64,
+    ) -> Result<bool> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => super::sqlite::emergency::adjust_lease(
+                &lock(conn, "sqlite history connection"),
+                receipt,
+                token,
+                lease_until,
+            ),
+            HistoryBackend::Postgres(worker) => {
+                worker.emergency_adjust_lease(receipt, token, lease_until)
+            }
         }
     }
 

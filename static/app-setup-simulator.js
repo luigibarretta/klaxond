@@ -219,6 +219,7 @@ export async function runPolicySimulation(opts = {}) {
     const payload = {
       source: $("#policy-sim-source")?.value || "grafana",
       severity: $("#policy-sim-severity")?.value || "warning",
+      event: $("#policy-sim-event")?.value || "",
       labels: parseLabelLines($("#policy-sim-labels")?.value || ""),
     };
     const result = await J("/api/policy-simulate", {
@@ -226,12 +227,28 @@ export async function runPolicySimulation(opts = {}) {
       body: JSON.stringify(payload),
       headers: {"Content-Type": "application/json"},
     });
-    $("#policy-sim-output").textContent = JSON.stringify(result, null, 2);
+    renderPolicySimulation(result);
     setInlineStatus(status, tr("sim.done"));
   } catch (e) {
     if (!opts.silent) notifyError("policy-simulate", e, { status });
     $("#policy-sim-output").textContent = `${tr("common.error")}: ${errorText(e)}`;
   }
+}
+
+function renderPolicySimulation(result) {
+  const target = $("#policy-sim-output");
+  if (!target) return;
+  const emergency = result.emergency || {};
+  const profile = emergency.profile || {};
+  const matching = emergency.matching_profiles || [];
+  const milestones = (emergency.timeline || []).filter(event => event.kind !== "retry");
+  const timeline = emergency.managed ? `<div class="profile-timeline"><h4>${escapeHtml(tr("emergency.timeline"))}</h4><p class="timeline-summary">${escapeHtml(tr("sim.retry_summary", { seconds: profile.retry_seconds, attempts: profile.max_attempts }))}</p><ol>${milestones.map(event => `<li><span>${escapeHtml(`${event.at_seconds}s`)}</span><strong>${escapeHtml(tr(`sim.timeline_${event.kind}`))}</strong><small>${escapeHtml(event.channel || (event.attempt ? `#${event.attempt}` : ""))}</small></li>`).join("")}</ol></div>` : "";
+  target.innerHTML = `<div class="notice success compact"><strong>${escapeHtml(tr("sim.no_side_effect"))}</strong> ${escapeHtml(tr("sim.no_side_effect_detail"))}</div>
+    <div class="sim-result-grid">
+      <section class="sim-result-card"><strong>${escapeHtml(tr("sim.emergency_route"))}</strong><span class="badge ${emergency.managed ? "sev-critical" : "sev-info"}">${escapeHtml(emergency.managed ? tr("sim.receipt_managed") : tr("sim.normal_delivery"))}</span><p>${escapeHtml(profile.name || "—")} ${profile.id ? `<code>${escapeHtml(profile.id)}</code>` : ""}</p><small class="muted">${escapeHtml(emergency.reason || "—")}</small>${matching.length > 1 ? `<p class="notice warn compact">${escapeHtml(tr("sim.conflict", { profiles: matching.join(", ") }))}</p>` : ""}</section>
+      <section class="sim-result-card"><strong>${escapeHtml(tr("sim.channels"))}</strong>${emergency.managed ? `<p>ntfy #1</p><p>${profile.telegram?.enabled ? `Telegram #${Number(profile.telegram.after_attempts)}` : tr("emergency.disabled")}</p><p>${profile.smtp?.enabled ? `SMTP #${Number(profile.smtp.after_attempts)}` : tr("emergency.disabled")}</p>` : `<p>${escapeHtml((result.delivery?.tiers || []).map(tier => tier.name).join(" → ") || "—")}</p>`}<small class="muted">${escapeHtml(result.delivery?.matched_by || "")}</small></section>
+      <section class="sim-result-card"><strong>${escapeHtml(tr("sim.gates"))}</strong><p>${escapeHtml(result.inhibition?.would_send ? tr("sim.not_inhibited") : result.inhibition?.reason || "—")}</p><p>${escapeHtml(result.dedup?.enabled ? tr("sim.dedup_on", { seconds: result.dedup.window_s }) : tr("sim.dedup_off"))}</p><small class="muted">${escapeHtml(`${result.source} · ${result.severity} · ${result.event || "—"}`)}</small></section>
+    </div>${timeline}`;
 }
 
 onReady(() => {

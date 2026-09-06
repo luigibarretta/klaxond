@@ -17,8 +17,8 @@ mod sqlite;
 mod tests;
 
 pub use emergency::{
-    EmergencyAttempt, EmergencyCandidate, EmergencyIncident, EmergencyPayload,
-    EmergencyRegistration,
+    EmergencyAttempt, EmergencyCandidate, EmergencyChannelSnapshot, EmergencyIncident,
+    EmergencyPayload, EmergencyPolicySnapshot, EmergencyRegistration,
 };
 pub(crate) use migration::snapshot_runtime_auth_state;
 pub use migration::{migrate_between, run_migrate_cli};
@@ -33,7 +33,7 @@ use sqlite::{
     sqlite_page, sqlite_prune, validate_sqlite_schema,
 };
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeliveryEntry {

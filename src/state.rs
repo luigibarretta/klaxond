@@ -70,6 +70,28 @@ impl AppState {
         let cascade_runtime_enabled = cfg.cascade_default;
         let session_key = load_or_create_session_key(&paths, &cfg)?;
         let history = Arc::new(HistoryStore::open(&cfg.history)?);
+        let fallback = cfg
+            .emergency
+            .profiles
+            .iter()
+            .find(|profile| profile.id == cfg.emergency.fallback_profile)
+            .cloned()
+            .unwrap_or_else(crate::config::EmergencyProfile::legacy_default);
+        let snapshot = crate::emergency::snapshot_from_profile(&fallback);
+        let snapshot_json = serde_json::to_string(&snapshot)
+            .context("serialize legacy emergency policy snapshot")?;
+        let materialized = history.emergency_materialize_policy_snapshot(
+            &fallback.id,
+            &fallback.name,
+            &snapshot_json,
+        )?;
+        if materialized > 0 {
+            tracing::info!(
+                materialized,
+                policy_id = %fallback.id,
+                "materialized policy snapshots for active legacy emergency receipts"
+            );
+        }
         let mut queues = DedupQueues::default();
         for src in crate::config::DEDUP_SOURCES {
             queues.queues.insert((*src).to_string(), Vec::new());

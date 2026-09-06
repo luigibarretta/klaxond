@@ -21,6 +21,8 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
         "get",
         "active-stats",
         "invalid-payload",
+        "adjust-lease",
+        "materialize-policy-snapshot",
     ] {
         state.metric_inc(
             "klaxond_emergency_storage_errors_total",
@@ -48,6 +50,44 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
             "klaxond_emergency_oldest_active_age_seconds",
             &[],
             oldest_age,
+        );
+    }
+    let mut profile_ids = state.with_cfg(|cfg| {
+        cfg.emergency
+            .profiles
+            .iter()
+            .map(|profile| profile.id.clone())
+            .collect::<Vec<_>>()
+    });
+    for profile_id in &profile_ids {
+        for forced in ["0", "1"] {
+            state.metric_inc(
+                "klaxond_emergency_profile_matches_total",
+                &[("profile_id", profile_id), ("forced", forced)],
+                0,
+            );
+        }
+    }
+    let active_receipts = state
+        .history_store()
+        .emergencies(Some("active"), 1_000)
+        .unwrap_or_default();
+    profile_ids.extend(
+        active_receipts
+            .iter()
+            .map(|incident| incident.policy_id.clone()),
+    );
+    profile_ids.sort();
+    profile_ids.dedup();
+    for profile_id in profile_ids {
+        let count = active_receipts
+            .iter()
+            .filter(|incident| incident.policy_id == profile_id)
+            .count();
+        state.metric_set(
+            "klaxond_emergency_profile_active",
+            &[("profile_id", &profile_id)],
+            count as f64,
         );
     }
     let mut lines = vec![
@@ -112,6 +152,10 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
                 "klaxond_emergency_storage_errors_total",
                 "Emergency persistence operation failures.",
             ),
+            (
+                "klaxond_emergency_profile_matches_total",
+                "Emergency profile selections by stable profile ID and explicit-force flag.",
+            ),
         ]),
     );
     let gauges = lock_mutex(&state.metrics.gauges, "metrics gauges");
@@ -143,6 +187,10 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
             (
                 "klaxond_emergency_last_ack_latency_seconds",
                 "Acknowledgement latency of the last acknowledged emergency.",
+            ),
+            (
+                "klaxond_emergency_profile_active",
+                "Active emergency receipts by stable policy profile ID.",
             ),
         ]),
     );

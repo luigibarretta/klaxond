@@ -19,6 +19,8 @@ The following flows must pass on all three automated browser engines:
 - navigation, language and theme preferences;
 - Status, flow, delivery history, logs and audit views;
 - routing, cascade, noise-control and emergency-policy forms;
+- emergency severity/source chips, profile ordering, timeline and policy
+  simulation at 320 px and 390 px viewport widths;
 - configuration import preview and safe restore;
 - local authentication, logout and read-only viewer behavior;
 - responsive reflow at a narrow viewport.

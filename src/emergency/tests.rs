@@ -2,30 +2,47 @@ use super::*;
 
 #[test]
 fn explicit_label_overrides_severity_policy() {
-    let cfg = EmergencyConfig {
+    let cfg = crate::config::EmergencyConfig {
         enabled: true,
-        ..EmergencyConfig::default()
+        ..crate::config::EmergencyConfig::default()
     };
-    assert!(should_manage(&cfg, "critical", &HashMap::new(), "grafana"));
-    assert!(!should_manage(&cfg, "warning", &HashMap::new(), "grafana"));
-    assert!(should_manage(
-        &cfg,
-        "warning",
-        &HashMap::from([("emergency".into(), "true".into())]),
-        "grafana"
-    ));
-    assert!(!should_manage(
-        &cfg,
-        "critical",
-        &HashMap::from([("emergency".into(), "false".into())]),
-        "grafana"
-    ));
-    assert!(!should_manage(
-        &cfg,
-        "critical",
-        &HashMap::new(),
-        "api-test"
-    ));
+    assert!(
+        select_emergency_profile(&cfg, "critical", "grafana", "", &HashMap::new())
+            .selected
+            .is_some()
+    );
+    assert!(
+        select_emergency_profile(&cfg, "warning", "grafana", "", &HashMap::new())
+            .selected
+            .is_none()
+    );
+    assert!(
+        select_emergency_profile(
+            &cfg,
+            "warning",
+            "grafana",
+            "",
+            &HashMap::from([("emergency".into(), "true".into())])
+        )
+        .selected
+        .is_some()
+    );
+    assert!(
+        select_emergency_profile(
+            &cfg,
+            "critical",
+            "grafana",
+            "",
+            &HashMap::from([("emergency".into(), "false".into())])
+        )
+        .selected
+        .is_none()
+    );
+    assert!(
+        select_emergency_profile(&cfg, "critical", "api-test", "", &HashMap::new())
+            .selected
+            .is_none()
+    );
 }
 
 #[test]

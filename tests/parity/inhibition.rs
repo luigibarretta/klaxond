@@ -37,7 +37,7 @@ fn inhibition_order_and_ack_match_python() {
 }
 
 #[tokio::test]
-async fn firing_inhibition_source_terminalizes_matching_emergency_without_faking_ack() {
+async fn inhibition_terminalizes_an_active_receipt_after_routing_is_disabled() {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(temp_paths(&tmp)).unwrap();
     let mut cfg = state.cfg();
@@ -84,6 +84,9 @@ async fn firing_inhibition_source_terminalizes_matching_emergency_without_faking
     assert!(send);
     assert_eq!(reason, "source");
 
+    let mut cfg = state.cfg();
+    cfg.emergency.enabled = false;
+    state.replace_config(cfg);
     assert_eq!(emergency::reconcile_inhibited(&state).await, 1);
     let incident = emergency::get(&state, &receipt).unwrap().unwrap();
     assert_eq!(incident.state, "inhibited");

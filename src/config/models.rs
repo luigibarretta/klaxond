@@ -27,20 +27,79 @@ pub struct HistoryConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EmergencyConfig {
+pub struct EmergencyFallback {
     pub enabled: bool,
-    pub allow_insecure_public_url: bool,
-    pub allow_ntfy_only: bool,
+    pub after_attempts: u32,
+}
+
+impl EmergencyFallback {
+    fn telegram_default() -> Self {
+        Self {
+            enabled: true,
+            after_attempts: 3,
+        }
+    }
+
+    fn smtp_default() -> Self {
+        Self {
+            enabled: true,
+            after_attempts: 5,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmergencyProfile {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub priority: i32,
+    #[serde(default)]
     pub severities: Vec<String>,
+    #[serde(default)]
+    pub sources: Vec<String>,
+    #[serde(default, rename = "match")]
+    pub label_match: HashMap<String, String>,
     pub retry_seconds: u64,
     pub expire_seconds: u64,
     pub max_attempts: u32,
     pub lease_seconds: u64,
-    pub telegram_after_attempts: u32,
-    pub smtp_after_attempts: u32,
+    pub telegram: EmergencyFallback,
+    pub smtp: EmergencyFallback,
     pub notify_on_expiry: bool,
     pub auto_resolve: bool,
+}
+
+impl EmergencyProfile {
+    pub fn legacy_default() -> Self {
+        Self {
+            id: "critical-default".to_string(),
+            name: "Critical default".to_string(),
+            enabled: true,
+            priority: 100,
+            severities: vec!["critical".to_string()],
+            sources: Vec::new(),
+            label_match: HashMap::new(),
+            retry_seconds: 60,
+            expire_seconds: 3_600,
+            max_attempts: 50,
+            lease_seconds: 60,
+            telegram: EmergencyFallback::telegram_default(),
+            smtp: EmergencyFallback::smtp_default(),
+            notify_on_expiry: true,
+            auto_resolve: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmergencyConfig {
+    pub enabled: bool,
+    pub allow_insecure_public_url: bool,
+    pub allow_ntfy_only: bool,
     pub exclude_sources: Vec<String>,
+    pub fallback_profile: String,
+    pub profiles: Vec<EmergencyProfile>,
 }
 
 impl Default for EmergencyConfig {
@@ -49,16 +108,9 @@ impl Default for EmergencyConfig {
             enabled: false,
             allow_insecure_public_url: false,
             allow_ntfy_only: false,
-            severities: vec!["critical".to_string()],
-            retry_seconds: 60,
-            expire_seconds: 3_600,
-            max_attempts: 50,
-            lease_seconds: 60,
-            telegram_after_attempts: 3,
-            smtp_after_attempts: 5,
-            notify_on_expiry: true,
-            auto_resolve: true,
             exclude_sources: vec!["api-test".to_string()],
+            fallback_profile: "critical-default".to_string(),
+            profiles: vec![EmergencyProfile::legacy_default()],
         }
     }
 }

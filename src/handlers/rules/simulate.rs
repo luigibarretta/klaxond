@@ -1,5 +1,5 @@
 use super::super::{json_body, json_response, text};
-use crate::config::{DEDUP_SOURCES, default_dedup};
+use crate::config::{default_dedup, emergency_timeline, select_emergency_profile};
 use crate::delivery::pick_policy;
 use crate::inhibition;
 use crate::parsers::normalize_labels;
@@ -70,8 +70,13 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
         .unwrap_or("grafana")
         .trim()
         .to_ascii_lowercase();
-    if !DEDUP_SOURCES.contains(&source.as_str()) {
-        return text(StatusCode::BAD_REQUEST, "unknown source");
+    if source.is_empty()
+        || source.len() > 64
+        || !source
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return text(StatusCode::BAD_REQUEST, "invalid source");
     }
     let severity = payload
         .get("severity")
@@ -94,6 +99,7 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
         }
     }
     labels.insert("severity".into(), severity.clone());
+    labels.insert("source".into(), source.clone());
 
     let (would_send, reason) = inhibition::apply_inhibition(state, &source, &labels, true);
     let cfg = state.cfg();
@@ -124,6 +130,41 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
             .or_else(|| reason.strip_prefix("ack-snoozed-").map(ToOwned::to_owned))
     };
     let (policy, matched_by) = pick_policy(&cfg, &labels);
+    let event = payload
+        .get("event")
+        .and_then(Value::as_str)
+        .or_else(|| labels.get("alertname").map(String::as_str))
+        .unwrap_or("");
+    let emergency = select_emergency_profile(&cfg.emergency, &severity, &source, event, &labels);
+    let emergency_json = emergency
+        .selected
+        .as_ref()
+        .map(|profile| {
+            json!({
+                "managed": true,
+                "profile": profile,
+                "reason": emergency.reason,
+                "forced": emergency.forced,
+                "matching_profiles": emergency.matching_profiles,
+                "channels": {
+                    "ntfy": {"enabled": true, "attempt": 1},
+                    "telegram": profile.telegram,
+                    "smtp": profile.smtp,
+                },
+                "timeline": emergency_timeline(profile),
+            })
+        })
+        .unwrap_or_else(|| {
+            json!({
+                "managed": false,
+                "profile": null,
+                "reason": emergency.reason,
+                "forced": emergency.forced,
+                "matching_profiles": emergency.matching_profiles,
+                "channels": {},
+                "timeline": [],
+            })
+        });
     let defaults = default_dedup();
     let dedup = cfg
         .dedup
@@ -134,6 +175,8 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
         "source": source,
         "severity": severity,
         "labels": labels,
+        "event": event,
+        "emergency": emergency_json,
         "inhibition": {
             "would_send": would_send,
             "reason": reason,

@@ -28,9 +28,9 @@ exclude_sources = ["api-test"]
     assert!(cfg.enabled);
     assert!(!cfg.allow_insecure_public_url);
     assert!(!cfg.allow_ntfy_only);
-    assert_eq!(cfg.retry_seconds, 60);
-    assert_eq!(cfg.expire_seconds, 3_600);
-    assert_eq!(cfg.max_attempts, 50);
+    assert_eq!(cfg.profiles[0].retry_seconds, 60);
+    assert_eq!(cfg.profiles[0].expire_seconds, 3_600);
+    assert_eq!(cfg.profiles[0].max_attempts, 50);
     assert_eq!(cfg.exclude_sources, ["api-test"]);
 }
 
@@ -64,4 +64,114 @@ fn emergency_policy_rejects_malformed_environment_values() {
         .to_string();
     clear_runtime_env();
     assert!(error.contains("KLAXOND_EMERGENCY_ENABLED must be a boolean"));
+}
+
+#[test]
+fn emergency_profiles_parse_with_priority_matchers_and_channel_switches() {
+    let _guard = TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    clear_runtime_env();
+    let value: toml::Value = toml::from_str(
+        r#"
+[emergency]
+enabled = true
+fallback_profile = "critical"
+exclude_sources = ["api-test"]
+
+[[emergency.profiles]]
+id = "critical"
+name = "Critical"
+enabled = true
+priority = 200
+severities = ["critical", "page"]
+sources = ["grafana"]
+retry_seconds = 60
+expire_seconds = 3600
+max_attempts = 50
+lease_seconds = 60
+notify_on_expiry = true
+auto_resolve = true
+
+[emergency.profiles.match]
+team = "re:^(platform|infra)$"
+
+[emergency.profiles.telegram]
+enabled = true
+after_attempts = 3
+
+[emergency.profiles.smtp]
+enabled = false
+after_attempts = 5
+"#,
+    )
+    .unwrap();
+    let cfg = super::super::readers::read_emergency(&value).unwrap();
+    assert_eq!(cfg.fallback_profile, "critical");
+    assert_eq!(cfg.profiles[0].priority, 200);
+    assert_eq!(cfg.profiles[0].label_match["team"], "re:^(platform|infra)$");
+    assert!(!cfg.profiles[0].smtp.enabled);
+}
+
+#[test]
+fn legacy_environment_only_overrides_the_fallback_profile() {
+    let _guard = TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    clear_runtime_env();
+    // SAFETY: this test holds TEST_ENV_LOCK for the full mutation window.
+    unsafe {
+        std::env::set_var("KLAXOND_EMERGENCY_RETRY_SECONDS", "90");
+    }
+    let value: toml::Value = toml::from_str(
+        r#"
+[emergency]
+fallback_profile = "critical"
+
+[[emergency.profiles]]
+id = "critical"
+name = "Critical"
+enabled = true
+priority = 100
+severities = ["critical"]
+sources = []
+retry_seconds = 60
+expire_seconds = 3600
+max_attempts = 50
+lease_seconds = 60
+notify_on_expiry = true
+auto_resolve = true
+[emergency.profiles.telegram]
+enabled = true
+after_attempts = 3
+[emergency.profiles.smtp]
+enabled = true
+after_attempts = 5
+
+[[emergency.profiles]]
+id = "warning"
+name = "Warning"
+enabled = true
+priority = 50
+severities = ["warning"]
+sources = []
+retry_seconds = 300
+expire_seconds = 3600
+max_attempts = 12
+lease_seconds = 60
+notify_on_expiry = false
+auto_resolve = true
+[emergency.profiles.telegram]
+enabled = false
+after_attempts = 3
+[emergency.profiles.smtp]
+enabled = false
+after_attempts = 5
+"#,
+    )
+    .unwrap();
+    let cfg = super::super::readers::read_emergency(&value).unwrap();
+    clear_runtime_env();
+    assert_eq!(cfg.profiles[0].retry_seconds, 90);
+    assert_eq!(cfg.profiles[1].retry_seconds, 300);
 }

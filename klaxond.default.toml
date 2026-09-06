@@ -90,9 +90,10 @@ public_url = "http://localhost:8181"
 [acks]
 default_ttl_seconds = 3600
 
-# Durable Pushover-style emergency receipts. Disabled in the portable default;
-# production should enable this explicitly after configuring the public URL and
-# fallback channels. A firing incident repeats until ACK, recovery or expiry.
+# Ordered ACK/emergency profiles. Disabled in the portable default; production
+# should enable this after configuring the public URL and fallback channels.
+# Non-secret profile settings are operator-owned in the UI unless a legacy
+# KLAXOND_EMERGENCY_* environment override is deliberately supplied.
 [emergency]
 enabled = false
 # Deliberate development-only escape hatch. Production emergency callbacks and
@@ -101,16 +102,32 @@ allow_insecure_public_url = false
 # Deliberate single-channel mode. Production defaults require Telegram or SMTP
 # as an independent fallback for ntfy.
 allow_ntfy_only = false
+exclude_sources = ["api-test"]
+fallback_profile = "critical-default"
+
+[[emergency.profiles]]
+id = "critical-default"
+name = "Critical default"
+enabled = true
+priority = 100
 severities = ["critical"]
+sources = []
 retry_seconds = 60
 expire_seconds = 3600
 max_attempts = 50
 lease_seconds = 60
-telegram_after_attempts = 3
-smtp_after_attempts = 5
 notify_on_expiry = true
 auto_resolve = true
-exclude_sources = ["api-test"]
+
+[emergency.profiles.match]
+
+[emergency.profiles.telegram]
+enabled = true
+after_attempts = 3
+
+[emergency.profiles.smtp]
+enabled = true
+after_attempts = 5
 
 [paths]
 # Env vars still override these path values. Relative paths are resolved from

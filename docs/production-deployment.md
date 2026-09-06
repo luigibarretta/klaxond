@@ -109,22 +109,31 @@ The online doctor checks the public `/healthz`, ntfy health, Telegram bot
 credentials when configured, and SMTP TCP reachability. JSON output for
 automation is available with `klaxond doctor --json`.
 
-## 5. Enable durable emergency delivery
+## 5. Enable durable emergency profiles
 
-Emergency mode repeats selected severities until acknowledgement, source
-recovery, expiry or the bounded attempt cap. ACK URLs are signed by the session
-key stored under `/data`; losing or replacing that key invalidates outstanding
-links.
+Emergency mode repeats incidents selected by ordered severity/source/label
+profiles until acknowledgement, source recovery, expiry or the bounded attempt
+cap. ACK URLs are signed by the session key stored under `/data`; losing or
+replacing that key invalidates outstanding links. Every receipt stores a
+non-secret snapshot of the winning profile so later configuration changes do
+not alter an in-flight incident.
 
-Before setting `KLAXOND_EMERGENCY_ENABLED=true`, configure:
+Before enabling the policy in the **Emergency receipts** editor, configure:
 
 1. a canonical HTTPS `KLAXOND_PUBLIC_URL`;
-2. HTTPS `NTFY_URL` plus a publish token for every emergency severity;
+2. HTTPS `NTFY_URL` plus a publish token for every severity routed by an enabled
+   profile;
 3. complete Telegram (`BOT_TOKEN` and `CHAT_ID`) or complete authenticated SMTP
    (`HOST`, `USER`, `PASSWORD`, `FROM`, `TO`);
 4. persistent `/data` storage and SQLite or PostgreSQL history;
-5. a lease at least as long as all sequential channel timeouts plus five
-   seconds. The default 60 seconds covers the standard 15+8+10 second chain.
+5. a lease on every profile at least as long as all enabled sequential channel
+   timeouts plus five seconds. The default 60 seconds covers the standard
+   15+8+10 second chain.
+
+Use **Policy simulator** with representative source, severity, event and label
+sets before enabling. It reports the winning profile, reason, competing
+matches, channels and timeline without sending or persisting anything. Export
+the canonical non-secret TOML from the editor for review and backup.
 
 Restart and require a clean doctor result:
 
@@ -136,6 +145,8 @@ docker compose exec klaxond klaxond doctor
 `KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL=true` and
 `KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY=true` weaken those invariants. They exist for
 isolated development and must not be used as routine production shortcuts.
+Detailed matching, precedence, migration and ownership behavior is documented
+in [`emergency-profiles.md`](emergency-profiles.md).
 
 ## 6. Backup, upgrade and rollback
 
@@ -143,7 +154,16 @@ Back up the complete `klaxond-data` volume. It contains configuration, sidecars,
 SQLite history, pending state and the ACK/session signing key. PostgreSQL users
 must also back up the external database consistently.
 
-Before an upgrade:
+Before an upgrade, verify that the configuration and database backup are
+readable and inspect active receipts. Schema 7 snapshots legacy active receipts
+transactionally; an ownership migration must stop if active receipts cannot be
+preserved exactly.
+
+```bash
+sqlite3 /data/klaxond.db 'PRAGMA quick_check; SELECT state,count(*) FROM klaxond_emergencies GROUP BY state;'
+```
+
+Then upgrade:
 
 ```bash
 docker compose exec klaxond klaxond doctor

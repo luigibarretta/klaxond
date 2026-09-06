@@ -1,5 +1,24 @@
 # Klaxond — CHANGELOG
 
+## 0.20.0 — 2026-09-07
+
+- Replace the single CSV emergency policy with ordered, stable ACK/emergency
+  profiles matching severity, source, event and labels, with deterministic
+  priority/order precedence and explicit `emergency=true` fallback or
+  `emergency=false` bypass behavior.
+- Add accessible severity/source chips with validated custom values, per-channel
+  fallback switches and thresholds, accurate retry/escalation/expiry timelines,
+  routing conflict diagnostics and a structured side-effect-free simulator.
+- Persist the winning profile ID, name and complete non-secret lifecycle
+  snapshot in schema 7 so active receipts keep their original retry, expiry,
+  escalation, lease and recovery semantics across edits and restarts.
+- Preserve legacy TOML/environment behavior through an equivalent
+  `critical-default` profile, expose UI/environment/mixed ownership, reject
+  writes to immutable overrides and add a canonical non-secret policy export.
+- Add per-profile selection/active/transition metrics, profile-aware audit
+  events, OpenAPI schemas, turnkey Compose defaults, EN/IT copy and responsive
+  Chromium/Firefox/WebKit coverage at 320 px and 390 px.
+
 ## 0.19.3 — 2026-09-06
 
 - Reconcile active emergency receipts when a matching Alertmanager inhibition

@@ -33,6 +33,9 @@ h3 {
   background: var(--panel);
 }
 .notice.warn { border-left-color: var(--yellow); }
+.notice.error { border-left-color: var(--red); }
+.notice.success { border-left-color: var(--green); }
+.notice.compact { padding: 7px 10px; margin: 8px 0; font-size: 12px; }
 input.input-warning {
   border-color: var(--yellow);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--yellow) 25%, transparent);
@@ -228,6 +231,69 @@ table {
   /* Allow tables (without explicit wrapper) to scroll horizontally on phones */
   table { display: block; overflow-x: auto; white-space: nowrap; }
   table thead, table tbody, table tr { display: table; width: 100%; table-layout: auto; }
+}
+
+.emergency-editor > summary { padding: 4px 0; cursor: pointer; }
+.emergency-ownership,
+.emergency-profile-header,
+.emergency-profile-toolbar,
+.emergency-savebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.emergency-ownership { margin: 16px 0 8px; }
+.emergency-ownership > div { display: grid; gap: 2px; }
+.emergency-precedence p { margin: 5px 0 0; color: var(--muted); }
+.emergency-profile-toolbar h3 { margin: 18px 0 8px; }
+.emergency-profile { margin: 14px 0; padding: 18px; background: var(--panel-light); }
+.emergency-profile-header { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.emergency-profile-header > div:first-child { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.profile-order { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: white; font-size: 12px; font-weight: 700; }
+.profile-enabled { align-self: end; min-height: 40px; }
+.matcher-grid { margin: 12px 0; }
+.field-label { display: block; margin-bottom: 6px; font-size: 13px; }
+.chip-control { display: grid; gap: 8px; min-height: 78px; padding: 8px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); }
+.chip-control.is-disabled { opacity: 0.68; }
+.chip-list { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 3px 5px 3px 10px; border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); border-radius: 999px; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); font-size: 12px; }
+.chip button { min-height: 24px; width: auto; padding: 0 5px; border: 0; border-radius: 999px; background: transparent; font-size: 11px; }
+.chip-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+.chip-entry input { min-width: 0; }
+.chip-empty { padding: 4px; }
+.fallback-card { min-width: 0; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 5px; }
+.fallback-card legend { padding: 0 5px; font-weight: 600; }
+.profile-timeline { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel); }
+.profile-timeline h4 { margin: 0 0 8px; }
+.timeline-summary { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+.profile-timeline ol { display: flex; list-style: none; margin: 0 0 8px; padding: 0; overflow-x: auto; }
+.profile-timeline li { position: relative; display: grid; flex: 1 0 126px; gap: 2px; padding: 22px 8px 6px 0; border-top: 2px solid var(--border); }
+.profile-timeline li::before { content: ""; position: absolute; top: -6px; left: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.profile-timeline li > span,
+.profile-timeline li > small { color: var(--muted); font-size: 11px; }
+.danger-zone { border-left-color: var(--red); }
+.card.inset { margin-top: 18px; background: var(--panel-light); }
+.sim-result { display: grid; gap: 12px; margin-top: 12px; }
+.sim-result-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.sim-result-card { padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); }
+.sim-result-card strong { display: block; margin-bottom: 5px; }
+
+@media (max-width: 800px) {
+  .sim-result-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 480px) {
+  .emergency-editor,
+  .emergency-profile { padding: 12px; }
+  .emergency-profile-header > div:first-child { align-items: flex-start; flex-direction: column; }
+  .emergency-profile-header .row { width: 100%; display: grid; grid-template-columns: 44px 44px minmax(0, 1fr); }
+  .chip-entry { grid-template-columns: 1fr; }
+  .chip-entry .btn { width: 100%; }
+  .emergency-savebar .primary,
+  .emergency-ownership .btn,
+  .emergency-profile-toolbar .btn { width: 100%; }
 }
 /* Inhibition rules table has a wide 6-col layout. Pin a minimum width so
  * the row never collapses into illegible squashing — users can scroll. */

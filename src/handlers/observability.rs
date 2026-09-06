@@ -48,9 +48,9 @@ pub(super) async fn status_payload(state: &AppState) -> Value {
             "storage_ok": emergency_storage_ok,
             "active": emergency_active,
             "oldest_active_age_seconds": emergency_oldest_age_seconds,
-            "retry_seconds": cfg.emergency.retry_seconds,
-            "expire_seconds": cfg.emergency.expire_seconds,
-            "max_attempts": cfg.emergency.max_attempts,
+            "profiles": cfg.emergency.profiles.len(),
+            "enabled_profiles": cfg.emergency.profiles.iter().filter(|profile| profile.enabled).count(),
+            "fallback_profile": cfg.emergency.fallback_profile,
         },
     })
 }

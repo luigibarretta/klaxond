@@ -40,39 +40,39 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
     ),
     (
         "KLAXOND_EMERGENCY_SEVERITIES",
-        "TOML [emergency].severities",
+        "TOML [emergency.profiles] fallback severities",
     ),
     (
         "KLAXOND_EMERGENCY_RETRY_SECONDS",
-        "TOML [emergency].retry_seconds",
+        "TOML [emergency.profiles] fallback retry_seconds",
     ),
     (
         "KLAXOND_EMERGENCY_EXPIRE_SECONDS",
-        "TOML [emergency].expire_seconds",
+        "TOML [emergency.profiles] fallback expire_seconds",
     ),
     (
         "KLAXOND_EMERGENCY_MAX_ATTEMPTS",
-        "TOML [emergency].max_attempts",
+        "TOML [emergency.profiles] fallback max_attempts",
     ),
     (
         "KLAXOND_EMERGENCY_LEASE_SECONDS",
-        "TOML [emergency].lease_seconds",
+        "TOML [emergency.profiles] fallback lease_seconds",
     ),
     (
         "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
-        "TOML [emergency].telegram_after_attempts",
+        "TOML [emergency.profiles.telegram] fallback after_attempts",
     ),
     (
         "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
-        "TOML [emergency].smtp_after_attempts",
+        "TOML [emergency.profiles.smtp] fallback after_attempts",
     ),
     (
         "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY",
-        "TOML [emergency].notify_on_expiry",
+        "TOML [emergency.profiles] fallback notify_on_expiry",
     ),
     (
         "KLAXOND_EMERGENCY_AUTO_RESOLVE",
-        "TOML [emergency].auto_resolve",
+        "TOML [emergency.profiles] fallback auto_resolve",
     ),
     (
         "KLAXOND_EMERGENCY_EXCLUDE_SOURCES",

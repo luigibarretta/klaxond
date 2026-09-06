@@ -121,6 +121,9 @@ CREATE TABLE IF NOT EXISTS klaxond_emergencies (
   severity TEXT NOT NULL,
   title TEXT NOT NULL,
   payload_json TEXT NOT NULL,
+  policy_id TEXT NOT NULL DEFAULT '',
+  policy_name TEXT NOT NULL DEFAULT '',
+  policy_snapshot_json TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL,
   created_at DOUBLE PRECISION NOT NULL,
   updated_at DOUBLE PRECISION NOT NULL,
@@ -144,6 +147,13 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_due
   ON klaxond_emergencies(state,next_retry_at,reserved_until);
 CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_created
   ON klaxond_emergencies(created_at DESC);
+
+ALTER TABLE klaxond_emergencies
+  ADD COLUMN IF NOT EXISTS policy_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE klaxond_emergencies
+  ADD COLUMN IF NOT EXISTS policy_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE klaxond_emergencies
+  ADD COLUMN IF NOT EXISTS policy_snapshot_json TEXT NOT NULL DEFAULT '';
 "#,
     )?;
     tx.execute(

@@ -4,7 +4,9 @@ use super::super::auth_admin::{
 use super::super::config_admin::{
     config_backup_response, config_backups_payload, config_full_export_response,
 };
-use super::super::config_mutations::{emergency_config_payload, history_config_payload};
+use super::super::config_mutations::{
+    emergency_config_payload, export_emergency_config, history_config_payload,
+};
 use super::super::ingest::{ack_response, ingest_auth_payload};
 use super::super::observability::{
     audit_payload, channel_config_payload, channel_test_matrix_payload, deliveries_response,
@@ -124,6 +126,7 @@ async fn config_get_response(state: &AppState, path: &str) -> Option<Response<Bo
         "/api/render-config" => Some(render_config_response(state)),
         "/api/cascade-config" => Some(cascade_config_response(state)),
         "/api/emergency-config" => Some(json_response(emergency_config_payload(state))),
+        "/api/emergency-config/export" => Some(export_emergency_config(state)),
         "/api/history-config" => Some(json_response(history_config_payload(state))),
         "/api/ntfy-topics" => Some(ntfy_topics_response(state)),
         "/api/dedup-config" => Some(noise::response(state).await),

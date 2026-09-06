@@ -180,8 +180,8 @@ jobs:
           labels: |
             org.opencontainers.image.title=klaxond
             org.opencontainers.image.description=Notification routing service with noise control, delivery history, and admin UI
-            org.opencontainers.image.url=https://github.com/luigibarretta/klaxond
-            org.opencontainers.image.source=https://github.com/luigibarretta/klaxond
+            org.opencontainers.image.url=https://git.luigibarretta.com/${{ github.repository }}
+            org.opencontainers.image.source=https://git.luigibarretta.com/${{ github.repository }}
             org.opencontainers.image.licenses=Apache-2.0
 
       - name: Build and push (amd64, docker driver = cache locale)
@@ -195,7 +195,7 @@ jobs:
       - name: Verify immutable image metadata
         env:
           IMAGE: git.luigibarretta.com/${{ github.repository_owner }}/klaxond:${{ github.sha }}
-          EXPECTED_SOURCE: https://github.com/luigibarretta/klaxond
+          EXPECTED_SOURCE: https://git.luigibarretta.com/${{ github.repository }}
         run: |
           set -euo pipefail
           docker pull "$IMAGE"

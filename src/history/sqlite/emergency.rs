@@ -5,6 +5,23 @@ use crate::history::emergency::{
 use anyhow::Result;
 use rusqlite::{Connection, OptionalExtension, params};
 
+pub(in crate::history) fn materialize_policy_snapshot(
+    conn: &mut Connection,
+    policy_id: &str,
+    policy_name: &str,
+    snapshot_json: &str,
+) -> Result<usize> {
+    let tx = conn.transaction()?;
+    let changed = tx.execute(
+        r#"UPDATE klaxond_emergencies
+        SET policy_id=?1,policy_name=?2,policy_snapshot_json=?3
+        WHERE state='active' AND policy_snapshot_json=''"#,
+        params![policy_id, policy_name, snapshot_json],
+    )?;
+    tx.commit()?;
+    Ok(changed)
+}
+
 pub(in crate::history) fn register(
     conn: &mut Connection,
     candidate: &EmergencyCandidate,
@@ -33,10 +50,11 @@ pub(in crate::history) fn register(
     }
     tx.execute(
         r#"INSERT INTO klaxond_emergencies
-        (receipt_id,fingerprint,source,severity,title,payload_json,state,created_at,updated_at,next_retry_at,expires_at,max_attempts)
-        VALUES (?1,?2,?3,?4,?5,?6,'active',?7,?7,?8,?9,?10)"#,
+        (receipt_id,fingerprint,source,severity,title,payload_json,policy_id,policy_name,policy_snapshot_json,state,created_at,updated_at,next_retry_at,expires_at,max_attempts)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'active',?10,?10,?11,?12,?13)"#,
         params![candidate.receipt_id, candidate.fingerprint, candidate.source, candidate.severity,
-            candidate.title, candidate.payload_json, candidate.now, candidate.next_retry_at,
+            candidate.title, candidate.payload_json, candidate.policy_id, candidate.policy_name,
+            candidate.policy_snapshot_json, candidate.now, candidate.next_retry_at,
             candidate.expires_at, candidate.max_attempts as i64],
     )?;
     let incident = tx.query_row(
@@ -115,6 +133,18 @@ pub(in crate::history) fn reserve_due(
     };
     tx.commit()?;
     Ok(incident)
+}
+
+pub(in crate::history) fn adjust_lease(
+    conn: &Connection,
+    receipt_id: &str,
+    token: &str,
+    lease_until: f64,
+) -> Result<bool> {
+    Ok(conn.execute(
+        "UPDATE klaxond_emergencies SET reserved_until=?3 WHERE receipt_id=?1 AND state='active' AND reservation_token=?2",
+        params![receipt_id, token, lease_until],
+    )? == 1)
 }
 
 pub(in crate::history) fn complete_attempt(
@@ -264,10 +294,11 @@ pub(in crate::history) fn export_all(conn: &Connection) -> Result<Vec<EmergencyI
 pub(in crate::history) fn import(conn: &Connection, incident: &EmergencyIncident) -> Result<()> {
     conn.execute(
         r#"INSERT OR REPLACE INTO klaxond_emergencies
-        (receipt_id,fingerprint,source,severity,title,payload_json,state,created_at,updated_at,next_retry_at,expires_at,last_sent_at,terminal_at,terminal_by,attempts,max_attempts,telegram_escalated_at,smtp_escalated_at,last_error,reserved_until,reservation_token)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)"#,
+        (receipt_id,fingerprint,source,severity,title,payload_json,policy_id,policy_name,policy_snapshot_json,state,created_at,updated_at,next_retry_at,expires_at,last_sent_at,terminal_at,terminal_by,attempts,max_attempts,telegram_escalated_at,smtp_escalated_at,last_error,reserved_until,reservation_token)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)"#,
         params![incident.receipt_id,incident.fingerprint,incident.source,incident.severity,incident.title,
-            incident.payload_json,incident.state,incident.created_at,incident.updated_at,incident.next_retry_at,
+            incident.payload_json,incident.policy_id,incident.policy_name,incident.policy_snapshot_json,
+            incident.state,incident.created_at,incident.updated_at,incident.next_retry_at,
             incident.expires_at,incident.last_sent_at,incident.terminal_at,incident.terminal_by,
             incident.attempts as i64,incident.max_attempts as i64,incident.telegram_escalated_at,
             incident.smtp_escalated_at,incident.last_error,incident.reserved_until,incident.reservation_token],

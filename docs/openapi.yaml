@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.19.3
+  version: 0.20.0
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -1259,7 +1259,12 @@ paths:
           in: query
           schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
       responses:
-        "200": { description: Emergency receipt list. }
+        "200":
+          description: Emergency receipt list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyReceiptList"
         "4XX": { $ref: "#/components/responses/ClientError" }
   /api/emergencies/{id}:
     get:
@@ -1275,7 +1280,12 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "200": { description: Emergency receipt. }
+        "200":
+          description: Emergency receipt.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmergencyReceipt"
         "404": { $ref: "#/components/responses/NotFound" }
   /api/emergencies/{id}/{action}:
     post:
@@ -1831,7 +1841,7 @@ paths:
     get:
       tags: [Routing]
       operationId: getEmergencyConfig
-      summary: Return effective emergency retry, expiry and escalation policy.
+      summary: Return effective ordered ACK/emergency profiles, ownership and diagnostics.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -1847,7 +1857,7 @@ paths:
     post:
       tags: [Routing]
       operationId: updateEmergencyConfig
-      summary: Update and validate the durable emergency-delivery policy.
+      summary: Update and validate durable ACK/emergency profiles.
       description: |
         Applies a partial policy update transactionally. Fields owned by an
         environment variable are rejected with 409 instead of being silently
@@ -1872,6 +1882,23 @@ paths:
           description: One or more supplied fields are managed by environment variables.
         "428":
           $ref: "#/components/responses/ReauthRequired"
+  /api/emergency-config/export:
+    get:
+      tags: [Routing]
+      operationId: exportEmergencyConfig
+      summary: Export the canonical non-secret ACK/emergency TOML configuration.
+      description: Secret channel credentials are never included.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Canonical emergency configuration.
+          content:
+            application/toml:
+              schema: { type: string }
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/history-config:
     get:
       tags: [Operations]
@@ -2188,7 +2215,8 @@ paths:
     post:
       tags: [Policy]
       operationId: simulatePolicy
-      summary: Dry-run inhibition, delivery policy and dedup decisions.
+      summary: Side-effect-free dry-run of inhibition, delivery, dedup and ACK/emergency routing.
+      description: Never sends notifications and never creates or updates a durable receipt.
       security:
         - bearerAuth: []
         - sessionCookie: []
@@ -2197,14 +2225,14 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: "#/components/schemas/PolicySimulationRequest"
       responses:
         "200":
           description: Simulation result.
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/PolicySimulationResponse"
         "4XX":
           $ref: "#/components/responses/ClientError"
   /api/render-config:
@@ -2564,43 +2592,75 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CascadeWarning"
+    EmergencyFallback:
+      type: object
+      additionalProperties: false
+      required: [enabled, after_attempts]
+      properties:
+        enabled: { type: boolean }
+        after_attempts: { type: integer, minimum: 1, maximum: 50 }
+    EmergencyProfile:
+      type: object
+      additionalProperties: false
+      required: [id, name, enabled, priority, severities, sources, match, retry_seconds, expire_seconds, max_attempts, lease_seconds, telegram, smtp, notify_on_expiry, auto_resolve]
+      properties:
+        id:
+          type: string
+          pattern: "^[a-z0-9._-]{1,64}$"
+          description: Stable identifier persisted with each receipt.
+        name: { type: string, minLength: 1, maxLength: 80 }
+        enabled: { type: boolean }
+        priority:
+          type: integer
+          format: int32
+          description: Higher values win; equal values use configured array order.
+        severities:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: Empty matches any severity. Values may be exact or use the existing `re:` regex prefix.
+        sources:
+          type: array
+          maxItems: 64
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: Empty matches any source. Values may be exact or use the existing `re:` regex prefix.
+        match:
+          type: object
+          additionalProperties: { type: string, minLength: 1, maxLength: 256 }
+          description: Existing exact/`re:` matcher syntax for labels plus the special event, alertname, source and severity keys.
+        retry_seconds: { type: integer, minimum: 30, maximum: 3600 }
+        expire_seconds: { type: integer, minimum: 30, maximum: 10800 }
+        max_attempts: { type: integer, minimum: 1, maximum: 50 }
+        lease_seconds: { type: integer, minimum: 5, maximum: 300 }
+        telegram: { $ref: "#/components/schemas/EmergencyFallback" }
+        smtp: { $ref: "#/components/schemas/EmergencyFallback" }
+        notify_on_expiry: { type: boolean }
+        auto_resolve: { type: boolean }
     EmergencyConfig:
       type: object
       required:
         - enabled
         - allow_insecure_public_url
         - allow_ntfy_only
-        - severities
-        - retry_seconds
-        - expire_seconds
-        - max_attempts
-        - lease_seconds
-        - telegram_after_attempts
-        - smtp_after_attempts
-        - notify_on_expiry
-        - auto_resolve
         - exclude_sources
+        - fallback_profile
+        - profiles
       properties:
         enabled: { type: boolean }
         allow_insecure_public_url: { type: boolean }
         allow_ntfy_only: { type: boolean }
-        severities:
-          type: array
-          minItems: 1
-          maxItems: 64
-          items: { type: string, minLength: 1, maxLength: 64 }
-        retry_seconds: { type: integer, minimum: 30, maximum: 3600 }
-        expire_seconds: { type: integer, minimum: 30, maximum: 10800 }
-        max_attempts: { type: integer, minimum: 1, maximum: 50 }
-        lease_seconds: { type: integer, minimum: 5, maximum: 300 }
-        telegram_after_attempts: { type: integer, minimum: 1, maximum: 50 }
-        smtp_after_attempts: { type: integer, minimum: 1, maximum: 50 }
-        notify_on_expiry: { type: boolean }
-        auto_resolve: { type: boolean }
         exclude_sources:
           type: array
           maxItems: 64
           items: { type: string, minLength: 1, maxLength: 64 }
+        fallback_profile:
+          type: string
+          description: Used only for explicit emergency=true when no enabled profile matches.
+        profiles:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { $ref: "#/components/schemas/EmergencyProfile" }
     EmergencyConfigPatch:
       type: object
       minProperties: 1
@@ -2609,26 +2669,19 @@ components:
         enabled: { type: boolean }
         allow_insecure_public_url: { type: boolean }
         allow_ntfy_only: { type: boolean }
-        severities:
-          type: array
-          minItems: 1
-          maxItems: 64
-          items: { type: string, minLength: 1, maxLength: 64 }
-        retry_seconds: { type: integer, minimum: 30, maximum: 3600 }
-        expire_seconds: { type: integer, minimum: 30, maximum: 10800 }
-        max_attempts: { type: integer, minimum: 1, maximum: 50 }
-        lease_seconds: { type: integer, minimum: 5, maximum: 300 }
-        telegram_after_attempts: { type: integer, minimum: 1, maximum: 50 }
-        smtp_after_attempts: { type: integer, minimum: 1, maximum: 50 }
-        notify_on_expiry: { type: boolean }
-        auto_resolve: { type: boolean }
         exclude_sources:
           type: array
           maxItems: 64
           items: { type: string, minLength: 1, maxLength: 64 }
+        fallback_profile: { type: string }
+        profiles:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items: { $ref: "#/components/schemas/EmergencyProfile" }
     EmergencyConfigEnvelope:
       type: object
-      required: [settings, constraints, managed_fields, managed_by_environment, writeable]
+      required: [settings, constraints, managed_fields, managed_by_environment, source_of_truth, writeable]
       properties:
         settings:
           $ref: "#/components/schemas/EmergencyConfig"
@@ -2639,7 +2692,125 @@ components:
           type: object
           additionalProperties: { type: string }
         managed_by_environment: { type: boolean }
+        source_of_truth: { type: string, enum: [ui, environment, mixed] }
+        known_severities:
+          type: array
+          items: { type: string }
+        known_sources:
+          type: array
+          items: { type: string }
+        channel_timeouts:
+          type: object
+          additionalProperties: { type: integer }
+        diagnostics:
+          type: object
+          additionalProperties: true
         writeable: { type: boolean }
+    EmergencyPolicySnapshot:
+      type: object
+      additionalProperties: false
+      required: [schema_version, profile_id, profile_name, retry_seconds, expire_seconds, max_attempts, lease_seconds, telegram, smtp, notify_on_expiry, auto_resolve]
+      properties:
+        schema_version: { type: integer, minimum: 1 }
+        profile_id: { type: string }
+        profile_name: { type: string }
+        retry_seconds: { type: integer }
+        expire_seconds: { type: integer }
+        max_attempts: { type: integer }
+        lease_seconds: { type: integer }
+        telegram: { $ref: "#/components/schemas/EmergencyFallback" }
+        smtp: { $ref: "#/components/schemas/EmergencyFallback" }
+        notify_on_expiry: { type: boolean }
+        auto_resolve: { type: boolean }
+    EmergencyReceipt:
+      type: object
+      description: Durable receipt. `policy_snapshot_json` is the immutable non-secret lifecycle policy captured at creation.
+      required: [receipt_id, fingerprint, source, severity, title, payload_json, policy_id, policy_name, policy_snapshot_json, state, created_at, updated_at, next_retry_at, expires_at, last_sent_at, terminal_at, terminal_by, attempts, max_attempts, telegram_escalated_at, smtp_escalated_at, last_error, reserved_until, reservation_token]
+      properties:
+        receipt_id: { type: string }
+        fingerprint: { type: string }
+        source: { type: string }
+        severity: { type: string }
+        title: { type: string }
+        payload_json: { type: string }
+        policy_id: { type: string }
+        policy_name: { type: string }
+        policy_snapshot_json:
+          type: string
+          contentMediaType: application/json
+          contentSchema: { $ref: "#/components/schemas/EmergencyPolicySnapshot" }
+        state:
+          type: string
+          enum: [active, acknowledged, resolved, inhibited, expired, cancelled]
+        created_at: { type: number, format: double }
+        updated_at: { type: number, format: double }
+        next_retry_at: { type: number, format: double }
+        expires_at: { type: number, format: double }
+        last_sent_at:
+          anyOf: [{ type: number, format: double }, { type: "null" }]
+        terminal_at:
+          anyOf: [{ type: number, format: double }, { type: "null" }]
+        terminal_by: { type: string }
+        attempts: { type: integer, minimum: 0 }
+        max_attempts: { type: integer, minimum: 1 }
+        telegram_escalated_at:
+          anyOf: [{ type: number, format: double }, { type: "null" }]
+        smtp_escalated_at:
+          anyOf: [{ type: number, format: double }, { type: "null" }]
+        last_error: { type: string }
+        reserved_until: { type: number, format: double }
+        reservation_token: { type: string }
+    EmergencyReceiptList:
+      type: object
+      required: [incidents, limit]
+      properties:
+        incidents:
+          type: array
+          items: { $ref: "#/components/schemas/EmergencyReceipt" }
+        limit: { type: integer, minimum: 1, maximum: 1000 }
+    PolicySimulationRequest:
+      type: object
+      additionalProperties: false
+      required: [source, severity]
+      properties:
+        source: { type: string, minLength: 1, maxLength: 64 }
+        severity: { type: string, minLength: 1, maxLength: 64 }
+        event: { type: string, maxLength: 256 }
+        labels:
+          type: object
+          additionalProperties: true
+        payload:
+          type: object
+          additionalProperties: true
+    PolicySimulationResponse:
+      type: object
+      required: [source, severity, labels, inhibition, delivery, emergency, dedup]
+      properties:
+        source: { type: string }
+        severity: { type: string }
+        event: { type: string }
+        labels: { type: object, additionalProperties: { type: string } }
+        inhibition: { type: object, additionalProperties: true }
+        delivery: { type: object, additionalProperties: true }
+        emergency:
+          type: object
+          required: [managed, reason, forced, matching_profiles, channels, timeline]
+          properties:
+            managed: { type: boolean }
+            profile:
+              anyOf:
+                - $ref: "#/components/schemas/EmergencyProfile"
+                - type: "null"
+            reason: { type: string }
+            forced: { type: boolean }
+            matching_profiles:
+              type: array
+              items: { type: string }
+            channels: { type: object, additionalProperties: true }
+            timeline:
+              type: array
+              items: { type: object, additionalProperties: true }
+        dedup: { type: object, additionalProperties: true }
     HistoryConfigPatch:
       type: object
       minProperties: 1

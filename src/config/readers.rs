@@ -1,163 +1,365 @@
 use super::{
-    DeliveryConfig, DeliveryPolicy, DeliveryRule, EmergencyConfig, HistoryConfig, InhibitionRule,
-    Paths, Schedule, Tier, default_inhibition_rules,
+    DeliveryConfig, DeliveryPolicy, DeliveryRule, EmergencyConfig, EmergencyFallback,
+    EmergencyProfile, HistoryConfig, InhibitionRule, Paths, Schedule, Tier,
+    default_inhibition_rules, validate_emergency_config,
 };
+use crate::util::toml_get;
+use std::collections::HashMap;
 
 pub(super) fn read_emergency(toml: &toml::Value) -> anyhow::Result<EmergencyConfig> {
     let defaults = EmergencyConfig::default();
     let emergency = toml_get(toml, &["emergency"]);
-    let bool_value = |env: &str, key: &str, fallback: bool| -> anyhow::Result<bool> {
-        if let Ok(value) = std::env::var(env) {
-            return match value.trim().to_ascii_lowercase().as_str() {
-                "1" | "true" | "yes" | "on" => Ok(true),
-                "0" | "false" | "no" | "off" => Ok(false),
-                _ => anyhow::bail!("{env} must be a boolean"),
-            };
-        }
-        Ok(emergency
-            .and_then(|v| v.get(key))
-            .and_then(toml::Value::as_bool)
-            .unwrap_or(fallback))
-    };
-    let u64_value = |env: &str, key: &str, fallback: u64| -> anyhow::Result<u64> {
-        if let Ok(value) = std::env::var(env) {
-            return value
-                .parse::<u64>()
-                .map_err(|_| anyhow::anyhow!("{env} must be an unsigned integer"));
-        }
-        Ok(emergency
-            .and_then(|v| v.get(key))
-            .and_then(toml::Value::as_integer)
-            .and_then(|v| u64::try_from(v).ok())
-            .unwrap_or(fallback))
-    };
-    let list_value = |env: &str, key: &str, fallback: Vec<String>| {
-        std::env::var(env)
-            .ok()
-            .filter(|v| !v.trim().is_empty())
-            .map(|v| {
-                v.split(',')
-                    .map(|s| s.trim().to_ascii_lowercase())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .or_else(|| {
-                emergency
-                    .and_then(|v| v.get(key))
-                    .and_then(toml::Value::as_array)
-                    .map(|values| {
-                        values
-                            .iter()
-                            .filter_map(toml::Value::as_str)
-                            .map(|s| s.trim().to_ascii_lowercase())
-                            .filter(|s| !s.is_empty())
-                            .collect()
-                    })
-            })
-            .unwrap_or(fallback)
-    };
-    let cfg = EmergencyConfig {
-        enabled: bool_value("KLAXOND_EMERGENCY_ENABLED", "enabled", defaults.enabled)?,
-        allow_insecure_public_url: bool_value(
+    let mut profiles: Vec<EmergencyProfile> = emergency
+        .and_then(|value| value.get("profiles"))
+        .and_then(toml::Value::as_array)
+        .map(|values| values.iter().map(read_emergency_profile).collect())
+        .transpose()?
+        .unwrap_or_default();
+    if profiles.is_empty() {
+        profiles.push(read_legacy_emergency_profile(emergency)?);
+    }
+    let fallback_profile = emergency
+        .and_then(|value| value.get("fallback_profile"))
+        .and_then(toml::Value::as_str)
+        .unwrap_or(&profiles[0].id)
+        .to_string();
+    let mut cfg = EmergencyConfig {
+        enabled: env_or_toml_bool(
+            emergency,
+            "KLAXOND_EMERGENCY_ENABLED",
+            "enabled",
+            defaults.enabled,
+        )?,
+        allow_insecure_public_url: env_or_toml_bool(
+            emergency,
             "KLAXOND_EMERGENCY_ALLOW_INSECURE_PUBLIC_URL",
             "allow_insecure_public_url",
             defaults.allow_insecure_public_url,
         )?,
-        allow_ntfy_only: bool_value(
+        allow_ntfy_only: env_or_toml_bool(
+            emergency,
             "KLAXOND_EMERGENCY_ALLOW_NTFY_ONLY",
             "allow_ntfy_only",
             defaults.allow_ntfy_only,
         )?,
-        severities: list_value(
-            "KLAXOND_EMERGENCY_SEVERITIES",
-            "severities",
-            defaults.severities,
-        ),
-        retry_seconds: u64_value(
-            "KLAXOND_EMERGENCY_RETRY_SECONDS",
-            "retry_seconds",
-            defaults.retry_seconds,
-        )?,
-        expire_seconds: u64_value(
-            "KLAXOND_EMERGENCY_EXPIRE_SECONDS",
-            "expire_seconds",
-            defaults.expire_seconds,
-        )?,
-        max_attempts: u32::try_from(u64_value(
-            "KLAXOND_EMERGENCY_MAX_ATTEMPTS",
-            "max_attempts",
-            defaults.max_attempts as u64,
-        )?)
-        .unwrap_or(u32::MAX),
-        lease_seconds: u64_value(
-            "KLAXOND_EMERGENCY_LEASE_SECONDS",
-            "lease_seconds",
-            defaults.lease_seconds,
-        )?,
-        telegram_after_attempts: u32::try_from(u64_value(
-            "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
-            "telegram_after_attempts",
-            defaults.telegram_after_attempts as u64,
-        )?)
-        .unwrap_or(u32::MAX),
-        smtp_after_attempts: u32::try_from(u64_value(
-            "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
-            "smtp_after_attempts",
-            defaults.smtp_after_attempts as u64,
-        )?)
-        .unwrap_or(u32::MAX),
-        notify_on_expiry: bool_value(
-            "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY",
-            "notify_on_expiry",
-            defaults.notify_on_expiry,
-        )?,
-        auto_resolve: bool_value(
-            "KLAXOND_EMERGENCY_AUTO_RESOLVE",
-            "auto_resolve",
-            defaults.auto_resolve,
-        )?,
-        exclude_sources: list_value(
+        exclude_sources: env_or_toml_list(
+            emergency,
             "KLAXOND_EMERGENCY_EXCLUDE_SOURCES",
             "exclude_sources",
             defaults.exclude_sources,
         ),
+        fallback_profile,
+        profiles,
     };
-    anyhow::ensure!(
-        (30..=3_600).contains(&cfg.retry_seconds),
-        "emergency.retry_seconds must be in 30..=3600"
-    );
-    anyhow::ensure!(
-        (30..=10_800).contains(&cfg.expire_seconds),
-        "emergency.expire_seconds must be in 30..=10800"
-    );
-    anyhow::ensure!(
-        (1..=50).contains(&cfg.max_attempts),
-        "emergency.max_attempts must be in 1..=50"
-    );
-    anyhow::ensure!(
-        (5..=300).contains(&cfg.lease_seconds),
-        "emergency.lease_seconds must be in 5..=300"
-    );
-    anyhow::ensure!(
-        (1..=cfg.max_attempts).contains(&cfg.telegram_after_attempts),
-        "emergency.telegram_after_attempts must be in 1..=max_attempts"
-    );
-    anyhow::ensure!(
-        (1..=cfg.max_attempts).contains(&cfg.smtp_after_attempts),
-        "emergency.smtp_after_attempts must be in 1..=max_attempts"
-    );
-    anyhow::ensure!(
-        cfg.expire_seconds >= cfg.retry_seconds,
-        "emergency.expire_seconds must be greater than or equal to retry_seconds"
-    );
-    anyhow::ensure!(
-        !cfg.severities.is_empty(),
-        "emergency.severities cannot be empty"
-    );
+    if legacy_profile_env_present() {
+        let fallback = cfg
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == cfg.fallback_profile)
+            .ok_or_else(|| anyhow::anyhow!("emergency fallback profile is missing"))?;
+        overlay_legacy_profile_env(fallback)?;
+    }
+    validate_emergency_config(&mut cfg).map_err(anyhow::Error::msg)?;
     Ok(cfg)
 }
-use crate::util::toml_get;
-use std::collections::HashMap;
+
+fn read_emergency_profile(value: &toml::Value) -> anyhow::Result<EmergencyProfile> {
+    let defaults = EmergencyProfile::legacy_default();
+    let table = value
+        .as_table()
+        .ok_or_else(|| anyhow::anyhow!("emergency profile must be a table"))?;
+    let fallback = |name: &str, default: &EmergencyFallback| EmergencyFallback {
+        enabled: table
+            .get(name)
+            .and_then(|value| value.get("enabled"))
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(default.enabled),
+        after_attempts: table
+            .get(name)
+            .and_then(|value| value.get("after_attempts"))
+            .and_then(toml::Value::as_integer)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or(default.after_attempts),
+    };
+    Ok(EmergencyProfile {
+        id: table_string(table, "id", ""),
+        name: table_string(table, "name", ""),
+        enabled: table_bool(table, "enabled", true),
+        priority: table
+            .get("priority")
+            .and_then(toml::Value::as_integer)
+            .and_then(|value| i32::try_from(value).ok())
+            .unwrap_or(0),
+        severities: table_list(table, "severities"),
+        sources: table_list(table, "sources"),
+        label_match: table
+            .get("match")
+            .and_then(toml::Value::as_table)
+            .map(|matcher| {
+                matcher
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        value.as_str().map(|value| (key.clone(), value.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        retry_seconds: table_u64(table, "retry_seconds", defaults.retry_seconds),
+        expire_seconds: table_u64(table, "expire_seconds", defaults.expire_seconds),
+        max_attempts: table_u32(table, "max_attempts", defaults.max_attempts),
+        lease_seconds: table_u64(table, "lease_seconds", defaults.lease_seconds),
+        telegram: fallback("telegram", &defaults.telegram),
+        smtp: fallback("smtp", &defaults.smtp),
+        notify_on_expiry: table_bool(table, "notify_on_expiry", defaults.notify_on_expiry),
+        auto_resolve: table_bool(table, "auto_resolve", defaults.auto_resolve),
+    })
+}
+
+fn read_legacy_emergency_profile(
+    emergency: Option<&toml::Value>,
+) -> anyhow::Result<EmergencyProfile> {
+    let mut profile = EmergencyProfile::legacy_default();
+    profile.severities = env_or_toml_list(
+        emergency,
+        "KLAXOND_EMERGENCY_SEVERITIES",
+        "severities",
+        profile.severities,
+    );
+    profile.retry_seconds = env_or_toml_u64(
+        emergency,
+        "KLAXOND_EMERGENCY_RETRY_SECONDS",
+        "retry_seconds",
+        profile.retry_seconds,
+    )?;
+    profile.expire_seconds = env_or_toml_u64(
+        emergency,
+        "KLAXOND_EMERGENCY_EXPIRE_SECONDS",
+        "expire_seconds",
+        profile.expire_seconds,
+    )?;
+    profile.max_attempts = env_or_toml_u32(
+        emergency,
+        "KLAXOND_EMERGENCY_MAX_ATTEMPTS",
+        "max_attempts",
+        profile.max_attempts,
+    )?;
+    profile.lease_seconds = env_or_toml_u64(
+        emergency,
+        "KLAXOND_EMERGENCY_LEASE_SECONDS",
+        "lease_seconds",
+        profile.lease_seconds,
+    )?;
+    profile.telegram.after_attempts = env_or_toml_u32(
+        emergency,
+        "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
+        "telegram_after_attempts",
+        profile.telegram.after_attempts,
+    )?;
+    profile.smtp.after_attempts = env_or_toml_u32(
+        emergency,
+        "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
+        "smtp_after_attempts",
+        profile.smtp.after_attempts,
+    )?;
+    profile.notify_on_expiry = env_or_toml_bool(
+        emergency,
+        "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY",
+        "notify_on_expiry",
+        profile.notify_on_expiry,
+    )?;
+    profile.auto_resolve = env_or_toml_bool(
+        emergency,
+        "KLAXOND_EMERGENCY_AUTO_RESOLVE",
+        "auto_resolve",
+        profile.auto_resolve,
+    )?;
+    Ok(profile)
+}
+
+fn overlay_legacy_profile_env(profile: &mut EmergencyProfile) -> anyhow::Result<()> {
+    if let Ok(value) = std::env::var("KLAXOND_EMERGENCY_SEVERITIES") {
+        profile.severities = csv_list(&value);
+    }
+    profile.retry_seconds = env_u64("KLAXOND_EMERGENCY_RETRY_SECONDS", profile.retry_seconds)?;
+    profile.expire_seconds = env_u64("KLAXOND_EMERGENCY_EXPIRE_SECONDS", profile.expire_seconds)?;
+    profile.max_attempts = env_u32("KLAXOND_EMERGENCY_MAX_ATTEMPTS", profile.max_attempts)?;
+    profile.lease_seconds = env_u64("KLAXOND_EMERGENCY_LEASE_SECONDS", profile.lease_seconds)?;
+    profile.telegram.after_attempts = env_u32(
+        "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
+        profile.telegram.after_attempts,
+    )?;
+    profile.smtp.after_attempts = env_u32(
+        "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
+        profile.smtp.after_attempts,
+    )?;
+    profile.notify_on_expiry = env_bool(
+        "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY",
+        profile.notify_on_expiry,
+    )?;
+    profile.auto_resolve = env_bool("KLAXOND_EMERGENCY_AUTO_RESOLVE", profile.auto_resolve)?;
+    Ok(())
+}
+
+fn legacy_profile_env_present() -> bool {
+    [
+        "KLAXOND_EMERGENCY_SEVERITIES",
+        "KLAXOND_EMERGENCY_RETRY_SECONDS",
+        "KLAXOND_EMERGENCY_EXPIRE_SECONDS",
+        "KLAXOND_EMERGENCY_MAX_ATTEMPTS",
+        "KLAXOND_EMERGENCY_LEASE_SECONDS",
+        "KLAXOND_EMERGENCY_TELEGRAM_AFTER_ATTEMPTS",
+        "KLAXOND_EMERGENCY_SMTP_AFTER_ATTEMPTS",
+        "KLAXOND_EMERGENCY_NOTIFY_ON_EXPIRY",
+        "KLAXOND_EMERGENCY_AUTO_RESOLVE",
+    ]
+    .iter()
+    .any(|name| std::env::var_os(name).is_some())
+}
+
+fn env_or_toml_bool(
+    table: Option<&toml::Value>,
+    env: &str,
+    key: &str,
+    fallback: bool,
+) -> anyhow::Result<bool> {
+    if std::env::var_os(env).is_some() {
+        return env_bool(env, fallback);
+    }
+    Ok(table
+        .and_then(|value| value.get(key))
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(fallback))
+}
+
+fn env_or_toml_u64(
+    table: Option<&toml::Value>,
+    env: &str,
+    key: &str,
+    fallback: u64,
+) -> anyhow::Result<u64> {
+    if std::env::var_os(env).is_some() {
+        return env_u64(env, fallback);
+    }
+    Ok(table
+        .and_then(|value| value.get(key))
+        .and_then(toml::Value::as_integer)
+        .and_then(|value| u64::try_from(value).ok())
+        .unwrap_or(fallback))
+}
+
+fn env_or_toml_u32(
+    table: Option<&toml::Value>,
+    env: &str,
+    key: &str,
+    fallback: u32,
+) -> anyhow::Result<u32> {
+    let value = env_or_toml_u64(table, env, key, u64::from(fallback))?;
+    u32::try_from(value).map_err(|_| anyhow::anyhow!("{env} must fit in an unsigned integer"))
+}
+
+fn env_or_toml_list(
+    table: Option<&toml::Value>,
+    env: &str,
+    key: &str,
+    fallback: Vec<String>,
+) -> Vec<String> {
+    std::env::var(env)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| csv_list(&value))
+        .or_else(|| {
+            table
+                .and_then(|value| value.get(key))
+                .and_then(toml::Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(toml::Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+        })
+        .unwrap_or(fallback)
+}
+
+fn env_bool(name: &str, fallback: bool) -> anyhow::Result<bool> {
+    let Ok(value) = std::env::var(name) else {
+        return Ok(fallback);
+    };
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => anyhow::bail!("{name} must be a boolean"),
+    }
+}
+
+fn env_u64(name: &str, fallback: u64) -> anyhow::Result<u64> {
+    match std::env::var(name) {
+        Ok(value) => value
+            .parse::<u64>()
+            .map_err(|_| anyhow::anyhow!("{name} must be an unsigned integer")),
+        Err(_) => Ok(fallback),
+    }
+}
+
+fn env_u32(name: &str, fallback: u32) -> anyhow::Result<u32> {
+    u32::try_from(env_u64(name, u64::from(fallback))?)
+        .map_err(|_| anyhow::anyhow!("{name} must fit in an unsigned integer"))
+}
+
+fn csv_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn table_string(table: &toml::Table, key: &str, fallback: &str) -> String {
+    table
+        .get(key)
+        .and_then(toml::Value::as_str)
+        .unwrap_or(fallback)
+        .to_string()
+}
+
+fn table_bool(table: &toml::Table, key: &str, fallback: bool) -> bool {
+    table
+        .get(key)
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(fallback)
+}
+
+fn table_u64(table: &toml::Table, key: &str, fallback: u64) -> u64 {
+    table
+        .get(key)
+        .and_then(toml::Value::as_integer)
+        .and_then(|value| u64::try_from(value).ok())
+        .unwrap_or(fallback)
+}
+
+fn table_u32(table: &toml::Table, key: &str, fallback: u32) -> u32 {
+    table
+        .get(key)
+        .and_then(toml::Value::as_integer)
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(fallback)
+}
+
+fn table_list(table: &toml::Table, key: &str) -> Vec<String> {
+    table
+        .get(key)
+        .and_then(toml::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 pub(super) fn read_tiers(value: Option<&toml::Value>) -> Option<Vec<Tier>> {
     let arr = value?.as_array()?;

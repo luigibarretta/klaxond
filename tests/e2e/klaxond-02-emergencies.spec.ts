@@ -17,16 +17,25 @@ test("emergency console renders durable receipts and dispatches audited actions"
     enabled: true,
     allow_insecure_public_url: false,
     allow_ntfy_only: false,
-    severities: ["critical"],
-    retry_seconds: 60,
-    expire_seconds: 3600,
-    max_attempts: 50,
-    lease_seconds: 60,
-    telegram_after_attempts: 3,
-    smtp_after_attempts: 5,
-    notify_on_expiry: true,
-    auto_resolve: true,
     exclude_sources: ["api-test"],
+    fallback_profile: "critical-default",
+    profiles: [{
+      id: "critical-default",
+      name: "Critical default",
+      enabled: true,
+      priority: 100,
+      severities: ["critical"],
+      sources: [],
+      match: {},
+      retry_seconds: 60,
+      expire_seconds: 3600,
+      max_attempts: 50,
+      lease_seconds: 60,
+      telegram: { enabled: true, after_attempts: 3 },
+      smtp: { enabled: true, after_attempts: 5 },
+      notify_on_expiry: true,
+      auto_resolve: true,
+    }],
   };
   const incident = () => ({
     receipt_id: "receipt-e2e-1234567890",
@@ -35,6 +44,9 @@ test("emergency console renders durable receipts and dispatches audited actions"
     severity: "critical",
     title: "Production emergency probe",
     payload_json: "{}",
+    policy_id: "critical-default",
+    policy_name: "Critical default",
+    policy_snapshot_json: "{}",
     state,
     created_at: Date.now() / 1000 - 45,
     updated_at: Date.now() / 1000,
@@ -75,6 +87,11 @@ test("emergency console renders durable receipts and dispatches audited actions"
       contentType: "application/json",
       body: JSON.stringify({
         settings,
+        source_of_truth: "ui",
+        known_severities: ["critical", "info", "warning"],
+        known_sources: ["grafana", "api-test"],
+        channel_timeouts: { ntfy: 15, telegram: 8, smtp: 10, lease_margin: 5 },
+        diagnostics: { shadowed_profiles: [], unrouted_severities: ["info", "warning"], equal_priorities: [] },
         managed_fields: {},
         managed_by_environment: false,
         writeable: true,
@@ -94,21 +111,39 @@ test("emergency console renders durable receipts and dispatches audited actions"
   await page.goto("/emergencies");
   await expect(page.locator('[data-tab="emergencies"]')).toBeVisible();
   await expect(page.locator("#tab-emergencies")).toHaveClass(/active/);
-  await expect(page.locator("#emergency-policy")).toHaveText("60s × 50; 60m");
+  await expect(page.locator("#emergency-policy")).toHaveText("1 enabled profile(s)");
   await expect(page.locator("#emergency-active")).toHaveText("1");
   await expect(page.locator("#t-emergencies tbody")).toContainText("Production emergency probe");
   await expect(page.locator('[data-emergency-action="ack"]')).toBeVisible();
 
-  await page.locator("#emergency-policy-editor > summary").click();
-  await page.locator("#em-retry").fill("90");
+  await page.locator("[data-profile-index='0'] [data-profile-field='retry_seconds']").fill("90");
   await page.locator("#emergency-policy-save").click();
-  await expect.poll(() => policyUpdate.retry_seconds).toBe(90);
+  await expect.poll(() => (policyUpdate.profiles as Array<{ retry_seconds: number }>)[0].retry_seconds).toBe(90);
   await expect(page.locator(".toast-success").last()).toContainText("Emergency policy saved");
-  await expect(page.locator("#emergency-policy")).toHaveText("90s × 50; 60m");
+  await expect(page.locator("#emergency-policy")).toHaveText("1 enabled profile(s)");
 
   await page.click('[data-emergency-action="ack"]');
   await expect.poll(() => action).toBe("POST");
   await expect(page.locator("#t-emergencies tbody")).toContainText("acknowledged");
   await expect(page.locator("#emergency-active")).toHaveText("0");
   await expect(page.locator(".toast-success").last()).toBeVisible();
+});
+
+test("emergency profile editor is keyboard operable and reflows at 320 and 390 px", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto("/emergencies");
+  await expect(page.locator("#emergency-policy-editor")).toBeVisible();
+  await expect(page.locator("#emergency-owner")).toBeVisible();
+  await expect(page.locator("#emergency-export")).toHaveAttribute("href", "/api/emergency-config/export");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+  const severityInput = page.locator("#profile-severities-0 input");
+  await severityInput.focus();
+  await severityInput.fill("page");
+  await severityInput.press("Enter");
+  await expect(page.locator("#profile-severities-0 .chip", { hasText: "page" })).toBeVisible();
+  await expect(page.locator("[data-profile-index='0'] [data-profile-timeline]")).toContainText("Real expiry");
+
+  await page.setViewportSize({ width: 390, height: 900 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

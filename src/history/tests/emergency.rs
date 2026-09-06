@@ -8,6 +8,9 @@ fn candidate(receipt: &str, fingerprint: &str, now: f64) -> EmergencyCandidate {
         severity: "critical".into(),
         title: "Host is down".into(),
         payload_json: "{}".into(),
+        policy_id: "critical-default".into(),
+        policy_name: "Critical default".into(),
+        policy_snapshot_json: r#"{"schema_version":1,"profile_id":"critical-default","profile_name":"Critical default","retry_seconds":60,"expire_seconds":3600,"max_attempts":50,"lease_seconds":60,"telegram":{"enabled":true,"after_attempts":3},"smtp":{"enabled":true,"after_attempts":5},"notify_on_expiry":true,"auto_resolve":true}"#.into(),
         now,
         next_retry_at: now + 60.0,
         expires_at: now + 3_600.0,
@@ -26,15 +29,59 @@ fn sqlite_emergency_coalesces_and_survives_restart() {
             .unwrap();
         assert!(first.created);
         let second = store
-            .emergency_register(&candidate("receipt-b", "same-incident", 1_001.0))
+            .emergency_register(&{
+                let mut changed = candidate("receipt-b", "same-incident", 1_001.0);
+                changed.policy_id = "replacement".into();
+                changed.policy_name = "Replacement".into();
+                changed.policy_snapshot_json = changed
+                    .policy_snapshot_json
+                    .replace("\"retry_seconds\":60", "\"retry_seconds\":300");
+                changed
+            })
             .unwrap();
         assert!(!second.created);
         assert_eq!(second.incident.receipt_id, "receipt-a");
+        assert_eq!(second.incident.policy_id, "critical-default");
+        assert_eq!(second.incident.policy_snapshot().unwrap().retry_seconds, 60);
     }
     let reopened = HistoryStore::open(&cfg).unwrap();
     let incident = reopened.emergency_get("receipt-a").unwrap().unwrap();
     assert_eq!(incident.state, "active");
     assert_eq!(reopened.emergencies(Some("active"), 10).unwrap().len(), 1);
+}
+
+#[test]
+fn sqlite_upgrade_materializes_legacy_active_policy_snapshot_once() {
+    let tmp = TempDir::new().unwrap();
+    let store = HistoryStore::open(&sqlite_cfg(tmp.path().join("history.db"), 0)).unwrap();
+    let mut legacy = candidate("legacy", "legacy-incident", 1_000.0);
+    legacy.policy_id.clear();
+    legacy.policy_name.clear();
+    legacy.policy_snapshot_json.clear();
+    store.emergency_register(&legacy).unwrap();
+    assert_eq!(
+        store
+            .emergency_materialize_policy_snapshot(
+                "critical-default",
+                "Critical default",
+                &candidate("unused", "unused", 0.0).policy_snapshot_json,
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .emergency_materialize_policy_snapshot(
+                "different",
+                "Different",
+                &candidate("unused", "unused", 0.0).policy_snapshot_json,
+            )
+            .unwrap(),
+        0
+    );
+    let incident = store.emergency_get("legacy").unwrap().unwrap();
+    assert_eq!(incident.policy_id, "critical-default");
+    assert_eq!(incident.policy_snapshot().unwrap().retry_seconds, 60);
 }
 
 #[test]
@@ -135,7 +182,7 @@ fn sqlite_storage_migration_accepts_pre_emergency_source_schema() {
         .unwrap()
         .execute_batch(
             "DROP TABLE klaxond_emergencies;
-             DELETE FROM klaxond_schema_migrations WHERE version = 6;",
+             DELETE FROM klaxond_schema_migrations WHERE version IN (6,7);",
         )
         .unwrap();
 

@@ -4,6 +4,27 @@ use std::collections::HashMap;
 
 pub const EMERGENCY_ACTIVE: &str = "active";
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmergencyChannelSnapshot {
+    pub enabled: bool,
+    pub after_attempts: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmergencyPolicySnapshot {
+    pub schema_version: u32,
+    pub profile_id: String,
+    pub profile_name: String,
+    pub retry_seconds: u64,
+    pub expire_seconds: u64,
+    pub max_attempts: u32,
+    pub lease_seconds: u64,
+    pub telegram: EmergencyChannelSnapshot,
+    pub smtp: EmergencyChannelSnapshot,
+    pub notify_on_expiry: bool,
+    pub auto_resolve: bool,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EmergencyPayload {
     pub parts: Parts,
@@ -25,6 +46,9 @@ pub struct EmergencyIncident {
     pub severity: String,
     pub title: String,
     pub payload_json: String,
+    pub policy_id: String,
+    pub policy_name: String,
+    pub policy_snapshot_json: String,
     pub state: String,
     pub created_at: f64,
     pub updated_at: f64,
@@ -46,6 +70,10 @@ impl EmergencyIncident {
     pub fn payload(&self) -> serde_json::Result<EmergencyPayload> {
         serde_json::from_str(&self.payload_json)
     }
+
+    pub fn policy_snapshot(&self) -> serde_json::Result<EmergencyPolicySnapshot> {
+        serde_json::from_str(&self.policy_snapshot_json)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +84,9 @@ pub struct EmergencyCandidate {
     pub severity: String,
     pub title: String,
     pub payload_json: String,
+    pub policy_id: String,
+    pub policy_name: String,
+    pub policy_snapshot_json: String,
     pub now: f64,
     pub next_retry_at: f64,
     pub expires_at: f64,
@@ -88,22 +119,25 @@ pub(crate) fn sqlite_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EmergencyI
         severity: row.get(3)?,
         title: row.get(4)?,
         payload_json: row.get(5)?,
-        state: row.get(6)?,
-        created_at: row.get(7)?,
-        updated_at: row.get(8)?,
-        next_retry_at: row.get(9)?,
-        expires_at: row.get(10)?,
-        last_sent_at: row.get(11)?,
-        terminal_at: row.get(12)?,
-        terminal_by: row.get(13)?,
-        attempts: row.get::<_, i64>(14)? as u32,
-        max_attempts: row.get::<_, i64>(15)? as u32,
-        telegram_escalated_at: row.get(16)?,
-        smtp_escalated_at: row.get(17)?,
-        last_error: row.get(18)?,
-        reserved_until: row.get(19)?,
-        reservation_token: row.get(20)?,
+        policy_id: row.get(6)?,
+        policy_name: row.get(7)?,
+        policy_snapshot_json: row.get(8)?,
+        state: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
+        next_retry_at: row.get(12)?,
+        expires_at: row.get(13)?,
+        last_sent_at: row.get(14)?,
+        terminal_at: row.get(15)?,
+        terminal_by: row.get(16)?,
+        attempts: row.get::<_, i64>(17)? as u32,
+        max_attempts: row.get::<_, i64>(18)? as u32,
+        telegram_escalated_at: row.get(19)?,
+        smtp_escalated_at: row.get(20)?,
+        last_error: row.get(21)?,
+        reserved_until: row.get(22)?,
+        reservation_token: row.get(23)?,
     })
 }
 
-pub(crate) const SELECT_COLUMNS: &str = "receipt_id, fingerprint, source, severity, title, payload_json, state, created_at, updated_at, next_retry_at, expires_at, last_sent_at, terminal_at, terminal_by, attempts, max_attempts, telegram_escalated_at, smtp_escalated_at, last_error, reserved_until, reservation_token";
+pub(crate) const SELECT_COLUMNS: &str = "receipt_id, fingerprint, source, severity, title, payload_json, policy_id, policy_name, policy_snapshot_json, state, created_at, updated_at, next_retry_at, expires_at, last_sent_at, terminal_at, terminal_by, attempts, max_attempts, telegram_escalated_at, smtp_escalated_at, last_error, reserved_until, reservation_token";
