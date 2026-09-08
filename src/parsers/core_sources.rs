@@ -153,7 +153,6 @@ fn healthcheck_body(payload: &Value, is_resolved: bool) -> String {
     for (label, key) in [
         ("Last ping", "last_ping"),
         ("Observed at", "observed_at"),
-        ("Code", "code"),
         ("Tags", "tags"),
     ] {
         let value = payload.get(key).map(scalar_to_string).unwrap_or_default();

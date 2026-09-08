@@ -188,8 +188,9 @@ fn healthchecks_resolved_parser_matches_python_golden() {
     assert_eq!(parts.title, "✅ HC UP: backup-deadman");
     assert_eq!(
         parts.body,
-        "Status: RESOLVED\nLast ping: 2026-06-29T12:00:00Z\nObserved at: 2026-06-29T14:00:00Z\nCode: 200\nTags: host=nas-01 service=backup"
+        "Status: RESOLVED\nLast ping: 2026-06-29T12:00:00Z\nObserved at: 2026-06-29T14:00:00Z\nTags: host=nas-01 service=backup"
     );
+    assert!(!parts.body.contains("200"));
     assert_eq!(parts.tags, vec!["white_check_mark", "healthchecks"]);
     assert_eq!(parts.priority, "low");
     assert_eq!(
@@ -197,6 +198,23 @@ fn healthchecks_resolved_parser_matches_python_golden() {
         ["view", "📊 Open in HC", "https://hc.example/check"]
     );
     assert!(parts.skip_snooze);
+}
+
+#[test]
+fn healthchecks_code_is_identity_only_and_never_rendered() {
+    let (_tmp, cfg) = cfg();
+    let opaque_code = "private-healthchecks-routing-code";
+    let payload = json!({
+        "check": "backup-deadman",
+        "status": "down",
+        "code": opaque_code,
+        "observed_at": "2026-09-08T12:00:00Z"
+    });
+
+    let parts = parse_healthchecks_payload(&payload, "critical", &cfg);
+
+    assert!(!parts.body.contains(opaque_code));
+    assert!(!parts.body.contains("Code:"));
 }
 
 #[test]

@@ -1,5 +1,10 @@
 # Klaxond — CHANGELOG
 
+## 0.20.3 — 2026-09-08
+
+- Keep the Healthchecks routing code available only to the one-way incident
+  identity derivation and never render it in notification bodies or previews.
+
 ## 0.20.2 — 2026-09-08
 
 - Treat Healthchecks `UP`, `OK` and `resolved` callbacks as producer recovery
