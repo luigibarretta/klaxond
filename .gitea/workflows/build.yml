@@ -140,16 +140,20 @@ jobs:
             npm run release:check
           fi
 
+      - name: Check release pipeline dependency contract
+        run: bash scripts/check-release-pipeline.sh
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Test browser workflows
         run: npm run test:e2e
 
-  publish-main:
+  publish-immutable:
     needs: check
     if: >-
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     runs-on: docker
     timeout-minutes: 30
@@ -214,7 +218,10 @@ jobs:
           echo "${{ steps.meta.outputs.tags }}"
 
   promote-release:
-    needs: check
+    # The tag workflow must build/publish its own exact SHA after checks. A
+    # separate main-branch run can be queued behind other work and therefore
+    # is not a valid release dependency.
+    needs: [check, publish-immutable]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: deploy
     timeout-minutes: 15
