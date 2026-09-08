@@ -85,7 +85,10 @@ mode. `blackstart` has a dedicated `/blackstart/{severity}` route so its token i
 not confused with the generic `/webhook/{severity}` (`grafana`) identity.
 GitHub issue watchers use `/github/{severity}` and their own
 `KLAXOND_INGEST_SECRET_GITHUB`; GitHub account tokens belong only in the watcher
-and must never be supplied to Klaxond. Never
+and must never be supplied to Klaxond. Revaulter approval producers use
+`/revaulter/{severity}`, a dedicated `KLAXOND_INGEST_SECRET_REVAULTER`, and
+`KLAXOND_SOURCE_URL_REVAULTER` for the safe view action; key material must never
+enter any notification field. Never
 put `.env`, exported settings bundles or `/data` backups in source control.
 
 The public legal pages and health endpoint intentionally remain reachable; the

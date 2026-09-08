@@ -62,6 +62,7 @@ fn ingest_source(path: &str) -> Option<&'static str> {
         ("/pve/", "pve"),
         ("/blackstart/", "blackstart"),
         ("/github/", "github"),
+        ("/revaulter/", "revaulter"),
     ]
     .iter()
     .find_map(|(prefix, source)| path.starts_with(prefix).then_some(*source))
@@ -340,5 +341,11 @@ mod tests {
             common_labels("grafana", &first).get("__klaxond_incident_key"),
             common_labels("grafana", &reordered).get("__klaxond_incident_key")
         );
+    }
+
+    #[test]
+    fn dedicated_revaulter_route_preserves_source_identity() {
+        assert_eq!(ingest_source("/revaulter/warning"), Some("revaulter"));
+        assert_eq!(ingest_source("/webhook/warning"), Some("grafana"));
     }
 }

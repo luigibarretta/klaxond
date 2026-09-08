@@ -90,6 +90,7 @@ fn all_runtime_operations_are_documented_in_openapi() {
         ("post", "/pve/{severity}"),
         ("post", "/blackstart/{severity}"),
         ("post", "/github/{severity}"),
+        ("post", "/revaulter/{severity}"),
         ("get", "/api/auth/login"),
         ("get", "/api/auth/methods"),
         ("post", "/api/auth/local/login"),
@@ -204,6 +205,7 @@ fn all_ingest_operations_document_fail_closed_auth_responses() {
         "/pve/{severity}",
         "/blackstart/{severity}",
         "/github/{severity}",
+        "/revaulter/{severity}",
     ];
 
     for path in paths {

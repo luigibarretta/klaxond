@@ -140,6 +140,38 @@ fn github_issue_comment_parser_keeps_identity_context_and_action() {
 }
 
 #[test]
+fn revaulter_parser_keeps_approval_context_and_safe_action() {
+    let (_tmp, mut cfg) = cfg();
+    cfg.source_urls
+        .insert("revaulter".into(), "https://revaulter.example.test".into());
+    let (severity, revaulter) = parse_source(
+        "revaulter",
+        &json!({
+            "event": "approval_required",
+            "host": "it1-prd-nas-01",
+            "summary": "A protected ZFS key request is waiting for passkey approval."
+        }),
+        "warning",
+        &cfg,
+    );
+    assert_eq!(severity, "warning");
+    assert_eq!(
+        revaulter.title,
+        "⚠️ Revaulter approval required — it1-prd-nas-01"
+    );
+    assert_eq!(
+        revaulter.body,
+        "A protected ZFS key request is waiting for passkey approval."
+    );
+    assert_eq!(
+        revaulter.actions[0],
+        ["view", "Open Revaulter", "https://revaulter.example.test"]
+    );
+    assert_eq!(revaulter.alertname, "revaulter-approval-required");
+    assert!(revaulter.skip_snooze);
+}
+
+#[test]
 fn uptime_kuma_parser_enriches_down_and_recovery_without_leaking_url_secrets() {
     let (_tmp, cfg) = cfg();
     let down_payload = json!({

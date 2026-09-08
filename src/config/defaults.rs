@@ -14,6 +14,7 @@ pub const INGEST_SOURCES: &[&str] = &[
     "pve",
     "blackstart",
     "github",
+    "revaulter",
 ];
 
 pub const DEDUP_SOURCES: &[&str] = &[

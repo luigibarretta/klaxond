@@ -31,6 +31,7 @@ fn ingest_sources_cover_non_deduplicated_routes() {
     assert!(INGEST_SOURCES.contains(&"pve"));
     assert!(INGEST_SOURCES.contains(&"blackstart"));
     assert!(INGEST_SOURCES.contains(&"github"));
+    assert!(INGEST_SOURCES.contains(&"revaulter"));
     assert!(
         DEDUP_SOURCES
             .iter()
@@ -149,6 +150,7 @@ const RUNTIME_COMPOSE_ENV_KEYS: &[&str] = &[
     "KLAXOND_SOURCE_URL_SHELFMARK",
     "KLAXOND_SOURCE_URL_PROWLARR",
     "KLAXOND_SOURCE_URL_DECYPHARR",
+    "KLAXOND_SOURCE_URL_REVAULTER",
     "KLAXOND_PUBLIC_URL",
     "ACK_DEFAULT_TTL_SECONDS",
     "KLAXOND_EMERGENCY_ENABLED",
@@ -180,6 +182,7 @@ const RUNTIME_COMPOSE_ENV_KEYS: &[&str] = &[
     "KLAXOND_INGEST_SECRET_PVE",
     "KLAXOND_INGEST_SECRET_BLACKSTART",
     "KLAXOND_INGEST_SECRET_GITHUB",
+    "KLAXOND_INGEST_SECRET_REVAULTER",
     "PORT",
     "KLAXOND_CONFIG",
     "RENDER_CONFIG_PATH",

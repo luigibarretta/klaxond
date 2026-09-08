@@ -134,6 +134,29 @@ test("GitHub issue replies use their dedicated authenticated source", async ({ r
   ]);
 });
 
+test("Revaulter approval requests carry a safe direct action", async ({ request }) => {
+  const payload = {
+    event: "approval_required",
+    host: "it1-prd-nas-01",
+    summary: "A protected ZFS key request is waiting for passkey approval."
+  };
+
+  const anonymous = await request.post("/revaulter/warning?dry_run=1", { data: payload });
+  expect(anonymous.status()).toBe(401);
+
+  const res = await request.post("/revaulter/warning?dry_run=1", {
+    headers: { Authorization: "Bearer e2e-revaulter-secret" },
+    data: payload
+  });
+  await expect(res).toBeOK();
+  const body = await res.json();
+  expect(body).toMatchObject({ dry_run: true, source: "revaulter", severity: "warning" });
+  expect(body.parsed.title).toBe("⚠️ Revaulter approval required — it1-prd-nas-01");
+  expect(body.parsed.actions).toEqual([
+    ["view", "Open Revaulter", "https://revaulter.example.test"]
+  ]);
+});
+
 test("inhibition rule simulator reports source and suppression matches", async ({ request }) => {
   const source = await request.post("/api/inhibition-rules/test", {
     data: {

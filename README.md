@@ -201,6 +201,7 @@ complete route list, schemas, auth requirements and response contracts.
 | `POST` | `/beszel/<severity>` | Beszel UI webhook channel |
 | `POST` | `/uptime-kuma/<severity>` | Uptime Kuma webhook; heartbeat state overrides recovery severity |
 | `POST` | `/github/<severity>` | Normalized GitHub issue-comment events |
+| `POST` | `/revaulter/<severity>` | Protected-key approval requests with a configured Revaulter action |
 
 `<severity>` is one of `info`, `warning`, `critical`.
 
@@ -547,7 +548,7 @@ UI-saved values at runtime.
 | `TELEGRAM_CHAT_ID` / `TELEGRAM_BOT_TOKEN` / `TELEGRAM_API_BASE` | `[telegram].*` |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_STARTTLS` / `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_FROM` / `SMTP_TO` | `[smtp].*` |
 | `GRAFANA_BASE` / `GRAFANA_RENDER_BASE` / `GRAFANA_RENDER_TOKEN` / `RENDER_IMAGE_TTL` | `[render].*` |
-| `KLAXOND_SOURCE_URL_<SOURCE>` | `[render.source_urls].<source>`; optional action-button roots for Uptime Kuma, Healthchecks, WUD, PVE, Shelfmark, Prowlarr and Decypharr |
+| `KLAXOND_SOURCE_URL_<SOURCE>` | `[render.source_urls].<source>`; optional action-button roots for Uptime Kuma, Healthchecks, WUD, PVE, Shelfmark, Prowlarr, Decypharr and Revaulter |
 | `KLAXOND_PUBLIC_URL` | `[server].public_url` |
 | `ACK_DEFAULT_TTL_SECONDS` | `[acks].default_ttl_seconds` |
 | `KLAXOND_EMERGENCY_*` | `[emergency]`; production preflight requires HTTPS, publish tokens, fallback and a safe lease |

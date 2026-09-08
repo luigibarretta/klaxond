@@ -107,6 +107,7 @@ fn load_render(paths: &Paths, toml: &toml::Value) -> Result<RenderRuntime> {
         ("shelfmark", "KLAXOND_SOURCE_URL_SHELFMARK"),
         ("prowlarr", "KLAXOND_SOURCE_URL_PROWLARR"),
         ("decypharr", "KLAXOND_SOURCE_URL_DECYPHARR"),
+        ("revaulter", "KLAXOND_SOURCE_URL_REVAULTER"),
     ] {
         let value = env_string(env);
         if !value.trim().is_empty() {

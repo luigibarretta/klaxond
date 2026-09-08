@@ -32,5 +32,7 @@ KLAXOND_HISTORY_BACKEND="sqlite" \
 KLAXOND_INGEST_SECRET_GRAFANA="e2e-secret" \
 KLAXOND_INGEST_SECRET_BLACKSTART="e2e-blackstart-secret" \
 KLAXOND_INGEST_SECRET_GITHUB="e2e-github-secret" \
+KLAXOND_INGEST_SECRET_REVAULTER="e2e-revaulter-secret" \
+KLAXOND_SOURCE_URL_REVAULTER="https://revaulter.example.test" \
 NTFY_URL="http://127.0.0.1:9" \
 cargo run --quiet

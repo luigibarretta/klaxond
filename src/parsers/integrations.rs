@@ -1,9 +1,11 @@
 mod decypharr;
 mod prowlarr;
+mod revaulter;
 mod wud;
 
 pub use decypharr::{decypharr_severity, parse_decypharr_payload};
 pub use prowlarr::{parse_prowlarr_payload, prowlarr_severity};
+pub use revaulter::parse_revaulter_payload;
 pub use wud::parse_wud_payload;
 
 use super::{EmptyStrExt, Parts, action, scalar_to_string};

@@ -1,5 +1,12 @@
 # Klaxond — CHANGELOG
 
+## 0.20.1 — 2026-09-08
+
+- Add a dedicated authenticated Revaulter approval source with bounded,
+  non-secret event rendering and a configurable `Open Revaulter` action.
+- Keep protected-key material out of notification fields while preserving a
+  distinct source identity for routing and ACK/emergency policy matching.
+
 ## 0.20.0 — 2026-09-07
 
 - Replace the single CSV emergency policy with ordered, stable ACK/emergency

@@ -21,6 +21,7 @@ pub fn normalize_labels(source: &str, payload: &Value) -> Labels {
         "decypharr" => normalize_decypharr_labels(payload, &mut out),
         "pve" => normalize_pve_labels(payload, &mut out),
         "github" => normalize_github_labels(payload, &mut out),
+        "revaulter" => normalize_revaulter_labels(payload, &mut out),
         _ => {}
     }
     out
@@ -229,6 +230,19 @@ fn normalize_github_labels(payload: &Value, out: &mut Labels) {
     }
     out.insert("alertname".into(), "github-issue-comment".into());
     out.insert("job".into(), "github".into());
+}
+
+fn normalize_revaulter_labels(payload: &Value, out: &mut Labels) {
+    let host = json_get_str(payload, "host").trim();
+    if !host.is_empty() {
+        out.insert("host".into(), host.into());
+    }
+    let event = json_get_str(payload, "event").trim();
+    if !event.is_empty() {
+        out.insert("event".into(), event.into());
+    }
+    out.insert("alertname".into(), "revaulter-approval-required".into());
+    out.insert("job".into(), "revaulter".into());
 }
 
 fn is_resolved_status(payload: &Value, values: &[&str]) -> bool {

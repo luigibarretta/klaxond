@@ -114,6 +114,10 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
         "KLAXOND_SOURCE_URL_DECYPHARR",
         "TOML [render.source_urls].decypharr",
     ),
+    (
+        "KLAXOND_SOURCE_URL_REVAULTER",
+        "TOML [render.source_urls].revaulter",
+    ),
     ("KLAXOND_PUBLIC_URL", "TOML [server].public_url"),
     ("ACK_DEFAULT_TTL_SECONDS", "TOML [acks].default_ttl_seconds"),
     ("AUTH_SESSION_SECRET", "TOML/JSON auth.session_secret"),
@@ -170,6 +174,10 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
     (
         "KLAXOND_INGEST_SECRET_GITHUB",
         "TOML [ingest.secrets].github",
+    ),
+    (
+        "KLAXOND_INGEST_SECRET_REVAULTER",
+        "TOML [ingest.secrets].revaulter",
     ),
     ("PORT", "TOML [server].port"),
     ("RENDER_CONFIG_PATH", "TOML [paths].render_config"),
@@ -339,7 +347,7 @@ fn split_frontend_proxy_template_covers_backend_routes() {
         "proxy_set_header X-Forwarded-Host $klaxond_forwarded_host",
         "absolute_redirect off",
         "location ~ ^/api/",
-        "location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve|blackstart|github)(/|$)",
+        "location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve|blackstart|github|revaulter)(/|$)",
         "location ~ ^/img/",
         "location ~ ^/(swagger|api/docs|api/swagger|api/swagger-ui)(/|$)",
         "location = /ui/meta.js",
