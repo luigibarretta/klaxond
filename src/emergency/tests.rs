@@ -78,6 +78,35 @@ fn alertmanager_incident_key_is_stable_across_group_expansion_and_recovery() {
     );
 }
 
+#[test]
+fn healthchecks_incident_key_is_stable_across_mutable_tags_and_recovery() {
+    let mut firing = test_parts("🚨 HC DOWN: semaphore-dr-restore-test");
+    firing.alertname = "semaphore-dr-restore-test".into();
+    let mut resolved = test_parts("✅ HC UP: semaphore-dr-restore-test");
+    resolved.alertname = firing.alertname.clone();
+    let down = HashMap::from([
+        (
+            "__klaxond_incident_key".into(),
+            "healthchecks-check:4f8f9af923005faa2824a1fd786a71cbaae2fda125933a23210aaaa5bf579893"
+                .into(),
+        ),
+        ("host".into(), "it1-prd-dev-01".into()),
+    ]);
+    let up = HashMap::from([
+        (
+            "__klaxond_incident_key".into(),
+            "healthchecks-check:4f8f9af923005faa2824a1fd786a71cbaae2fda125933a23210aaaa5bf579893"
+                .into(),
+        ),
+        ("service".into(), "semaphore".into()),
+    ]);
+
+    assert_eq!(
+        fingerprint("healthchecks", &firing, &down),
+        fingerprint("healthchecks", &resolved, &up)
+    );
+}
+
 fn test_parts(title: &str) -> Parts {
     Parts {
         title: title.into(),

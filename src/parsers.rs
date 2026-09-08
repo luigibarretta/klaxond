@@ -81,10 +81,13 @@ pub fn parse_source(
             severity.to_string(),
             parse_beszel_payload(payload, severity, cfg),
         ),
-        "healthchecks" => (
-            severity.to_string(),
-            parse_healthchecks_payload(payload, severity, cfg),
-        ),
+        "healthchecks" => {
+            let delivery_severity = healthchecks_delivery_severity(payload, severity);
+            (
+                delivery_severity,
+                parse_healthchecks_payload(payload, severity, cfg),
+            )
+        }
         "uptime-kuma" => parse_uptime_kuma_payload(payload, severity, cfg),
         "wud" => (
             severity.to_string(),
@@ -143,6 +146,23 @@ fn grafana_delivery_severity(payload: &Value, fallback: &str) -> String {
     }
 }
 
+fn healthchecks_delivery_severity(payload: &Value, fallback: &str) -> String {
+    if payload
+        .get("status")
+        .and_then(Value::as_str)
+        .is_some_and(|status| {
+            matches!(
+                status.trim().to_ascii_lowercase().as_str(),
+                "up" | "ok" | "resolved"
+            )
+        })
+    {
+        "resolved".into()
+    } else {
+        fallback.to_string()
+    }
+}
+
 pub fn scalar_to_string(v: &Value) -> String {
     match v {
         Value::Null => String::new(),
@@ -192,7 +212,7 @@ fn capitalize(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::grafana_delivery_severity;
+    use super::{grafana_delivery_severity, healthchecks_delivery_severity, normalize_labels};
     use serde_json::json;
 
     #[test]
@@ -211,5 +231,41 @@ mod tests {
     fn grafana_recovery_status_is_case_insensitive() {
         let payload = json!({"status": " RESOLVED "});
         assert_eq!(grafana_delivery_severity(&payload, "warning"), "resolved");
+    }
+
+    #[test]
+    fn healthchecks_recovery_overrides_the_route_severity() {
+        for status in ["up", "OK", " Resolved "] {
+            assert_eq!(
+                healthchecks_delivery_severity(&json!({"status": status}), "critical"),
+                "resolved"
+            );
+        }
+    }
+
+    #[test]
+    fn healthchecks_down_keeps_the_route_severity() {
+        assert_eq!(
+            healthchecks_delivery_severity(&json!({"status": "down"}), "critical"),
+            "critical"
+        );
+    }
+
+    #[test]
+    fn healthchecks_incident_identity_is_stable_but_does_not_store_the_code() {
+        let code = "966fc14f3c8a4b64ae6d5529f95ee56d";
+        let down = normalize_labels(
+            "healthchecks",
+            &json!({"check": "backup", "code": code, "status": "down"}),
+        );
+        let up = normalize_labels(
+            "healthchecks",
+            &json!({"check": "backup", "code": code, "status": "up"}),
+        );
+        let incident_key = down.get("__klaxond_incident_key").unwrap();
+
+        assert_eq!(Some(incident_key), up.get("__klaxond_incident_key"));
+        assert!(!incident_key.contains(code));
+        assert_eq!(up.get("status").map(String::as_str), Some("resolved"));
     }
 }

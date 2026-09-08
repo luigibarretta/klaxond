@@ -1,5 +1,14 @@
 # Klaxond — CHANGELOG
 
+## 0.20.2 — 2026-09-08
+
+- Treat Healthchecks `UP`, `OK` and `resolved` callbacks as producer recovery
+  control signals even when they arrive through the configured info endpoint.
+- Correlate Healthchecks emergency receipts with a one-way digest of the
+  immutable check code,
+  falling back to the check name, so mutable tags or rendered titles cannot
+  leave retries active after recovery; preserve legacy receipt reconciliation.
+
 ## 0.20.1 — 2026-09-08
 
 - Add a dedicated authenticated Revaulter approval source with bounded,

@@ -1,6 +1,7 @@
 use super::{EmptyStrExt, first_non_empty, scalar_to_string};
 use crate::util::json_get_str;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 type Labels = HashMap<String, String>;
@@ -75,7 +76,31 @@ fn normalize_healthchecks_labels(payload: &Value, out: &mut Labels) {
         .or_else(|| payload.get("name").map(scalar_to_string))
         .unwrap_or_default();
     if !check.is_empty() {
-        out.insert("alertname".into(), check);
+        out.insert("alertname".into(), check.clone());
+    }
+    let code = payload
+        .get("code")
+        .map(scalar_to_string)
+        .unwrap_or_default();
+    let incident_identity = if code.trim().is_empty() {
+        &check
+    } else {
+        &code
+    };
+    if !incident_identity.trim().is_empty() {
+        // Healthchecks sends DOWN and UP through different severity endpoints.
+        // Bind both callbacks to a digest of the immutable check code when
+        // available (or the check name for portable payloads) so recovery
+        // neither stores the ping credential nor depends on mutable labels.
+        out.insert(
+            "__klaxond_incident_key".into(),
+            format!(
+                "healthchecks-check:{}",
+                hex::encode(Sha256::digest(
+                    incident_identity.trim().to_ascii_lowercase().as_bytes()
+                ))
+            ),
+        );
     }
     if let Some(tags) = payload.get("tags").and_then(|v| v.as_str()) {
         for tok in tags.split_whitespace() {
