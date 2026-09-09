@@ -1,5 +1,18 @@
 # Klaxond — CHANGELOG
 
+## 0.20.4 — 2026-09-09
+
+- Build the flow diagram from the active ingest, inhibition, noise-control,
+  emergency and delivery-channel configuration, with accessible zoom/pan and
+  view controls that no longer trigger false unsaved-change warnings.
+- Improve inhibition, delivery, emergency and setup workflows across desktop
+  and mobile layouts, including a wider match editor, clearer completion
+  states, serialized history size and keyboard-accessible delivery details.
+- Persist stable emergency receipt correlation in SQLite and PostgreSQL so an
+  active incident can be acknowledged safely from its matching delivery row.
+- Verify the operational UI in Chromium, Firefox and WebKit at desktop and
+  mobile viewports, including responsive overflow and touch-target checks.
+
 ## 0.20.3 — 2026-09-08
 
 - Keep the Healthchecks routing code available only to the one-way incident
