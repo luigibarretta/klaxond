@@ -1,5 +1,13 @@
 # Klaxond — CHANGELOG
 
+## 0.20.5 — 2026-09-09
+
+- Add operator-defined JSON ingest sources with one-time secrets, portable
+  configuration and full participation in routing, flow and noise-control
+  policies while preserving every built-in source contract.
+- Keep every expanded sidebar icon and label on the same left-hand grid across
+  all navigation groups; only the intentionally collapsed icon rail is centered.
+
 ## 0.20.4 — 2026-09-09
 
 - Build the flow diagram from the active ingest, inhibition, noise-control,

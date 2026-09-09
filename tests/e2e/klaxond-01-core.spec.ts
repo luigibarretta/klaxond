@@ -52,7 +52,25 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator('[data-language-option="it"]')).toBeVisible();
   await expect(page.locator('[data-theme-mode-option="system"]')).toBeVisible();
   await expect(page.locator("#sidebar-user-card")).toBeVisible();
-  await expect(page.locator('[data-tab="status"]')).toHaveCSS("justify-content", "flex-start");
+  const expandedTabs = page.locator(".sidebar nav.tabs .tab:visible");
+  await expect(expandedTabs).not.toHaveCount(0);
+  const expandedAlignment = await expandedTabs.evaluateAll(tabs => tabs.map(tab => {
+    const icon = tab.querySelector(".tab-icon");
+    const label = tab.querySelector(".tab-label");
+    return {
+      tab: tab.getAttribute("data-tab"),
+      justifyContent: getComputedStyle(tab).justifyContent,
+      iconLeft: icon?.getBoundingClientRect().left,
+      labelLeft: label?.getBoundingClientRect().left,
+    };
+  }));
+  const expectedIconLeft = expandedAlignment[0].iconLeft;
+  const expectedLabelLeft = expandedAlignment[0].labelLeft;
+  for (const item of expandedAlignment) {
+    expect(item.justifyContent, `${item.tab} should be left aligned`).toBe("flex-start");
+    expect(item.iconLeft, `${item.tab} icon alignment`).toBeCloseTo(expectedIconLeft, 0);
+    expect(item.labelLeft, `${item.tab} label alignment`).toBeCloseTo(expectedLabelLeft, 0);
+  }
   await page.evaluate(() => {
     const w = window as unknown as {
       setTabBadge: (tabId: string, count: number, kind?: string) => void;
