@@ -78,6 +78,7 @@ function _wireDirtyTracking() {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
       if (t.closest(".table-pager")) return;
+      if (t.closest("[data-dirty-ignore]")) return;
       // Skip search/filter fields — those aren't edits
       if (t.type === "search" || t.id === "deliv-filter" || t.id === "inhib-test-labels" || t.id === "emergency-filter") return;
       markTabDirty(tabId, true);
@@ -86,9 +87,20 @@ function _wireDirtyTracking() {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
       if (t.closest(".table-pager")) return;
+      if (t.closest("[data-dirty-ignore]")) return;
       if (t.id === "deliv-show-suppressed" || t.id === "inhib-test-source" || t.id === "emergency-filter") return;
       markTabDirty(tabId, true);
     });
+  });
+}
+
+function _wireResponsiveTables() {
+  document.querySelectorAll("table").forEach(table => {
+    if (table.closest(".table-scroll") || table.closest(".shortcut-help-inner")) return;
+    const wrapper = document.createElement("div");
+    wrapper.className = "table-scroll";
+    table.parentNode.insertBefore(wrapper, table);
+    wrapper.appendChild(table);
   });
 }
 
@@ -207,6 +219,7 @@ document.addEventListener("keydown", e => {
 export function startApp() {
   window.activateTab = activateTabWithDirtyGuard;
   syncTabFromPath({ replace: true });
+  _wireResponsiveTables();
   _wireDirtyTracking();
   refreshAll();
   setInterval(() => {

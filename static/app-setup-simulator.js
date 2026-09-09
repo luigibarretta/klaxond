@@ -104,10 +104,11 @@ async function saveHistoryConfig() {
 
 function statusBadge(status) {
   const label = status || "info";
-  const cls = label === "ok" ? "info" : label === "error" ? "error" : "warn";
+  const cls = label === "ok" ? "success" : label === "error" ? "error" : "warn";
+  const glyph = label === "ok" ? "✓" : label === "error" ? "!" : "•";
   const key = `setup.status.${label}`;
   const translated = tr(key);
-  return `<span class="log-level ${cls}">${escapeHtml(translated === key ? label : translated)}</span>`;
+  return `<span class="log-level setup-status-badge ${cls}"><span aria-hidden="true">${glyph}</span> ${escapeHtml(translated === key ? label : translated)}</span>`;
 }
 
 function renderSetupChecklist(payload) {
@@ -137,7 +138,7 @@ function renderSetupChecklist(payload) {
   const required = items.filter(item => item.required !== false);
   const optional = items.filter(item => item.required === false);
   const renderItems = (group, isOptional) => group.map((item, index) => `
-    <div class="setup-item">
+    <div class="setup-item is-${escapeHtml(item.status || "info")}">
       ${isOptional
         ? `<div class="setup-step-label">${escapeHtml(tr("setup.recommended_badge"))}</div>`
         : `<div class="setup-step-number" aria-hidden="true">${index + 1}</div>`}

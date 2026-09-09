@@ -164,6 +164,7 @@ pub async fn deliver(
             ok: outcome.ok,
             channel: &outcome.channel,
             started_at: started,
+            emergency_receipt_id: emergency_receipt.as_deref(),
         },
     );
     (outcome.ok, outcome.channel)

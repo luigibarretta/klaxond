@@ -1,7 +1,8 @@
 import {
   $, apiFetch, confirmDialog, escapeHtml, markTabDirty, notifyError, notifySuccess,
-  notifyValidationError, setInlineStatus, tr,
+  notifyValidationError, onReady, setInlineStatus, tr,
 } from "./app.js";
+import { acknowledgeEmergencyReceipt } from "./app-emergency-actions.js";
 import { setTabBadge } from "./app-status.js";
 
 let incidents = [];
@@ -35,13 +36,13 @@ function renderRows() {
     const escalation = [item.telegram_escalated_at ? "TG" : "", item.smtp_escalated_at ? "SMTP" : ""].filter(Boolean).join("+");
     const policy = item.policy_name || item.policy_id || tr("emergency.legacy_policy");
     return `<tr>
-      <td title="${escapeHtml(item.receipt_id)}">${escapeHtml(when(item.created_at))}<br><code>${escapeHtml(item.receipt_id.slice(0, 10))}</code></td>
-      <td><span class="badge sev-${escapeHtml(item.state)}">${escapeHtml(item.state)}</span></td>
-      <td>${escapeHtml(item.title)}<br><small>${escapeHtml(policy)}</small>${item.last_error ? `<br><small class="ch-suppressed">${escapeHtml(item.last_error)}</small>` : ""}</td>
-      <td>${escapeHtml(item.source)}<br><small>${escapeHtml(item.severity)}</small></td>
-      <td>${Number(item.attempts)}/${Number(item.max_attempts)}${escalation ? `<br><small>${escalation}</small>` : ""}</td>
-      <td>${active ? `${escapeHtml(remaining(item.next_retry_at))}<br><small>${escapeHtml(tr("emergency.expires"))}: ${escapeHtml(remaining(item.expires_at))}</small>` : escapeHtml(when(item.terminal_at))}</td>
-      <td>${buttons}</td>
+      <td data-label="${escapeHtml(tr("common.time"))}" title="${escapeHtml(item.receipt_id)}">${escapeHtml(when(item.created_at))}<br><code>${escapeHtml(item.receipt_id.slice(0, 10))}</code></td>
+      <td data-label="${escapeHtml(tr("common.status"))}"><span class="badge sev-${escapeHtml(item.state)}">${escapeHtml(item.state)}</span></td>
+      <td data-label="${escapeHtml(tr("common.title"))}">${escapeHtml(item.title)}<br><small>${escapeHtml(policy)}</small>${item.last_error ? `<br><small class="ch-suppressed">${escapeHtml(item.last_error)}</small>` : ""}</td>
+      <td data-label="${escapeHtml(tr("common.source"))}">${escapeHtml(item.source)}<br><small>${escapeHtml(item.severity)}</small></td>
+      <td data-label="${escapeHtml(tr("emergency.attempts"))}">${Number(item.attempts)}/${Number(item.max_attempts)}${escalation ? `<br><small>${escalation}</small>` : ""}</td>
+      <td data-label="${escapeHtml(tr("emergency.deadline"))}">${active ? `${escapeHtml(remaining(item.next_retry_at))}<br><small>${escapeHtml(tr("emergency.expires"))}: ${escapeHtml(remaining(item.expires_at))}</small>` : escapeHtml(when(item.terminal_at))}</td>
+      <td data-label="${escapeHtml(tr("common.actions"))}">${buttons}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="7" class="muted">${escapeHtml(tr("emergency.none"))}</td></tr>`;
   body.querySelectorAll("button[data-emergency-action]").forEach(button => button.addEventListener("click", () => transition(button)));
@@ -54,6 +55,12 @@ function renderRows() {
 async function transition(button) {
   const action = button.dataset.emergencyAction;
   const id = button.dataset.id;
+  if (action === "ack") {
+    button.disabled = true;
+    if (await acknowledgeEmergencyReceipt(id)) await loadEmergencies({ force: true });
+    else button.disabled = false;
+    return;
+  }
   if (action === "cancel" && !await confirmDialog(tr("emergency.cancel_confirm"), {
     title: tr("emergency.cancel"), confirmLabel: tr("emergency.cancel"), danger: true,
   })) return;
@@ -68,6 +75,20 @@ async function transition(button) {
     button.disabled = false;
   }
 }
+
+function prioritizeEmergencyHistory() {
+  const editor = $("#emergency-policy-editor");
+  const tableWrap = $("#t-emergencies")?.closest(".table-scroll");
+  const toolbar = tableWrap?.previousElementSibling;
+  const heading = toolbar?.previousElementSibling;
+  if (!editor || !tableWrap || !toolbar || !heading) return;
+  editor.open = false;
+  editor.parentNode.insertBefore(heading, editor);
+  editor.parentNode.insertBefore(toolbar, editor);
+  editor.parentNode.insertBefore(tableWrap, editor);
+}
+
+onReady(prioritizeEmergencyHistory);
 
 function profileManaged(profileId) {
   return Object.keys(policyConfig.managed_fields || {}).some(field => field.startsWith(`profiles.${profileId}.`));

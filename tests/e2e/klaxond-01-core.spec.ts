@@ -132,6 +132,7 @@ test("setup separates release blockers from recommended hardening", async ({ pag
   await expect(page.locator('[data-setup-group="required"] .setup-step-number')).toHaveCount(6);
   await expect(page.locator('[data-setup-group="recommended"] .setup-step-label')).toHaveCount(2);
   await expect(page.locator('[data-setup-group="required"] .log-level').first()).not.toHaveText(/^(ok|warn|error|partial|info)$/);
+  await expect(page.locator('.setup-item.is-ok .setup-status-badge.success').first()).toContainText(/Complete|Complet/);
   await expect(page.locator("#setup-next")).toBeVisible();
 });
 
@@ -202,6 +203,20 @@ test("direct flow refresh initializes without frontend TDZ errors", async ({ pag
   await expect(page).toHaveURL(/\/flow$/);
   await expect(page.locator("#tab-flow")).toHaveClass(/active/);
   await expect(page.locator(".toast-error")).toHaveCount(0);
+  await expect(page.locator("#flow-source")).toContainText("SRC_GITHUB");
+  await expect(page.locator("#flow-source")).toContainText("SRC_BLACKSTART");
+  await expect(page.locator("#flow-source")).toContainText("SRC_REVAULTER");
+  await expect(page.locator("#flow-source")).not.toContainText("SRC_DECYPHARR");
+  await expect(page.locator("#flow-config-summary")).toContainText("Enabled sources: 4");
+
+  await page.click("#flow-zoom-in");
+  await expect(page.locator("#flow-zoom-level")).toHaveText("125%");
+  await page.click("#flow-animate");
+  await page.click("#flow-autorefresh");
+  await page.click("#flow-show-source");
+  await page.click('[data-tab="inhibitions"]');
+  await expect(page).toHaveURL(/\/inhibitions$/);
+  await expect(page.locator(".app-dialog-overlay")).toHaveCount(0);
 
   await page.evaluate(() => notifyError("e2e-client-error", new Error("ClientSideProbe")));
   await expect(page.locator(".toast-error").last()).toContainText("e2e-client-error");
@@ -210,6 +225,44 @@ test("direct flow refresh initializes without frontend TDZ errors", async ({ pag
     const payload = await res.json();
     return payload.entries.some((entry: any) => entry.message.includes("frontend error"));
   }).toBe(true);
+});
+
+test("flow topology follows enabled sources and configured delivery tiers", async ({ page }) => {
+  await page.route("**/api/ingest-auth", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ sources: { github: { configured: true }, grafana: { configured: false } } }),
+  }));
+  await page.route("**/api/cascade-config", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ runtime_enabled: true, tiers: [{ name: "smtp", timeout_seconds: 10 }] }),
+  }));
+  await page.route("**/api/channel-config", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ ntfy: {}, telegram: {}, smtp: { host: "mail.example.test", port: 587 } }),
+  }));
+  await page.route("**/api/ntfy-topics", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ topics: [] }),
+  }));
+
+  await page.goto("/flow");
+  await expect(page.locator("#flow-source")).toContainText("SRC_GITHUB");
+  await expect(page.locator("#flow-source")).not.toContainText("SRC_GRAFANA");
+  await expect(page.locator("#flow-source")).toContainText(/CAS -->\|tier 1\| SMTP/);
+  await expect(page.locator("#flow-source")).not.toContainText("NTFY");
+  await expect(page.locator("#flow-config-summary")).toContainText("Enabled sources: 1");
+});
+
+test("delivery view controls never create unsaved configuration state", async ({ page }) => {
+  await page.goto("/deliveries");
+  await page.click("#deliv-show-suppressed");
+  await page.click('[data-tab="status"]');
+  await expect(page).toHaveURL(/\/status$/);
+  await expect(page.locator(".app-dialog-overlay")).toHaveCount(0);
 });
 
 test("footer version reveals a major-version easter egg", async ({ page, request }) => {

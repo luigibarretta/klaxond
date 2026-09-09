@@ -215,9 +215,7 @@ input.input-warning {
 .stat-card .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
 .stat-card .stat-value { font-size: 1.8em; font-weight: 600; color: var(--text); line-height: 1.1; }
 .stat-card .stat-sub { font-size: 12px; }
-/* Tables sit in a scroll container so they don't overflow body on narrow
- * viewports. Each <table> gets `display:block` below the breakpoint to
- * become its own scrollable region. */
+/* Keep native table layout so headers and rows share one column algorithm. */
 .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 table {
   width: 100%;
@@ -228,9 +226,7 @@ table {
   overflow: hidden;
 }
 @media (max-width: 760px) {
-  /* Allow tables (without explicit wrapper) to scroll horizontally on phones */
-  table { display: block; overflow-x: auto; white-space: nowrap; }
-  table thead, table tbody, table tr { display: table; width: 100%; table-layout: auto; }
+  .table-scroll > table { width: max-content; min-width: 100%; white-space: nowrap; }
 }
 
 .emergency-editor > summary { padding: 4px 0; cursor: pointer; }
@@ -295,9 +291,6 @@ table {
   .emergency-ownership .btn,
   .emergency-profile-toolbar .btn { width: 100%; }
 }
-/* Inhibition rules table has a wide 6-col layout. Pin a minimum width so
- * the row never collapses into illegible squashing — users can scroll. */
-#t-inhib-rules { min-width: 900px; }
 #t-inhib-rules td, #t-inhib-rules th { vertical-align: top; }
 #t-inhib-rules tbody tr:hover { background: var(--row-hover); }
 th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
@@ -399,7 +392,7 @@ code { background: var(--panel-light); padding: 1px 6px; border-radius: 3px; fon
 .sev-acknowledged, .sev-resolved, .sev-inhibited { color: var(--green); }
 .sev-expired, .sev-cancelled { color: var(--muted); }
 .ch-ntfy { color: var(--green); }
-.ch-telegram { color: #06b6d4; }
+.ch-telegram { color: var(--telegram); }
 .ch-smtp { color: #a855f7; }
 .ch-all-failed, .ch-suppressed { color: var(--red); }
 .ch-dry-run { color: var(--muted); font-style: italic; }

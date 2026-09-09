@@ -36,7 +36,23 @@ fn entry(i: usize) -> DeliveryEntry {
         title: format!("Alert {i}"),
         channel: "ntfy".to_string(),
         suppressed_by: String::new(),
+        emergency_receipt_id: None,
     }
+}
+
+#[test]
+fn sqlite_delivery_history_preserves_emergency_receipt_id() {
+    let tmp = TempDir::new().unwrap();
+    let store = HistoryStore::open(&sqlite_cfg(tmp.path().join("history.db"), 10)).unwrap();
+    let mut delivery = entry(1);
+    delivery.emergency_receipt_id = Some("receipt-123".to_string());
+    store.record_delivery(&delivery).unwrap();
+
+    let page = store.deliveries_page(10, 0).unwrap();
+    assert_eq!(
+        page.entries[0].emergency_receipt_id.as_deref(),
+        Some("receipt-123")
+    );
 }
 
 fn repeat_candidate(now: f64, token: &str) -> RepeatCandidate {
@@ -141,6 +157,40 @@ fn sqlite_history_migration_is_idempotent() {
     let page = dst_store.deliveries_page(10, 0).unwrap();
     assert_eq!(page.total, 2);
     assert_eq!(page.entries[0].title, "Alert 2");
+}
+
+#[test]
+fn sqlite_history_migration_accepts_delivery_schema_without_receipt_id() {
+    let tmp = TempDir::new().unwrap();
+    let src = sqlite_cfg(tmp.path().join("old.db"), 0);
+    let dst = sqlite_cfg(tmp.path().join("new.db"), 0);
+    let conn = rusqlite::Connection::open(&src.sqlite_path).unwrap();
+    conn.execute_batch(
+        r#"
+CREATE TABLE klaxond_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts REAL NOT NULL,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  suppressed_by TEXT NOT NULL DEFAULT '',
+  dedupe_hash TEXT NOT NULL
+);
+INSERT INTO klaxond_deliveries
+  (ts, source, severity, title, channel, suppressed_by, dedupe_hash)
+VALUES (1000, 'grafana', 'critical', 'Old emergency', 'ntfy', '', 'old-row');
+"#,
+    )
+    .unwrap();
+    drop(conn);
+
+    assert_eq!(migrate_between(&src, &dst).unwrap(), 1);
+    let page = HistoryStore::open(&dst)
+        .unwrap()
+        .deliveries_page(10, 0)
+        .unwrap();
+    assert_eq!(page.entries[0].emergency_receipt_id, None);
 }
 
 #[test]

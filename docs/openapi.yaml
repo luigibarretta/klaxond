@@ -3385,6 +3385,9 @@ components:
           type: string
         suppressed_by:
           type: string
+        emergency_receipt_id:
+          type: [string, "null"]
+          description: Stable emergency receipt correlation. Present only when this delivery belongs to an acknowledgement workflow.
         ok:
           type: boolean
     LogEntry:

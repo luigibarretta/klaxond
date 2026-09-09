@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS klaxond_deliveries (
   title TEXT NOT NULL,
   channel TEXT NOT NULL,
   suppressed_by TEXT NOT NULL DEFAULT '',
+  emergency_receipt_id TEXT,
   dedupe_hash TEXT NOT NULL
 );
 
@@ -58,6 +59,9 @@ ALTER TABLE klaxond_repeat_state
   ADD COLUMN IF NOT EXISTS cooldown_s BIGINT NOT NULL DEFAULT 0;
 ALTER TABLE klaxond_repeat_state
   ADD COLUMN IF NOT EXISTS matched_rule TEXT;
+
+ALTER TABLE klaxond_deliveries
+  ADD COLUMN IF NOT EXISTS emergency_receipt_id TEXT;
 
 CREATE TABLE IF NOT EXISTS klaxond_auth_sessions (
   id_hash TEXT PRIMARY KEY,
@@ -169,8 +173,8 @@ pub(super) fn insert(client: &mut Client, entry: &DeliveryEntry) -> Result<()> {
     client.execute(
         r#"
 INSERT INTO klaxond_deliveries
-  (ts, source, severity, title, channel, suppressed_by, dedupe_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+  (ts, source, severity, title, channel, suppressed_by, emergency_receipt_id, dedupe_hash)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (dedupe_hash) DO NOTHING
 "#,
         &[
@@ -180,6 +184,7 @@ ON CONFLICT (dedupe_hash) DO NOTHING
             &entry.title,
             &entry.channel,
             &entry.suppressed_by,
+            &entry.emergency_receipt_id,
             &hash,
         ],
     )?;
@@ -194,7 +199,7 @@ pub(super) fn count(client: &mut Client) -> Result<usize> {
 pub(super) fn page(client: &mut Client, limit: usize, offset: usize) -> Result<Vec<DeliveryEntry>> {
     let rows = client.query(
         r#"
-SELECT ts, source, severity, title, channel, suppressed_by
+SELECT ts, source, severity, title, channel, suppressed_by, emergency_receipt_id
 FROM klaxond_deliveries
 ORDER BY ts DESC, id DESC
 LIMIT $1 OFFSET $2
@@ -210,18 +215,27 @@ LIMIT $1 OFFSET $2
             title: row.get(3),
             channel: row.get(4),
             suppressed_by: row.get(5),
+            emergency_receipt_id: row.get(6),
         })
         .collect())
 }
 
 pub(super) fn export_all(client: &mut Client) -> Result<Vec<DeliveryEntry>> {
     let mut tx = client.transaction()?;
+    let has_receipt = tx.query_one(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'klaxond_deliveries' AND column_name = 'emergency_receipt_id')",
+        &[],
+    )?.get::<_, bool>(0);
+    let receipt_select = if has_receipt {
+        "emergency_receipt_id"
+    } else {
+        "NULL::TEXT AS emergency_receipt_id"
+    };
     let rows = tx.query(
-        r#"
-SELECT ts, source, severity, title, channel, suppressed_by
-FROM klaxond_deliveries
-ORDER BY ts ASC, id ASC
-"#,
+        &format!(
+            "SELECT ts, source, severity, title, channel, suppressed_by, {receipt_select} \
+             FROM klaxond_deliveries ORDER BY ts ASC, id ASC"
+        ),
         &[],
     )?;
     let entries = rows
@@ -233,6 +247,7 @@ ORDER BY ts ASC, id ASC
             title: row.get(3),
             channel: row.get(4),
             suppressed_by: row.get(5),
+            emergency_receipt_id: row.get(6),
         })
         .collect();
     tx.commit()?;

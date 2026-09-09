@@ -33,7 +33,7 @@ use sqlite::{
     sqlite_page, sqlite_prune, validate_sqlite_schema,
 };
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeliveryEntry {
@@ -43,6 +43,8 @@ pub struct DeliveryEntry {
     pub title: String,
     pub channel: String,
     pub suppressed_by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emergency_receipt_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -296,6 +298,10 @@ fn dedupe_hash(entry: &DeliveryEntry) -> String {
     h.update(entry.channel.as_bytes());
     h.update(b"\0");
     h.update(entry.suppressed_by.as_bytes());
+    if let Some(receipt_id) = &entry.emergency_receipt_id {
+        h.update(b"\0");
+        h.update(receipt_id.as_bytes());
+    }
     hex::encode(h.finalize())
 }
 

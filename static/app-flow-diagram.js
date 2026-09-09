@@ -1,70 +1,108 @@
 import { tr } from "./app.js";
 import { deliveryTsSeconds } from "./app-status.js";
 
+const SOURCE_ROUTES = {
+  grafana: "/webhook/sev",
+};
+
+const SOURCE_LABELS = {
+  grafana: "Alertmanager",
+  "uptime-kuma": "Uptime Kuma",
+  wud: "WUD",
+  pve: "Proxmox VE",
+};
+
+const SINK_IDS = { ntfy: "NTFY", telegram: "TG", smtp: "SMTP" };
+
+export function sourceNodeId(source) {
+  return `SRC_${String(source || "unknown").toUpperCase().replace(/[^A-Z0-9_]/g, "_")}`;
+}
+
 export function aggregateDeliveries24h(items) {
   const cutoff = Date.now() / 1000 - 24 * 3600;
   const bySource = {};
   const bySeverity = {};
   const byChannel = {};
   const bySourceSeverity = {};
+  const lastBySource = {};
+  const lastByChannel = {};
   for (const it of items || []) {
     const ts = deliveryTsSeconds(it);
     if (ts < cutoff) continue;
-    if (it.source) bySource[it.source] = (bySource[it.source] || 0) + 1;
+    if (it.source) {
+      bySource[it.source] = (bySource[it.source] || 0) + 1;
+      lastBySource[it.source] = Math.max(lastBySource[it.source] || 0, ts);
+    }
     if (it.severity) bySeverity[it.severity] = (bySeverity[it.severity] || 0) + 1;
-    if (it.channel) byChannel[it.channel] = (byChannel[it.channel] || 0) + 1;
-    const k = `${it.source}|${it.severity}`;
-    bySourceSeverity[k] = (bySourceSeverity[k] || 0) + 1;
+    if (it.channel) {
+      byChannel[it.channel] = (byChannel[it.channel] || 0) + 1;
+      lastByChannel[it.channel] = Math.max(lastByChannel[it.channel] || 0, ts);
+    }
+    const key = `${it.source}|${it.severity}`;
+    bySourceSeverity[key] = (bySourceSeverity[key] || 0) + 1;
   }
-  return { bySource, bySeverity, byChannel, bySourceSeverity };
+  return { bySource, bySeverity, byChannel, bySourceSeverity, lastBySource, lastByChannel };
 }
 
 export function buildMermaidDiagram(cfgs, stats) {
-  const { channel, cascade, ntfy, dedup, auth, render } = cfgs;
   const safeStats = stats || { bySource: {}, byChannel: {}, bySeverity: {} };
-  const authMode = (auth && auth.settings && auth.settings.mode) || "?";
-  const cascadeOn = cascade ? (cascade.runtime_enabled !== false) : true;
-  const tiers = (cascade && cascade.tiers) || [{name:"ntfy"},{name:"telegram"},{name:"smtp"}];
+  const sources = configuredSources(cfgs.ingest);
+  const tiers = configuredTiers(cfgs.cascade);
   const lines = [];
 
   appendDiagramHeader(lines);
-  appendUpstream(lines);
-  appendEmitters(lines, authMode, safeStats, dedup);
-  appendKlaxondFlow(lines, cascadeOn);
-  appendSinks(lines, channel, ntfy, tiers, safeStats);
-  appendClickHandlers(lines, tiers, render);
+  appendUpstream(lines, sources);
+  const emitterIds = appendEmitters(lines, sources, cfgs.auth, safeStats, cfgs.dedup);
+  const stageIds = appendKlaxondFlow(lines, emitterIds, cfgs);
+  const sinkIds = appendSinks(lines, stageIds[stageIds.length - 1], cfgs.channel, cfgs.ntfy, tiers, safeStats);
+  appendClickHandlers(lines, sources, stageIds, sinkIds, cfgs.render);
   return lines.join("\n");
 }
 
-function mermaidEscape(s) {
-  return String(s || "").replace(/"/g, "\\\"").replace(/\n/g, "<br/>");
+function configuredSources(ingest) {
+  return Object.entries(ingest?.sources || {})
+    .filter(([, value]) => value?.configured)
+    .map(([source]) => source)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function configuredTiers(cascade) {
+  const tiers = Array.isArray(cascade?.tiers) ? cascade.tiers : [];
+  return tiers.length ? tiers : [{ name: "ntfy", timeout_seconds: 15 }];
+}
+
+function mermaidEscape(value) {
+  return String(value || "").replace(/"/g, "\\\"").replace(/\n/g, "<br/>");
+}
+
+function titleCase(value) {
+  return String(value || "")
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function sourceRoute(source) {
+  return SOURCE_ROUTES[source] || `/${source}/sev`;
 }
 
 function sourceStat(stats, source) {
-  const n = stats.bySource[source] || 0;
-  return n ? `<br/><small>${tr("flow.in_24h", { count: n })}</small>` : "";
+  const count = stats.bySource[source] || 0;
+  return count ? `<br/><small>${tr("flow.in_24h", { count })}</small>` : "";
 }
 
-function dedupStat(dedup, source) {
-  const d = (dedup && dedup.settings) ? (dedup.settings[source] || {}) : {};
-  if (!d.enabled) return "";
-  return `<br/><small>dedup: ${d.strategy} ${d.window_s}s</small>`;
+function noiseStat(dedup, source) {
+  const config = dedup?.settings?.[source] || {};
+  const parts = [];
+  if (config.enabled) parts.push(`${tr("flow.grouping_short")}: ${config.strategy} ${config.window_s}s`);
+  if (config.repeat_suppression_enabled) parts.push(`${tr("flow.repeat_short")}: ${config.repeat_window_s}s`);
+  return parts.length ? `<br/><small>${parts.join(" · ")}</small>` : "";
 }
 
-function channelStat(stats, chan) {
-  const n = stats.byChannel[chan] || 0;
-  return n ? `<br/><small>${tr("flow.delivered", { count: n })}</small>` : "";
-}
-
-function ntfyLabel(ntfy, stats) {
-  let label = `ntfy${channelStat(stats, "ntfy")}`;
-  if (!ntfy || !ntfy.topics || !ntfy.topics.length) return label;
-  const lines = ntfy.topics.slice(0, 6).map(t => `${t.name}: ${(t.handles || []).join(", ")}`);
-  if (ntfy.topics.length > 6) lines.push(`… +${ntfy.topics.length - 6} more`);
-  const delivered = channelStat(stats, "ntfy")
-    ? "<br/>" + tr("flow.delivered_24h", { count: stats.byChannel["ntfy"] || 0 })
-    : "";
-  return `ntfy<br/><small>${lines.join("<br/>")}${delivered}</small>`;
+function channelStat(stats, channel) {
+  const count = stats.byChannel[channel] || 0;
+  return count ? `<br/><small>${tr("flow.delivered", { count })}</small>` : "";
 }
 
 function appendDiagramHeader(lines) {
@@ -75,103 +113,147 @@ function appendDiagramHeader(lines) {
   lines.push("    curve: basis");
   lines.push("---");
   lines.push("flowchart LR");
-  lines.push("  %% auto-generated from /api/* config");
+  lines.push("  %% generated from the active /api configuration");
   lines.push("  classDef src fill:#2c5282,color:#fff,stroke:#5b8def");
   lines.push("  classDef klx fill:#553c9a,color:#fff,stroke:#9b6bff");
   lines.push("  classDef sink fill:#22543d,color:#fff,stroke:#48bb78");
-  lines.push("  classDef disabled fill:#444,color:#999,stroke:#666");
+  lines.push("  classDef disabled fill:#444,color:#bbb,stroke:#777");
 }
 
-function appendUpstream(lines) {
+function appendUpstream(lines, sources) {
+  if (!sources.includes("grafana")) return;
   lines.push('  subgraph UPS["Upstream"]');
   lines.push(`    GRA["Grafana<br/><small>${mermaidEscape(tr("flow.alert_rules"))}</small>"]`);
   lines.push("  end");
   lines.push("  class GRA src");
 }
 
-function appendEmitters(lines, authMode, stats, dedup) {
-  const emitters = [
-    ["AM", "Alertmanager<br/>POST /webhook/sev<br/><small>group + inhibit + repeat</small>", "grafana"],
-    ["BSZ", "Beszel<br/>POST /beszel/sev", "beszel"],
-    ["HC", "Healthchecks<br/>POST /healthchecks/sev", "healthchecks"],
-    ["WUD", "WUD<br/>POST /wud/sev", "wud"],
-    ["AKN", "Authentik<br/>POST /authentik/sev", "authentik"],
-    ["SHF", "Shelfmark<br/>POST /shelfmark/sev", "shelfmark"],
-    ["PRW", "Prowlarr<br/>POST /prowlarr/sev", "prowlarr"],
-    ["DCY", "Decypharr<br/>POST /decypharr/sev", "decypharr"],
-  ];
-  lines.push(`  subgraph SRC["Emitters → klaxond HTTP (auth: ${authMode})"]`);
-  for (const [id, label, source] of emitters) {
-    lines.push(`    ${id}["${label}${sourceStat(stats, source)}${dedupStat(dedup, source)}"]`);
+function appendEmitters(lines, sources, auth, stats, dedup) {
+  const authMode = auth?.settings?.mode || "?";
+  lines.push(`  subgraph SRC["${mermaidEscape(tr("flow.enabled_emitters", { count: sources.length, mode: authMode }))}"]`);
+  if (!sources.length) {
+    lines.push(`    SRC_NONE["${mermaidEscape(tr("flow.no_enabled_sources"))}"]`);
+    lines.push("    class SRC_NONE disabled");
+    lines.push("  end");
+    return ["SRC_NONE"];
+  }
+  const ids = [];
+  for (const source of sources) {
+    const id = sourceNodeId(source);
+    const label = SOURCE_LABELS[source] || titleCase(source);
+    const route = mermaidEscape(sourceRoute(source));
+    lines.push(`    ${id}["${mermaidEscape(label)}<br/><small>POST ${route}</small>${sourceStat(stats, source)}${noiseStat(dedup, source)}"]`);
+    ids.push(id);
   }
   lines.push("  end");
-  lines.push("  class AM,BSZ,HC,WUD,AKN,SHF,PRW,DCY src");
-  lines.push("  GRA --> AM");
+  lines.push(`  class ${ids.join(",")} src`);
+  if (sources.includes("grafana")) lines.push(`  GRA --> ${sourceNodeId("grafana")}`);
+  return ids;
 }
 
-function appendKlaxondFlow(lines, cascadeOn) {
-  lines.push('  INH{"Inhibition rules<br/><small>cross-source (all emitters)</small>"}');
-  lines.push('  DROP["suppress"]');
-  lines.push('  RND["Render<br/>title/body/tags/actions"]');
-  lines.push(`  CAS{"Cascade ${cascadeOn ? "✓ on" : "✗ off"}"}`);
-  lines.push("  class INH,DROP,RND,CAS klx");
-  for (const id of ["AM", "BSZ", "HC", "WUD", "AKN", "SHF", "PRW"]) {
-    lines.push(`  ${id} --> INH`);
+function enabledNoiseSources(dedup, field) {
+  return Object.entries(dedup?.settings || {})
+    .filter(([, config]) => !!config?.[field])
+    .map(([source]) => source);
+}
+
+function appendKlaxondFlow(lines, emitters, cfgs) {
+  const stages = [];
+  const rules = cfgs.inhibition?.rules || [];
+  const grouped = enabledNoiseSources(cfgs.dedup, "enabled");
+  const repeated = enabledNoiseSources(cfgs.dedup, "repeat_suppression_enabled");
+
+  if (rules.length) {
+    lines.push(`  INH{"${mermaidEscape(tr("flow.inhibition_stage", { count: rules.length }))}"}`);
+    lines.push(`  DROP["${mermaidEscape(tr("flow.suppressed"))}"]`);
+    lines.push("  class INH,DROP klx");
+    lines.push(`  INH -->|${mermaidEscape(tr("flow.matched"))}| DROP`);
+    stages.push("INH");
   }
-  lines.push("  INH -->|matched| DROP");
-  lines.push("  INH -->|pass| RND");
-  lines.push("  RND --> CAS");
+  if (grouped.length) {
+    lines.push(`  GROUP["${mermaidEscape(tr("flow.grouping_stage", { count: grouped.length }))}"]`);
+    lines.push("  class GROUP klx");
+    stages.push("GROUP");
+  }
+  if (repeated.length) {
+    lines.push(`  REPEAT{"${mermaidEscape(tr("flow.repeat_stage", { count: repeated.length }))}"}`);
+    lines.push(`  REPEAT_DROP["${mermaidEscape(tr("flow.repeat_suppressed"))}"]`);
+    lines.push("  class REPEAT,REPEAT_DROP klx");
+    lines.push(`  REPEAT -->|${mermaidEscape(tr("flow.duplicate"))}| REPEAT_DROP`);
+    stages.push("REPEAT");
+  }
+  if (cfgs.emergency?.settings?.enabled) {
+    const profileCount = (cfgs.emergency.settings.profiles || []).filter(profile => profile.enabled).length;
+    lines.push(`  EMERGENCY{"${mermaidEscape(tr("flow.emergency_stage", { count: profileCount }))}"}`);
+    lines.push("  class EMERGENCY klx");
+    stages.push("EMERGENCY");
+  }
+  lines.push(`  RND["${mermaidEscape(tr("flow.render_stage"))}<br/><small>title · body · tags · actions</small>"]`);
+  lines.push(`  CAS{"${mermaidEscape(tr(cfgs.cascade?.runtime_enabled === false ? "flow.cascade_off" : "flow.cascade_on"))}"}`);
+  lines.push("  class RND,CAS klx");
+  stages.push("RND", "CAS");
+
+  for (const emitter of emitters) lines.push(`  ${emitter} --> ${stages[0]}`);
+  for (let index = 0; index < stages.length - 1; index += 1) {
+    const from = stages[index];
+    const to = stages[index + 1];
+    const edge = from === "INH" ? `|${mermaidEscape(tr("flow.pass"))}| ` : "";
+    lines.push(`  ${from} -->${edge}${to}`);
+  }
+  return stages;
 }
 
-function appendSinks(lines, channel, ntfy, tiers, stats) {
-  lines.push(`  NTFY["${mermaidEscape(ntfyLabel(ntfy, stats))}"]`);
-  lines.push("  class NTFY sink");
-  lines.push("  CAS -->|tier 1| NTFY");
-  if (tiers.find(t => t.name === "telegram")) appendTelegramSink(lines, channel, stats);
-  if (tiers.find(t => t.name === "smtp")) appendSmtpSink(lines, channel, stats);
+function appendSinks(lines, cascadeId, channel, ntfy, tiers, stats) {
+  const sinkIds = [];
+  tiers.forEach((tier, index) => {
+    const name = String(tier.name || "").toLowerCase();
+    const id = SINK_IDS[name] || `SINK_${index}`;
+    const configured = sinkConfigured(name, channel, ntfy);
+    lines.push(`  ${id}["${mermaidEscape(sinkLabel(name, channel, ntfy, stats))}"]`);
+    lines.push(`  class ${id} ${configured ? "sink" : "disabled"}`);
+    if (index === 0) lines.push(`  ${cascadeId} -->|${mermaidEscape(tr("flow.tier", { count: 1 }))}| ${id}`);
+    else lines.push(`  ${cascadeId} -.->|${mermaidEscape(tr("flow.fallback_tier", { count: index + 1 }))}| ${id}`);
+    sinkIds.push([id, name]);
+  });
+  return sinkIds;
 }
 
-function appendTelegramSink(lines, channel, stats) {
-  const configured = !!(channel && channel.telegram && channel.telegram.chat_id);
-  const cssClass = configured ? "sink" : "disabled";
-  const label = configured
-    ? `Telegram<br/><small>chat ${channel.telegram.chat_id}${delivered24h(stats, "telegram")}</small>`
-    : `Telegram<br/><small>${mermaidEscape(tr("flow.not_configured"))}</small>`;
-  lines.push(`  TG["${mermaidEscape(label)}"]`);
-  lines.push(`  class TG ${cssClass}`);
-  lines.push('  CAS -.->|"tier 2 on ntfy fail"| TG');
+function sinkConfigured(name, channel, ntfy) {
+  if (name === "ntfy") return !!ntfy?.topics?.length;
+  if (name === "telegram") return !!channel?.telegram?.chat_id;
+  if (name === "smtp") return !!channel?.smtp?.host;
+  return true;
 }
 
-function appendSmtpSink(lines, channel, stats) {
-  const configured = !!(channel && channel.smtp && channel.smtp.host);
-  const cssClass = configured ? "sink" : "disabled";
-  const label = configured
-    ? `SMTP<br/><small>${channel.smtp.host}:${channel.smtp.port}${delivered24h(stats, "smtp")}</small>`
-    : `SMTP<br/><small>${mermaidEscape(tr("flow.not_configured"))}</small>`;
-  lines.push(`  SMTP["${mermaidEscape(label)}"]`);
-  lines.push(`  class SMTP ${cssClass}`);
-  lines.push('  CAS -.->|"tier 3 on tg fail"| SMTP');
+function sinkLabel(name, channel, ntfy, stats) {
+  if (name === "ntfy") {
+    const topics = (ntfy?.topics || []).slice(0, 4).map(topic => topic.name).join(", ");
+    return `ntfy${topics ? `<br/><small>${topics}</small>` : ""}${channelStat(stats, name)}`;
+  }
+  if (name === "telegram") {
+    const detail = channel?.telegram?.chat_id ? tr("flow.configured") : tr("flow.not_configured");
+    return `Telegram<br/><small>${detail}</small>${channelStat(stats, name)}`;
+  }
+  if (name === "smtp") {
+    const detail = channel?.smtp?.host ? `${channel.smtp.host}:${channel.smtp.port}` : tr("flow.not_configured");
+    return `SMTP<br/><small>${detail}</small>${channelStat(stats, name)}`;
+  }
+  return `${titleCase(name)}${channelStat(stats, name)}`;
 }
 
-function delivered24h(stats, channel) {
-  return channelStat(stats, channel)
-    ? "<br/>" + tr("flow.delivered_24h", { count: stats.byChannel[channel] || 0 })
-    : "";
-}
-
-function appendClickHandlers(lines, tiers, render) {
-  const grafanaBase = String((render && render.grafana_base) || "").replace(/\/$/, "");
-  if (/^https?:\/\//.test(grafanaBase)) {
+function appendClickHandlers(lines, sources, stages, sinks, render) {
+  const grafanaBase = String(render?.grafana_base || "").replace(/\/$/, "");
+  if (sources.includes("grafana") && /^https?:\/\//.test(grafanaBase)) {
     lines.push(`  click GRA "${mermaidEscape(grafanaBase)}/alerting/list" _blank`);
   }
-  lines.push('  click AM call flowGotoTab("inhibitions") "Inhibitions tab"');
-  for (const id of ["BSZ", "HC", "WUD", "AKN", "SHF", "PRW"]) {
-    lines.push(`  click ${id} call flowGotoTab("grouping") "Grouping (dedup) tab"`);
+  for (const source of sources) {
+    lines.push(`  click ${sourceNodeId(source)} call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
   }
-  lines.push('  click INH call flowGotoTab("inhibitions") "Inhibitions tab"');
-  lines.push('  click RND call flowGotoTab("render") "Render config tab"');
-  lines.push('  click CAS call flowGotoTab("cascade") "Cascade tab"');
-  lines.push('  click NTFY call flowGotoTab("routing") "Routing tab (ntfy topics)"');
-  if (tiers.find(t => t.name === "telegram")) lines.push('  click TG call flowGotoTab("routing") "Routing tab"');
-  if (tiers.find(t => t.name === "smtp")) lines.push('  click SMTP call flowGotoTab("routing") "Routing tab"');
+  if (stages.includes("INH")) lines.push(`  click INH call flowGotoTab("inhibitions") "${mermaidEscape(tr("tab.inhibitions"))}"`);
+  if (stages.includes("GROUP")) lines.push(`  click GROUP call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
+  if (stages.includes("REPEAT")) lines.push(`  click REPEAT call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
+  if (stages.includes("EMERGENCY")) lines.push(`  click EMERGENCY call flowGotoTab("emergencies") "${mermaidEscape(tr("tab.emergencies"))}"`);
+  lines.push(`  click RND call flowGotoTab("render") "${mermaidEscape(tr("tab.render"))}"`);
+  lines.push(`  click CAS call flowGotoTab("cascade") "${mermaidEscape(tr("tab.cascade"))}"`);
+  for (const [id] of sinks) lines.push(`  click ${id} call flowGotoTab("routing") "${mermaidEscape(tr("tab.routing"))}"`);
 }

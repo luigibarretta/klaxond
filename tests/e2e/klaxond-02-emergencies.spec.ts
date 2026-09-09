@@ -116,6 +116,7 @@ test("emergency console renders durable receipts and dispatches audited actions"
   await expect(page.locator("#t-emergencies tbody")).toContainText("Production emergency probe");
   await expect(page.locator('[data-emergency-action="ack"]')).toBeVisible();
 
+  await page.locator("#emergency-policy-editor > summary").click();
   await page.locator("[data-profile-index='0'] [data-profile-field='retry_seconds']").fill("90");
   await page.locator("#emergency-policy-save").click();
   await expect.poll(() => (policyUpdate.profiles as Array<{ retry_seconds: number }>)[0].retry_seconds).toBe(90);
@@ -123,6 +124,7 @@ test("emergency console renders durable receipts and dispatches audited actions"
   await expect(page.locator("#emergency-policy")).toHaveText("1 enabled profile(s)");
 
   await page.click('[data-emergency-action="ack"]');
+  await page.locator(".app-dialog .primary").click();
   await expect.poll(() => action).toBe("POST");
   await expect(page.locator("#t-emergencies tbody")).toContainText("acknowledged");
   await expect(page.locator("#emergency-active")).toHaveText("0");
@@ -133,6 +135,7 @@ test("emergency profile editor is keyboard operable and reflows at 320 and 390 p
   await page.setViewportSize({ width: 320, height: 900 });
   await page.goto("/emergencies");
   await expect(page.locator("#emergency-policy-editor")).toBeVisible();
+  await page.locator("#emergency-policy-editor > summary").click();
   await expect(page.locator("#emergency-owner")).toBeVisible();
   await expect(page.locator("#emergency-export")).toHaveAttribute("href", "/api/emergency-config/export");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);

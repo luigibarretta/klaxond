@@ -14,6 +14,7 @@ pub struct DeliveryAudit<'a> {
     pub ok: bool,
     pub channel: &'a str,
     pub started_at: f64,
+    pub emergency_receipt_id: Option<&'a str>,
 }
 
 pub fn audit_log_delivery(state: &AppState, audit: DeliveryAudit<'_>) {
@@ -44,12 +45,13 @@ pub fn audit_log_delivery(state: &AppState, audit: DeliveryAudit<'_>) {
         "timestamp": (ended_at * 1000.0) as i64,
     });
     tracing::info!("AUDIT {}", record);
-    state.log_delivery(
+    state.log_delivery_with_receipt(
         audit.source,
         audit.severity,
         &audit.parts.title,
         audit.channel,
         "",
+        audit.emergency_receipt_id,
     );
     state.metric_inc(
         "klaxond_deliveries_total",

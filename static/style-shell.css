@@ -17,6 +17,7 @@
   --row-detail-bg: rgba(0, 0, 0, 0.2);
   --badge-warn-fg: #1a212b;
   --accent-hover: #2563eb;
+  --telegram: #22d3ee;
 }
 :root[data-theme="light"] {
   --bg: #f8fafc;
@@ -37,6 +38,7 @@
   --row-detail-bg: rgba(15, 23, 42, 0.04);
   --badge-warn-fg: #ffffff;
   --accent-hover: #1d4ed8;
+  --telegram: #0e7490;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
@@ -179,7 +181,7 @@ main {
   flex: 1 0 auto;
   width: 100%;
   padding: 24px;
-  max-width: 1120px;
+  max-width: 1360px;
   margin: 0 auto;
 }
 main:focus { outline: none; }

@@ -5,17 +5,38 @@ import {
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
 } from "./app.js";
-import { fetchDeliveries } from "./app-status.js";
+import { acknowledgeEmergencyReceipt } from "./app-emergency-actions.js";
 
 // ---- Deliveries ----
 let _delivCache = [];  // most recent fetch — filter applies client-side without re-fetching
+let _delivTotal = 0;
+let _activeEmergencyReceipts = new Set();
+const _expandedDeliveries = new Set();
 
 export async function loadDeliv(opts = {}) {
   try {
-    _delivCache = await fetchDeliveries(10000, { scope: "deliveries", force: opts.force });
+    const payload = await queryGet("deliveries", "/api/deliveries?limit=10000", {
+      force: opts.force,
+      cancelPrevious: false,
+    });
+    _delivCache = Array.isArray(payload) ? payload : (payload.entries || []);
+    _delivTotal = Array.isArray(payload) ? payload.length : Number(payload.total || _delivCache.length);
+    try {
+      const emergencyPayload = await queryGet(
+        "deliveries-emergencies",
+        "/api/emergencies?state=active&limit=500",
+        { force: opts.force, cancelPrevious: false },
+      );
+      _activeEmergencyReceipts = new Set((emergencyPayload.incidents || []).map(item => item.receipt_id));
+    } catch (error) {
+      _activeEmergencyReceipts = new Set();
+      fetchError("deliveries-emergencies", error);
+    }
   } catch (e) {
     fetchError("deliveries", e);
     _delivCache = [];
+    _delivTotal = 0;
+    _activeEmergencyReceipts = new Set();
   }
   renderDeliv();
 }
@@ -23,7 +44,7 @@ export async function loadDeliv(opts = {}) {
 export function renderDeliv(opts = {}) {
   const tb = $("#t-deliv tbody"); if (!tb) return;
   tb.innerHTML = "";
-  const total = (_delivCache || []).length;
+  const total = _delivTotal || (_delivCache || []).length;
   const rows = _filteredDelivRows();
   let shown = rows.length;
   for (const r of rows) {
@@ -40,17 +61,36 @@ export function renderDeliv(opts = {}) {
     } else {
       chCell = `<span class="ch-${r.channel}">${escapeHtml(r.channel)}</span>`;
     }
-    row.innerHTML = `<td>${t}</td><td>${escapeHtml(r.source)}</td><td class="sev-${r.severity}">${r.severity}</td><td>${escapeHtml(r.title)}</td><td>${chCell}</td>`;
-    row.addEventListener("click", () => _toggleDelivExpand(row, r));
-    row.style.cursor = "pointer";
+    const key = _deliveryKey(r);
+    row.dataset.deliveryKey = key;
+    const canAck = r.emergency_receipt_id && _activeEmergencyReceipts.has(r.emergency_receipt_id);
+    row.innerHTML = `<td data-label="${escapeHtml(tr("common.time"))}">${t}</td><td data-label="${escapeHtml(tr("common.source"))}">${escapeHtml(r.source)}</td><td data-label="${escapeHtml(tr("common.severity"))}" class="sev-${r.severity}">${escapeHtml(r.severity)}</td><td data-label="${escapeHtml(tr("common.title"))}">${escapeHtml(r.title)}</td><td data-label="${escapeHtml(tr("deliveries.channel_or_suppressed"))}">${chCell}</td><td data-label="${escapeHtml(tr("common.actions"))}"><div class="delivery-actions"><button type="button" class="btn" data-delivery-details aria-expanded="false">${escapeHtml(tr("deliveries.details"))}</button>${canAck ? `<button type="button" class="btn primary" data-delivery-ack="${escapeHtml(r.emergency_receipt_id)}">${escapeHtml(tr("emergency.ack"))}</button>` : ""}</div></td>`;
+    row.querySelector("[data-delivery-details]")?.addEventListener("click", event => _toggleDelivExpand(event.currentTarget, row, r));
+    row.querySelector("[data-delivery-ack]")?.addEventListener("click", async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      if (await acknowledgeEmergencyReceipt(button.dataset.deliveryAck, "delivery-emergency-ack")) {
+        await loadDeliv({ force: true });
+      } else {
+        button.disabled = false;
+      }
+    });
     tb.appendChild(row);
   }
   const cnt = $("#deliv-count");
   if (cnt) cnt.textContent = total === shown ? tr("deliveries.event_count", { count: total }) : tr("deliveries.event_count_filtered", { shown, total });
+  const storage = $("#deliv-storage");
+  if (storage) {
+    const bytes = new Blob([JSON.stringify(_delivCache)]).size;
+    storage.textContent = tr("deliveries.serialized_size", {
+      count: _delivCache.length,
+      size: _formatBytes(bytes),
+    });
+  }
   if (!shown && total) {
-    tb.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(tr("deliveries.no_match"))}</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="6" class="muted">${escapeHtml(tr("deliveries.no_match"))}</td></tr>`;
   } else if (!shown) {
-    tb.innerHTML = `<tr><td colspan="5"><div class="table-empty-state">
+    tb.innerHTML = `<tr><td colspan="6"><div class="table-empty-state">
       <strong>${escapeHtml(tr("deliveries.empty_title"))}</strong>
       <p class="muted">${escapeHtml(tr("deliveries.empty_desc"))}</p>
       <div class="table-empty-actions">
@@ -60,15 +100,38 @@ export function renderDeliv(opts = {}) {
     </div></td></tr>`;
   }
   applyTablePager("t-deliv", { reset: opts.reset });
+  tb.querySelectorAll("tr.deliv-row").forEach(row => {
+    if (_expandedDeliveries.has(row.dataset.deliveryKey) && row.style.display !== "none") {
+      _insertDelivDetail(row.querySelector("[data-delivery-details]"), row, rows.find(item => _deliveryKey(item) === row.dataset.deliveryKey));
+    }
+  });
 }
 
-function _toggleDelivExpand(tr, r) {
-  const next = tr.nextElementSibling;
+function _deliveryKey(row) {
+  return [row.ts, row.source, row.severity, row.title, row.channel].join("\u0000");
+}
+
+function _formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
+
+function _toggleDelivExpand(button, row, r) {
+  const next = row.nextElementSibling;
   if (next && next.classList.contains("deliv-detail")) {
     next.remove();
-    tr.classList.remove("expanded");
+    row.classList.remove("expanded");
+    button.setAttribute("aria-expanded", "false");
+    _expandedDeliveries.delete(row.dataset.deliveryKey);
     return;
   }
+  _expandedDeliveries.add(row.dataset.deliveryKey);
+  _insertDelivDetail(button, row, r);
+}
+
+function _insertDelivDetail(button, row, r) {
+  if (!r || row.nextElementSibling?.classList.contains("deliv-detail")) return;
   const detail = document.createElement("tr");
   detail.classList.add("deliv-detail");
   const ts = new Date(r.ts * 1000);
@@ -81,10 +144,12 @@ function _toggleDelivExpand(tr, r) {
     ["channel",   `<code>${escapeHtml(r.channel || "")}</code>`],
   ];
   if (r.suppressed_by) rows.push(["suppressed_by", `<code>${escapeHtml(r.suppressed_by)}</code>`]);
+  if (r.emergency_receipt_id) rows.push(["emergency_receipt_id", `<code>${escapeHtml(r.emergency_receipt_id)}</code>`]);
   const html = rows.map(([k, v]) => `<div class="kv"><span class="kv-k">${k}</span><span class="kv-v">${v}</span></div>`).join("");
-  detail.innerHTML = `<td colspan="5" class="deliv-detail-cell">${html}</td>`;
-  tr.insertAdjacentElement("afterend", detail);
-  tr.classList.add("expanded");
+  detail.innerHTML = `<td colspan="6" class="deliv-detail-cell">${html}</td>`;
+  row.insertAdjacentElement("afterend", detail);
+  row.classList.add("expanded");
+  button?.setAttribute("aria-expanded", "true");
 }
 
 // Re-render (client-side, no fetch) when filter changes
@@ -127,12 +192,12 @@ function _csvCell(v) {
 
 function exportDeliveriesCsv() {
   const rows = _filteredDelivRows();
-  if (!rows.length) { showToast(tr("deliveries.no_rows_export"), "warn", 4000); return; }
-  const header = ["timestamp_iso", "timestamp_epoch", "source", "severity", "title", "channel", "suppressed_by"];
+  if (!rows.length) { notifyValidationError("deliveries-export", tr("deliveries.no_rows_export")); return; }
+  const header = ["timestamp_iso", "timestamp_epoch", "source", "severity", "title", "channel", "suppressed_by", "emergency_receipt_id"];
   const lines = [header.join(",")];
   for (const r of rows) {
     const iso = new Date((r.ts || 0) * 1000).toISOString();
-    lines.push([iso, r.ts || "", r.source || "", r.severity || "", r.title || "", r.channel || "", r.suppressed_by || ""]
+    lines.push([iso, r.ts || "", r.source || "", r.severity || "", r.title || "", r.channel || "", r.suppressed_by || "", r.emergency_receipt_id || ""]
                 .map(_csvCell).join(","));
   }
   const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
@@ -142,7 +207,7 @@ function exportDeliveriesCsv() {
   a.download = "klaxond-deliveries-" + new Date().toISOString().replace(/[:.]/g, "-") + ".csv";
   a.click();
   URL.revokeObjectURL(url);
-  showToast(tr("deliveries.exported", { count: rows.length }), "success", 3000);
+  notifySuccess(tr("deliveries.exported", { count: rows.length }));
 }
 
 // ---- Backend logs ----

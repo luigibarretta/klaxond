@@ -7,19 +7,20 @@ function matchTypeOf(rule) {
   return "match_by";
 }
 
-function makeCell(child) {
+function makeCell(child, label) {
   const td = document.createElement("td");
+  if (label) td.dataset.label = label;
   td.appendChild(child);
   return td;
 }
 
-function makeInput({ type = "text", value = "", dataKey, placeholder, width }) {
+function makeInput({ type = "text", value = "", dataKey, placeholder, ariaLabel }) {
   const input = document.createElement("input");
   input.type = type;
   input.value = value;
   input.dataset.k = dataKey;
   if (placeholder) input.placeholder = placeholder;
-  if (width) input.style.width = width;
+  if (ariaLabel) input.setAttribute("aria-label", ariaLabel);
   return input;
 }
 
@@ -28,15 +29,16 @@ function appendSourceCell(row, rule) {
     value: rule.source || "",
     dataKey: "source",
     placeholder: "e.g. node-down",
-    width: "100%",
+    ariaLabel: tr("inhib.rule_name"),
   });
   input.addEventListener("input", () => markInhibitionRowValidity(row));
-  row.appendChild(makeCell(input));
+  row.appendChild(makeCell(input, tr("common.source")));
 }
 
 function appendMatchTypeCell(row, matchType) {
   const select = document.createElement("select");
   select.dataset.k = "match_type";
+  select.setAttribute("aria-label", tr("inhib.match_type"));
   const labels = {match_by: "match_by", match_label: "match_label + regex", match_all: "match_all"};
   for (const opt of ["match_by", "match_label", "match_all"]) {
     const option = document.createElement("option");
@@ -45,43 +47,40 @@ function appendMatchTypeCell(row, matchType) {
     if (opt === matchType) option.selected = true;
     select.appendChild(option);
   }
-  row.appendChild(makeCell(select));
+  row.appendChild(makeCell(select, tr("inhib.match_type")));
   return select;
 }
 
 function appendMatchValueCell(row, rule, select, matchType) {
   const cell = document.createElement("td");
+  cell.dataset.label = tr("inhib.match_value");
   const wrap = document.createElement("div");
-  wrap.style.display = "flex";
-  wrap.style.gap = "0.4em";
-  wrap.style.alignItems = "center";
+  wrap.className = "inhib-match-editor";
 
   const labelInput = makeInput({
     value: rule.match_by || rule.match_label || "",
     dataKey: "match_label",
     placeholder: "host",
+    ariaLabel: tr("inhib.label_name"),
   });
-  labelInput.style.flex = "0 0 8em";
   labelInput.setAttribute("list", "inhib-label-suggestions");
   labelInput.addEventListener("input", () => markInhibitionRowValidity(row));
 
   const eqSign = document.createElement("span");
   eqSign.textContent = "=";
-  eqSign.style.color = "var(--muted)";
+  eqSign.className = "muted";
+  eqSign.setAttribute("aria-hidden", "true");
 
   const regexInput = makeInput({
     value: rule.match_regex || "",
     dataKey: "match_regex",
     placeholder: "^blackbox-.*",
+    ariaLabel: tr("inhib.regex"),
   });
-  regexInput.style.flex = "1 1 auto";
-  regexInput.style.fontFamily = "ui-monospace, monospace";
-  regexInput.style.fontSize = "12px";
   regexInput.addEventListener("input", () => markInhibitionRowValidity(row));
 
   const hint = document.createElement("span");
-  hint.style.color = "var(--muted)";
-  hint.style.fontSize = "12px";
+  hint.className = "muted inhib-match-all-hint";
   hint.textContent = tr("inhib.suppresses_all");
 
   wrap.appendChild(labelInput);
@@ -99,26 +98,23 @@ function appendMatchValueCell(row, rule, select, matchType) {
 }
 
 function applyMatchType(value, labelInput, eqSign, regexInput, hint) {
-  labelInput.style.display = (value === "match_all") ? "none" : "";
-  eqSign.style.display = (value === "match_label") ? "" : "none";
-  regexInput.style.display = (value === "match_label") ? "" : "none";
-  hint.style.display = (value === "match_all") ? "" : "none";
+  labelInput.hidden = value === "match_all";
+  eqSign.hidden = value !== "match_label";
+  regexInput.hidden = value !== "match_label";
+  hint.hidden = value !== "match_all";
   labelInput.placeholder = value === "match_label" ? "job" : "host";
 }
 
 function appendAppliesToCell(row, rule, availableSources) {
   const cell = document.createElement("td");
+  cell.dataset.label = tr("common.applies_to");
   const wrap = document.createElement("div");
   wrap.dataset.k = "applies_to";
-  wrap.style.display = "flex";
-  wrap.style.flexWrap = "wrap";
-  wrap.style.gap = "0.4em";
+  wrap.className = "inhib-source-options";
   const selected = new Set(rule.applies_to || []);
   for (const source of availableSources) {
     const label = document.createElement("label");
-    label.style.fontSize = "0.85em";
-    label.style.whiteSpace = "nowrap";
-    label.style.margin = "0";
+    label.className = "inhib-source-option";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.value = source;
@@ -128,8 +124,7 @@ function appendAppliesToCell(row, rule, availableSources) {
     wrap.appendChild(label);
   }
   const allHint = document.createElement("small");
-  allHint.className = "muted";
-  allHint.style.fontSize = "11px";
+  allHint.className = "muted inhib-cell-hint";
   allHint.textContent = tr("inhib.empty_all_sources");
   cell.appendChild(wrap);
   cell.appendChild(allHint);
@@ -138,62 +133,62 @@ function appendAppliesToCell(row, rule, availableSources) {
 
 function appendTtlCell(row, rule) {
   const wrap = document.createElement("div");
-  wrap.style.display = "flex";
-  wrap.style.gap = "0.3em";
-  wrap.style.alignItems = "center";
-  wrap.style.flexWrap = "wrap";
+  wrap.className = "inhib-ttl-editor";
 
-  const input = makeInput({ type: "number", value: rule.ttl_seconds || 900, dataKey: "ttl_seconds" });
+  const input = makeInput({
+    type: "number",
+    value: rule.ttl_seconds || 900,
+    dataKey: "ttl_seconds",
+    ariaLabel: tr("inhib.ttl_sec"),
+  });
   input.min = "30";
   input.max = "86400";
-  input.style.width = "5.5em";
   input.addEventListener("input", () => markInhibitionRowValidity(row));
   wrap.appendChild(input);
 
   for (const [label, seconds] of [["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600]]) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "btn";
+    button.className = "btn ttl-preset";
     button.textContent = label;
-    button.style.padding = "2px 6px";
-    button.style.fontSize = "11px";
-    button.title = `Set TTL to ${seconds}s`;
+    button.title = tr("inhib.set_ttl", { value: label });
     button.addEventListener("click", () => {
       input.value = seconds;
       markInhibitionRowValidity(row);
     });
     wrap.appendChild(button);
   }
-  row.appendChild(makeCell(wrap));
+  row.appendChild(makeCell(wrap, tr("inhib.ttl_sec")));
 }
 
 function appendActionCell(row, availableSources) {
   const cell = document.createElement("td");
-  cell.style.whiteSpace = "nowrap";
+  cell.dataset.label = tr("common.actions");
+  const wrap = document.createElement("div");
+  wrap.className = "inhib-row-actions";
 
   const duplicate = document.createElement("button");
   duplicate.type = "button";
   duplicate.className = "btn";
-  duplicate.textContent = "⎘";
+  duplicate.textContent = tr("inhib.duplicate_short");
   duplicate.title = tr("inhib.duplicate_title");
-  duplicate.style.padding = "2px 8px";
-  duplicate.style.marginRight = "4px";
+  duplicate.setAttribute("aria-label", tr("inhib.duplicate_title"));
   duplicate.addEventListener("click", () => duplicateRow(row, availableSources));
 
   const remove = document.createElement("button");
   remove.type = "button";
   remove.className = "btn";
-  remove.textContent = "✕";
+  remove.textContent = tr("inhib.delete_short");
   remove.title = tr("inhib.delete_rule_title");
-  remove.style.color = "var(--red)";
-  remove.style.padding = "2px 8px";
+  remove.setAttribute("aria-label", tr("inhib.delete_rule_title"));
   remove.addEventListener("click", () => {
     row.remove();
     applyTablePager("t-inhib-rules");
   });
 
-  cell.appendChild(duplicate);
-  cell.appendChild(remove);
+  wrap.appendChild(duplicate);
+  wrap.appendChild(remove);
+  cell.appendChild(wrap);
   row.appendChild(cell);
 }
 
@@ -267,7 +262,6 @@ function markInhibitionRowValidity(row) {
   const error = validateInhibitionRuleRow(row);
   if (error) row.dataset.invalid = error;
   else delete row.dataset.invalid;
-  row.style.outline = error ? "1px solid var(--red)" : "";
 }
 
 export function collectInhibitionRulesFromTable() {

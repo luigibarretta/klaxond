@@ -39,6 +39,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
   }
 
   await page.goto("/deliveries");
+  await expect(page.locator("#deliv-storage")).toContainText(/loaded · .* serialized/);
   const pager = page.locator('[data-table-pager="t-deliv"]');
   await expect(pager).toBeVisible();
   await page.selectOption('[data-table-pager="t-deliv"] [data-pager-size]', "10");
@@ -195,4 +196,55 @@ test("inhibition applies-to checkboxes stay compact and aligned", async ({ page 
   const box = await firstCheckbox.boundingBox();
   expect(box?.width).toBeLessThanOrEqual(20);
   await expect(firstCheckbox.locator("xpath=..")).toHaveCSS("align-items", "center");
+
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const regex = page.locator('#t-inhib-rules [data-k="match_regex"]:visible').first();
+  await expect(regex).toBeVisible();
+  expect((await regex.boundingBox())?.width).toBeGreaterThanOrEqual(180);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator("#t-inhib-rules .inhib-rule-row").first()).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test("delivery history exposes keyboard details and ACK only for an active receipt", async ({ page }) => {
+  let acknowledged = false;
+  await page.route("**/api/deliveries?limit=10000", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      total: 1,
+      limit: 10000,
+      offset: 0,
+      entries: [{
+        ts: Date.now() / 1000,
+        source: "grafana",
+        severity: "critical",
+        title: "Database unavailable",
+        channel: "ntfy",
+        suppressed_by: "",
+        emergency_receipt_id: "receipt-delivery-e2e",
+      }],
+    }),
+  }));
+  await page.route("**/api/emergencies?state=active&limit=500", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ incidents: [{ receipt_id: "receipt-delivery-e2e" }] }),
+  }));
+  await page.route("**/api/emergencies/receipt-delivery-e2e/ack", route => {
+    acknowledged = true;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+
+  await page.goto("/deliveries");
+  const details = page.locator("[data-delivery-details]");
+  await details.focus();
+  await details.press("Enter");
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".deliv-detail")).toContainText("receipt-delivery-e2e");
+
+  await page.click("[data-delivery-ack]");
+  await page.locator(".app-dialog .primary").click();
+  await expect.poll(() => acknowledged).toBe(true);
 });

@@ -261,6 +261,18 @@ impl AppState {
         channel: &str,
         suppressed_by: &str,
     ) {
+        self.log_delivery_with_receipt(source, severity, title, channel, suppressed_by, None);
+    }
+
+    pub fn log_delivery_with_receipt(
+        &self,
+        source: &str,
+        severity: &str,
+        title: &str,
+        channel: &str,
+        suppressed_by: &str,
+        emergency_receipt_id: Option<&str>,
+    ) {
         let entry = DeliveryEntry {
             ts: crate::util::now_epoch(),
             source: source.to_string(),
@@ -268,6 +280,7 @@ impl AppState {
             title: title.to_string(),
             channel: channel.to_string(),
             suppressed_by: suppressed_by.to_string(),
+            emergency_receipt_id: emergency_receipt_id.map(str::to_string),
         };
         if let Err(err) = self.history_store().record_delivery(&entry) {
             tracing::error!("persist delivery history failed: {err}");

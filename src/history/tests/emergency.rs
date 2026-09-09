@@ -182,7 +182,7 @@ fn sqlite_storage_migration_accepts_pre_emergency_source_schema() {
         .unwrap()
         .execute_batch(
             "DROP TABLE klaxond_emergencies;
-             DELETE FROM klaxond_schema_migrations WHERE version IN (6,7);",
+             DELETE FROM klaxond_schema_migrations WHERE version IN (6,7,8);",
         )
         .unwrap();
 

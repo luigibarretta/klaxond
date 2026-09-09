@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS klaxond_deliveries (
   title TEXT NOT NULL,
   channel TEXT NOT NULL,
   suppressed_by TEXT NOT NULL DEFAULT '',
+  emergency_receipt_id TEXT,
   dedupe_hash TEXT NOT NULL
 );
 
@@ -197,6 +198,9 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_created
             "ALTER TABLE klaxond_emergencies ADD COLUMN policy_snapshot_json TEXT NOT NULL DEFAULT '';",
         )?;
     }
+    if !sqlite_column_exists(conn, "klaxond_deliveries", "emergency_receipt_id")? {
+        conn.execute_batch("ALTER TABLE klaxond_deliveries ADD COLUMN emergency_receipt_id TEXT;")?;
+    }
     conn.execute(
         "UPDATE klaxond_auth_sessions SET family_hash = id_hash WHERE family_hash = ''",
         [],
@@ -228,8 +232,8 @@ pub(super) fn sqlite_insert(conn: &Connection, entry: &DeliveryEntry) -> Result<
     conn.execute(
         r#"
 INSERT OR IGNORE INTO klaxond_deliveries
-  (ts, source, severity, title, channel, suppressed_by, dedupe_hash)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+  (ts, source, severity, title, channel, suppressed_by, emergency_receipt_id, dedupe_hash)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 "#,
         params![
             entry.ts,
@@ -238,6 +242,7 @@ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
             &entry.title,
             &entry.channel,
             &entry.suppressed_by,
+            &entry.emergency_receipt_id,
             hash,
         ],
     )?;
@@ -259,7 +264,7 @@ pub(super) fn sqlite_page(
 ) -> Result<Vec<DeliveryEntry>> {
     let mut stmt = conn.prepare(
         r#"
-SELECT ts, source, severity, title, channel, suppressed_by
+SELECT ts, source, severity, title, channel, suppressed_by, emergency_receipt_id
 FROM klaxond_deliveries
 ORDER BY ts DESC, id DESC
 LIMIT ?1 OFFSET ?2
@@ -273,6 +278,7 @@ LIMIT ?1 OFFSET ?2
             title: row.get(3)?,
             channel: row.get(4)?,
             suppressed_by: row.get(5)?,
+            emergency_receipt_id: row.get(6)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -281,13 +287,16 @@ LIMIT ?1 OFFSET ?2
 pub(super) fn sqlite_export_all(conn: &mut Connection) -> Result<Vec<DeliveryEntry>> {
     let tx = conn.unchecked_transaction()?;
     let rows = {
-        let mut stmt = tx.prepare(
-            r#"
-SELECT ts, source, severity, title, channel, suppressed_by
-FROM klaxond_deliveries
-ORDER BY ts ASC, id ASC
-"#,
-        )?;
+        let receipt_select =
+            if sqlite_column_exists(&tx, "klaxond_deliveries", "emergency_receipt_id")? {
+                "emergency_receipt_id"
+            } else {
+                "NULL AS emergency_receipt_id"
+            };
+        let mut stmt = tx.prepare(&format!(
+            "SELECT ts, source, severity, title, channel, suppressed_by, {receipt_select} \
+             FROM klaxond_deliveries ORDER BY ts ASC, id ASC"
+        ))?;
         let rows = stmt.query_map([], |row| {
             Ok(DeliveryEntry {
                 ts: row.get(0)?,
@@ -296,6 +305,7 @@ ORDER BY ts ASC, id ASC
                 title: row.get(3)?,
                 channel: row.get(4)?,
                 suppressed_by: row.get(5)?,
+                emergency_receipt_id: row.get(6)?,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>()?

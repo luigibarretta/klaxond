@@ -247,6 +247,7 @@
 .log-level.error { color: var(--red); }
 .log-level.warn { color: var(--yellow); }
 .log-level.info { color: var(--accent); }
+.log-level.success { color: var(--green); }
 .log-level.debug, .log-level.trace { color: var(--muted); }
 
 /* Keyboard shortcut help overlay (toggled by '?') */
