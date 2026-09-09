@@ -8,8 +8,8 @@ use super::readers::{
 use super::render::{load_render_config, read_component_dashboards, read_component_image};
 use super::{
     AuthConfig, DedupSetting, DeliveryConfig, EmergencyConfig, HistoryConfig, InhibitionRule,
-    NtfyTopic, Paths, RuntimeConfig, Schedule, Tier, bootstrap_config, default_icons,
-    default_priorities, default_tag_prefixes, default_tiers,
+    NtfyTopic, Paths, RuntimeConfig, Schedule, Tier, bootstrap_config, custom_ingest_sources,
+    default_icons, default_priorities, default_tag_prefixes, default_tiers,
 };
 use crate::util::{env_bool, env_string, toml_bool, toml_get, toml_string};
 use anyhow::Result;
@@ -31,6 +31,7 @@ struct RenderRuntime {
 }
 
 struct RoutingRuntime {
+    custom_ingest_sources: HashMap<String, String>,
     cascade_default: bool,
     tiers: Vec<Tier>,
     delivery: DeliveryConfig,
@@ -156,12 +157,18 @@ fn load_routing(paths: &Paths, toml: &toml::Value) -> Result<RoutingRuntime> {
             false,
         ),
     );
+    let custom_ingest_sources = custom_ingest_sources(toml);
     Ok(RoutingRuntime {
+        dedup: load_dedup(
+            paths,
+            toml_get(toml, &["dedup"]),
+            custom_ingest_sources.keys(),
+        )?,
+        custom_ingest_sources,
         cascade_default,
         tiers: read_tiers(toml_get(toml, &["cascade", "tiers"])).unwrap_or_else(default_tiers),
         delivery: read_delivery(toml),
         inhibition_rules: read_inhibition_rules(toml),
-        dedup: load_dedup(paths, toml_get(toml, &["dedup"]))?,
         auth: load_auth(paths, toml_get(toml, &["auth"]))?,
         schedules: read_schedules(toml),
         history: read_history(toml, paths),
@@ -254,6 +261,7 @@ fn assemble(
         tag_prefixes: render.tag_prefixes,
         fallback_runbooks: render.fallback_runbooks,
         source_urls: render.source_urls,
+        custom_ingest_sources: routing.custom_ingest_sources,
         component_dashboards: render.component_dashboards,
         component_image: render.component_image,
         cascade_default: routing.cascade_default,

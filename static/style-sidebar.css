@@ -123,7 +123,7 @@ nav.tabs {
   padding: 6px 10px 2px;
   font-weight: 600;
 }
-.tab {
+.sidebar .tab {
   position: relative;
   background: transparent;
   color: var(--muted);
@@ -138,6 +138,7 @@ nav.tabs {
   min-height: 38px;
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 9px;
 }
 .tab:hover { color: var(--text); background: var(--row-hover); }

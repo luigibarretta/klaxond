@@ -1,4 +1,4 @@
-use crate::config::{DEDUP_SOURCES, default_dedup};
+use crate::config::{default_dedup, default_dedup_setting};
 use crate::state::AppState;
 use axum::body::Body;
 use axum::http::Response;
@@ -7,16 +7,17 @@ use std::collections::HashMap;
 
 pub(super) async fn response(state: &AppState) -> Response<Body> {
     let cfg = state.cfg();
+    let sources = cfg.dedup_sources();
     let pending_counts = {
         let dedup = state.dedup.lock().await;
-        DEDUP_SOURCES
+        sources
             .iter()
             .map(|source| {
                 (
                     (*source).to_string(),
                     dedup
                         .queues
-                        .get(*source)
+                        .get(source)
                         .map(|queue| queue.len())
                         .unwrap_or(0),
                 )
@@ -28,8 +29,14 @@ pub(super) async fn response(state: &AppState) -> Response<Body> {
         .into_iter()
         .map(|entry| suppression_json(&cfg, entry))
         .collect::<Vec<_>>();
+    let mut defaults = default_dedup();
+    for source in &sources {
+        defaults
+            .entry(source.clone())
+            .or_insert_with(default_dedup_setting);
+    }
     super::super::super::json_response(json!({
-        "sources": DEDUP_SOURCES,
+        "sources": sources,
         "settings": cfg.dedup,
         "pending_counts": pending_counts,
         "recent_suppressed": recent_suppressed,
@@ -37,7 +44,7 @@ pub(super) async fn response(state: &AppState) -> Response<Body> {
             "grouping_window_s": {"min": 5, "max": 3600},
             "repeat_window_s": {"min": 60, "max": 604800},
         },
-        "defaults": default_dedup(),
+        "defaults": defaults,
     }))
 }
 

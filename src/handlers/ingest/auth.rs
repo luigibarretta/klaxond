@@ -1,47 +1,99 @@
 use super::super::config_admin::persist_reload;
 use super::super::{json_body, json_response, text};
-use crate::config::INGEST_SOURCES;
+use crate::config::{
+    MAX_CUSTOM_INGEST_SOURCES, RuntimeConfig, environment_custom_ingest_secrets,
+    environment_custom_ingest_sources, source_is_builtin, valid_ingest_source_slug,
+};
 use crate::state::AppState;
 use crate::util::{env_string, random_hex, toml_table_mut};
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, Response, StatusCode};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+
+#[derive(Deserialize)]
+struct IngestAuthRequest {
+    source: String,
+    action: String,
+    #[serde(default)]
+    secret: String,
+    #[serde(default)]
+    display_name: String,
+}
 
 pub(in crate::handlers) fn update_ingest_auth(state: &AppState, body: Bytes) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
-    let src = payload
-        .get("source")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    let action = payload
-        .get("action")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    if !INGEST_SOURCES.contains(&src.as_str()) {
+    let request = match serde_json::from_value::<IngestAuthRequest>(payload) {
+        Ok(request) => request,
+        Err(error) => {
+            return text(
+                StatusCode::BAD_REQUEST,
+                &format!("invalid request: {error}"),
+            );
+        }
+    };
+    let src = request.source.trim().to_ascii_lowercase();
+    let action = request.action.trim().to_ascii_lowercase();
+    let display_name = request.display_name.trim().to_string();
+    let current = state.cfg();
+    let is_custom = current.custom_ingest_source(&src).is_some();
+    if !matches!(
+        action.as_str(),
+        "add" | "set" | "generate" | "clear" | "remove"
+    ) {
         return text(
             StatusCode::BAD_REQUEST,
-            &format!("source must be one of {:?}", INGEST_SOURCES),
+            "action must be one of: add, set, generate, clear, remove",
         );
     }
-    if !matches!(action.as_str(), "set" | "generate" | "clear") {
+    if action == "add" {
+        if !valid_ingest_source_slug(&src) {
+            return text(
+                StatusCode::BAD_REQUEST,
+                "source must be 2-40 lowercase letters, digits or single hyphens",
+            );
+        }
+        if source_is_builtin(&src) || is_custom {
+            return text(StatusCode::CONFLICT, "source already exists");
+        }
+        if display_name.is_empty() || display_name.chars().count() > 64 {
+            return text(
+                StatusCode::BAD_REQUEST,
+                "display_name must contain 1-64 characters",
+            );
+        }
+        if current.custom_ingest_sources.len() >= MAX_CUSTOM_INGEST_SOURCES {
+            return text(StatusCode::BAD_REQUEST, "custom source limit reached");
+        }
+    } else if !source_is_builtin(&src) && !is_custom {
+        return text(StatusCode::BAD_REQUEST, "source is not registered");
+    }
+    if action == "remove" && source_is_builtin(&src) {
         return text(
             StatusCode::BAD_REQUEST,
-            "action must be one of: set, generate, clear",
+            "built-in sources cannot be removed",
+        );
+    }
+    if action == "remove" && environment_custom_ingest_sources().contains_key(&src) {
+        return text(
+            StatusCode::CONFLICT,
+            "environment-managed source definitions cannot be removed from the UI",
+        );
+    }
+    if matches!(action.as_str(), "remove" | "clear")
+        && (!env_string(&ingest_secret_env_key(&src)).trim().is_empty()
+            || environment_custom_ingest_secrets().contains_key(&src))
+    {
+        return text(
+            StatusCode::CONFLICT,
+            "environment-managed sources cannot be cleared or removed from the UI",
         );
     }
     if action == "set" {
-        let sec = payload
-            .get("secret")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
+        let sec = request.secret.trim();
         if sec.len() < 16 {
             return text(
                 StatusCode::BAD_REQUEST,
@@ -51,24 +103,34 @@ pub(in crate::handlers) fn update_ingest_auth(state: &AppState, body: Bytes) -> 
     }
     let new_secret = match state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
-        let secrets = toml_table_mut(&mut cfg.toml, &["ingest", "secrets"]);
         let mut new_secret = None;
         match action.as_str() {
+            "add" => {
+                toml_table_mut(&mut cfg.toml, &["ingest", "custom_sources"])
+                    .insert(src.clone(), toml::Value::String(display_name));
+                let sec = random_hex(32);
+                toml_table_mut(&mut cfg.toml, &["ingest", "secrets"])
+                    .insert(src.clone(), toml::Value::String(sec.clone()));
+                new_secret = Some(sec);
+            }
+            "remove" => {
+                toml_table_mut(&mut cfg.toml, &["ingest", "secrets"]).remove(&src);
+                toml_table_mut(&mut cfg.toml, &["ingest", "custom_sources"]).remove(&src);
+            }
             "clear" => {
-                secrets.remove(&src);
+                toml_table_mut(&mut cfg.toml, &["ingest", "secrets"]).remove(&src);
             }
             "generate" => {
                 let sec = random_hex(32);
-                secrets.insert(src.clone(), toml::Value::String(sec.clone()));
+                toml_table_mut(&mut cfg.toml, &["ingest", "secrets"])
+                    .insert(src.clone(), toml::Value::String(sec.clone()));
                 new_secret = Some(sec);
             }
             _ => {
-                let sec = payload
-                    .get("secret")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
-                secrets.insert(src.clone(), toml::Value::String(sec.into()));
+                toml_table_mut(&mut cfg.toml, &["ingest", "secrets"]).insert(
+                    src.clone(),
+                    toml::Value::String(request.secret.trim().into()),
+                );
             }
         }
         persist_reload(state, cfg.toml).map(|_| new_secret)
@@ -77,7 +139,13 @@ pub(in crate::handlers) fn update_ingest_auth(state: &AppState, body: Bytes) -> 
         Ok(Err(err)) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
         Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
     };
-    let mut resp = json!({"ok": true, "source": src, "action": action});
+    let endpoint = state.with_cfg(|cfg| ingest_endpoint(cfg, &src));
+    let mut resp = json!({
+        "ok": true,
+        "source": src,
+        "action": action,
+        "endpoint": endpoint,
+    });
     if let Some(sec) = new_secret {
         resp["secret"] = json!(sec);
     }
@@ -115,6 +183,9 @@ pub(super) fn verify_ingest_auth(
 }
 
 pub(in crate::handlers) fn ingest_secret_for(state: &AppState, source: &str) -> String {
+    if let Some(secret) = environment_custom_ingest_secrets().get(source) {
+        return secret.trim().to_string();
+    }
     let env_key = ingest_secret_env_key(source);
     let env_val = env_string(&env_key);
     if !env_val.trim().is_empty() {
@@ -133,26 +204,29 @@ pub(in crate::handlers) fn ingest_secret_for(state: &AppState, source: &str) -> 
 }
 
 pub(in crate::handlers) fn ingest_auth_payload(state: &AppState) -> Value {
+    let cfg = state.cfg();
     let mut sources = serde_json::Map::new();
-    for src in INGEST_SOURCES {
-        let env_val = env_string(&ingest_secret_env_key(src));
-        let toml_val = state
-            .cfg()
+    let mut custom_env_secrets = environment_custom_ingest_secrets();
+    for src in cfg.ingest_sources() {
+        let env_val = custom_env_secrets
+            .remove(&src)
+            .unwrap_or_else(|| env_string(&ingest_secret_env_key(&src)));
+        let toml_val = cfg
             .toml
             .get("ingest")
             .and_then(|v| v.get("secrets"))
-            .and_then(|v| v.get(*src))
+            .and_then(|v| v.get(&src))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
         sources.insert(
-            (*src).into(),
+            src.clone(),
             if !env_val.trim().is_empty() {
-                json!({"configured": true, "from": "env"})
+                source_payload(&cfg, &src, true, "env")
             } else if !toml_val.trim().is_empty() {
-                json!({"configured": true, "from": "toml"})
+                source_payload(&cfg, &src, true, "toml")
             } else {
-                json!({"configured": false, "from": ""})
+                source_payload(&cfg, &src, false, "")
             },
         );
     }
@@ -161,6 +235,35 @@ pub(in crate::handlers) fn ingest_auth_payload(state: &AppState) -> Value {
         "auth_methods_accepted": ["Authorization: Bearer <secret>", "X-Klaxond-Token: <secret>", "?token=<secret> query param"],
         "note": "Sources without a configured secret are disabled and reject delivery. Setting or generating a secret enables the source.",
     })
+}
+
+fn source_payload(cfg: &RuntimeConfig, source: &str, configured: bool, from: &str) -> Value {
+    let custom = cfg.custom_ingest_source(source).is_some();
+    let definition_from = if environment_custom_ingest_sources().contains_key(source) {
+        "env"
+    } else if custom {
+        "toml"
+    } else {
+        "builtin"
+    };
+    json!({
+        "configured": configured,
+        "from": from,
+        "custom": custom,
+        "definition_from": definition_from,
+        "display_name": cfg.ingest_source_display_name(source),
+        "endpoint": ingest_endpoint(cfg, source),
+    })
+}
+
+fn ingest_endpoint(cfg: &RuntimeConfig, source: &str) -> String {
+    if cfg.custom_ingest_source(source).is_some() {
+        format!("/ingest/{source}/{{severity}}")
+    } else if source == "grafana" {
+        "/webhook/{severity}".to_string()
+    } else {
+        format!("/{source}/{{severity}}")
+    }
 }
 
 fn ingest_secret_env_key(source: &str) -> String {

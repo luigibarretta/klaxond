@@ -8,7 +8,6 @@ mod tests;
 pub use self::key::dedup_key;
 use self::persistence::{clear_persisted, pending_path, persist_item};
 use self::render::{highest_severity, render_batch};
-use crate::config::DEDUP_SOURCES;
 use crate::delivery::deliver;
 use crate::parsers::Parts;
 use crate::state::{AppState, DedupItem};
@@ -79,8 +78,9 @@ pub async fn submit(state: &AppState, input: SubmitInput) -> bool {
 
 pub async fn restore_pending(state: &AppState) {
     let _ = fs::create_dir_all(&state.paths.dedup_pending_dir);
-    for src in DEDUP_SOURCES {
-        let path = pending_path(state, src);
+    let sources = state.with_cfg(|cfg| cfg.dedup.keys().cloned().collect::<Vec<_>>());
+    for src in sources {
+        let path = pending_path(state, &src);
         if !path.exists() {
             continue;
         }
@@ -99,15 +99,16 @@ pub async fn restore_pending(state: &AppState) {
         }
         {
             let mut d = state.dedup.lock().await;
-            d.queues.insert((*src).to_string(), items);
+            d.queues.insert(src.clone(), items);
         }
-        flush_source(state, src).await;
+        flush_source(state, &src).await;
     }
 }
 
 pub async fn flush_all(state: &AppState) {
-    for src in DEDUP_SOURCES {
-        flush_source(state, src).await;
+    let sources = state.with_cfg(|cfg| cfg.dedup.keys().cloned().collect::<Vec<_>>());
+    for src in sources {
+        flush_source(state, &src).await;
     }
 }
 

@@ -23,9 +23,46 @@ pub fn normalize_labels(source: &str, payload: &Value) -> Labels {
         "pve" => normalize_pve_labels(payload, &mut out),
         "github" => normalize_github_labels(payload, &mut out),
         "revaulter" => normalize_revaulter_labels(payload, &mut out),
-        _ => {}
+        _ => normalize_generic_labels(payload, &mut out),
     }
     out
+}
+
+fn normalize_generic_labels(payload: &Value, out: &mut Labels) {
+    if let Some(labels) = payload.get("labels").and_then(Value::as_object) {
+        for (key, value) in labels {
+            out.insert(key.to_ascii_lowercase(), scalar_to_string(value));
+        }
+    }
+    for key in ["alertname", "host", "service", "component", "job"] {
+        if let Some(value) = payload.get(key).map(scalar_to_string)
+            && !value.trim().is_empty()
+        {
+            out.insert(key.to_string(), value);
+        }
+    }
+    if !out.contains_key("alertname") {
+        for key in ["title", "alert", "name"] {
+            if let Some(value) = payload.get(key).map(scalar_to_string)
+                && !value.trim().is_empty()
+            {
+                out.insert("alertname".into(), value);
+                break;
+            }
+        }
+    }
+    if payload
+        .get("status")
+        .map(scalar_to_string)
+        .is_some_and(|status| {
+            matches!(
+                status.trim().to_ascii_lowercase().as_str(),
+                "resolved" | "ok" | "closed" | "recovered"
+            )
+        })
+    {
+        out.insert("status".into(), "resolved".into());
+    }
 }
 
 fn normalize_grafana_labels(payload: &Value, out: &mut Labels) {

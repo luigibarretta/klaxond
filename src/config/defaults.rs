@@ -111,11 +111,7 @@ pub fn default_dedup() -> HashMap<String, DedupSetting> {
                     enabled,
                     window_s,
                     strategy: strategy.to_string(),
-                    override_critical: false,
-                    repeat_suppression_enabled: false,
-                    repeat_window_s: 7_200,
-                    repeat_override_critical: false,
-                    rules: Vec::new(),
+                    ..super::default_dedup_setting()
                 },
             )
         })

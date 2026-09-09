@@ -202,8 +202,14 @@ complete route list, schemas, auth requirements and response contracts.
 | `POST` | `/uptime-kuma/<severity>` | Uptime Kuma webhook; heartbeat state overrides recovery severity |
 | `POST` | `/github/<severity>` | Normalized GitHub issue-comment events |
 | `POST` | `/revaulter/<severity>` | Protected-key approval requests with a configured Revaulter action |
+| `POST` | `/ingest/<source>/<severity>` | Registered custom JSON source using the generic notification parser |
 
 `<severity>` is one of `info`, `warning`, `critical`.
+Custom sources can be added from **Routing → Inbound webhook auth**. Klaxond
+generates a secret, exposes the exact endpoint, and includes the source in Flow,
+noise control, inhibition and emergency selectors. The generic parser accepts
+common `title`, `message`, `status`, `url` and `labels` fields while preserving
+the complete JSON body as a readable fallback.
 
 ### Health + UI
 
@@ -505,7 +511,7 @@ Every UI-managed setting has a compose-managed path:
 |---|---|
 | Routing: ntfy URL, Telegram, SMTP | env vars or `/data/klaxond.toml` |
 | Routing: ntfy topics and bearer tokens | env vars, `[ntfy.topics]`, or `/data/ntfy-topics.json` |
-| Routing: enabled inbound sources and webhook secrets | `KLAXOND_INGEST_SECRET_<SOURCE>` or `[ingest.secrets]`; unset sources reject delivery |
+| Routing: enabled inbound sources and webhook secrets | `KLAXOND_INGEST_SECRET_<SOURCE>`, `KLAXOND_CUSTOM_INGEST_SOURCES` + `KLAXOND_CUSTOM_INGEST_SECRETS`, or `[ingest.custom_sources]` + `[ingest.secrets]`; unset sources reject delivery |
 | Cascade, delivery policies, inhibitions, schedules | `/data/klaxond.toml` |
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
 | Noise control: burst grouping and repeat suppression | `[dedup]` bootstrap or `/data/dedup-config.json` |
@@ -558,6 +564,7 @@ UI-saved values at runtime.
 | `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | `[auth.oidc].client_secret`, `[auth.basic].password_hash`, or `auth-config.json`; LDAP is configured through `[auth.ldap]` or `auth-config.json` |
 | `AUTH_TRUSTED_PROXY_CIDRS` | `[auth.trusted_proxy].trusted_cidrs` or `auth-config.json`; comma-separated and runtime-authoritative |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | `[ingest.secrets].<source>` |
+| `KLAXOND_CUSTOM_INGEST_SOURCES` / `KLAXOND_CUSTOM_INGEST_SECRETS` | JSON objects equivalent to `[ingest.custom_sources]` / custom entries in `[ingest.secrets]` |
 | `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | `[paths].render_config`, `[paths].ntfy_topics`, `[paths].dedup_config`, `[paths].auth_config` |
 | `AUTH_SESSION_KEY_PATH` / `KLAXOND_BACKUP_DIR` / `DEDUP_PENDING_DIR` / `BESZEL_DB_PATH` | `[paths].auth_session_key`, `[paths].backup_dir`, `[paths].dedup_pending_dir`, `[paths].beszel_db` |
 | `KLAXOND_SQLITE_PATH` / `KLAXOND_HISTORY_BACKEND` / `KLAXOND_POSTGRES_URL` / `KLAXOND_HISTORY_RETENTION` / `KLAXOND_HISTORY_DEFAULT_LIMIT` | `[paths].history_db`, `[history].backend`, `[history].postgres_url`, `[history].retention`, `[history].default_limit` |

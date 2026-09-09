@@ -93,9 +93,9 @@ impl AppState {
             );
         }
         let mut queues = DedupQueues::default();
-        for src in crate::config::DEDUP_SOURCES {
-            queues.queues.insert((*src).to_string(), Vec::new());
-            queues.timer_active.insert((*src).to_string(), false);
+        for src in cfg.dedup.keys() {
+            queues.queues.insert(src.clone(), Vec::new());
+            queues.timer_active.insert(src.clone(), false);
         }
         Ok(Self {
             paths,

@@ -126,6 +126,7 @@ pub struct RuntimeConfig {
     pub tag_prefixes: HashMap<String, String>,
     pub fallback_runbooks: HashMap<String, String>,
     pub source_urls: HashMap<String, String>,
+    pub custom_ingest_sources: HashMap<String, String>,
     pub component_dashboards: HashMap<String, [String; 2]>,
     pub component_image: HashMap<String, (String, Option<u64>)>,
     pub cascade_default: bool,
@@ -157,6 +158,44 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
+    pub fn ingest_sources(&self) -> Vec<String> {
+        let mut custom_sources = self
+            .custom_ingest_sources
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        custom_sources.sort();
+        super::INGEST_SOURCES
+            .iter()
+            .map(|source| (*source).to_string())
+            .chain(custom_sources)
+            .collect()
+    }
+
+    pub fn dedup_sources(&self) -> Vec<String> {
+        let mut custom_sources = self
+            .custom_ingest_sources
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        custom_sources.sort();
+        super::DEDUP_SOURCES
+            .iter()
+            .map(|source| (*source).to_string())
+            .chain(custom_sources)
+            .collect()
+    }
+
+    pub fn custom_ingest_source(&self, source: &str) -> Option<&str> {
+        self.custom_ingest_sources.get(source).map(String::as_str)
+    }
+
+    pub fn ingest_source_display_name(&self, source: &str) -> String {
+        self.custom_ingest_source(source)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| source.to_string())
+    }
+
     pub fn source_url(&self, source: &str) -> Option<&str> {
         self.source_urls
             .get(source)

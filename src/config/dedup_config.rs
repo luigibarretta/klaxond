@@ -1,41 +1,65 @@
-use super::{DEDUP_SOURCES, DedupSetting, Paths, default_dedup};
+use super::{DEDUP_SOURCES, DedupSetting, Paths, default_dedup, default_dedup_setting};
 use crate::util::atomic_write_json;
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 
 pub(super) fn load_dedup(
     paths: &Paths,
     seed: Option<&toml::Value>,
+    custom_sources: impl Iterator<Item = impl AsRef<str>>,
 ) -> Result<HashMap<String, DedupSetting>> {
+    let custom_sources = custom_sources
+        .map(|source| source.as_ref().to_string())
+        .collect::<Vec<_>>();
     if paths.dedup_config.exists() {
         let mut out = default_dedup();
         let raw: HashMap<String, DedupSetting> =
             serde_json::from_slice(&fs::read(&paths.dedup_config)?)?;
+        let supported = DEDUP_SOURCES
+            .iter()
+            .map(|source| (*source).to_string())
+            .chain(custom_sources.iter().cloned())
+            .collect::<HashSet<_>>();
         let missing_supported_source = DEDUP_SOURCES
             .iter()
-            .any(|source| !raw.contains_key(*source));
+            .copied()
+            .chain(custom_sources.iter().map(String::as_str))
+            .any(|source| !raw.contains_key(source));
+        let stale_source = raw.keys().any(|source| !supported.contains(source));
         for (k, mut v) in raw {
+            if !supported.contains(&k) {
+                continue;
+            }
             normalize_setting(&mut v);
             out.insert(k, v);
         }
-        if missing_supported_source {
+        for source in &custom_sources {
+            out.entry(source.clone())
+                .or_insert_with(default_dedup_setting);
+        }
+        if missing_supported_source || stale_source {
             save_dedup(paths, &out)?;
         }
         return Ok(out);
     }
-    let out = dedup_from_toml(seed);
+    let out = dedup_from_toml(seed, custom_sources.iter());
     save_dedup(paths, &out)?;
     Ok(out)
 }
 
-pub(super) fn dedup_from_toml(seed: Option<&toml::Value>) -> HashMap<String, DedupSetting> {
+pub(super) fn dedup_from_toml(
+    seed: Option<&toml::Value>,
+    custom_sources: impl Iterator<Item = impl AsRef<str>>,
+) -> HashMap<String, DedupSetting> {
     let mut out = default_dedup();
+    for source in custom_sources {
+        out.entry(source.as_ref().to_string())
+            .or_insert_with(default_dedup_setting);
+    }
     if let Some(seed_table) = seed.and_then(|v| v.as_table()) {
-        for src in DEDUP_SOURCES {
-            if let Some(t) = seed_table.get(*src).and_then(|v| v.as_table())
-                && let Some(s) = out.get_mut(*src)
-            {
+        for (src, s) in &mut out {
+            if let Some(t) = seed_table.get(src).and_then(|v| v.as_table()) {
                 if let Some(v) = t.get("enabled").and_then(|v| v.as_bool()) {
                     s.enabled = v;
                 }
@@ -64,7 +88,7 @@ pub(super) fn dedup_from_toml(seed: Option<&toml::Value>) -> HashMap<String, Ded
                     match value.clone().try_into() {
                         Ok(rules) => s.rules = rules,
                         Err(error) => tracing::warn!(
-                            source = *src,
+                            source = src,
                             %error,
                             "ignoring invalid TOML noise-control rules"
                         ),

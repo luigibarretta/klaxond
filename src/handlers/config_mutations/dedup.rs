@@ -1,5 +1,5 @@
 use super::{json_body, json_response, text};
-use crate::config::{DEDUP_SOURCES, DedupSetting, NoiseControlRule, default_dedup, save_dedup};
+use crate::config::{DedupSetting, NoiseControlRule, save_dedup};
 use crate::state::AppState;
 use axum::body::{Body, Bytes};
 use axum::http::{Response, StatusCode};
@@ -18,7 +18,7 @@ pub(in crate::handlers) fn update_dedup_config(state: &AppState, body: Bytes) ->
     state
         .with_config_write_lock(move || {
             let current = state.cfg();
-            let cleaned = match request.into_settings(default_dedup(), &current.dedup) {
+            let cleaned = match request.into_settings(current.dedup.clone(), &current.dedup) {
                 Ok(cleaned) => cleaned,
                 Err(error) => return text(StatusCode::BAD_REQUEST, &error),
             };
@@ -61,21 +61,22 @@ impl DedupConfigRequest {
         mut settings: HashMap<String, DedupSetting>,
         current: &HashMap<String, DedupSetting>,
     ) -> Result<HashMap<String, DedupSetting>, String> {
-        for source in DEDUP_SOURCES {
+        let sources = settings.keys().cloned().collect::<Vec<_>>();
+        for source in sources {
             if let (Some(setting), Some(current)) =
-                (settings.get_mut(*source), current.get(*source))
+                (settings.get_mut(&source), current.get(&source))
             {
                 setting.repeat_suppression_enabled = current.repeat_suppression_enabled;
                 setting.repeat_window_s = current.repeat_window_s;
                 setting.repeat_override_critical = current.repeat_override_critical;
                 setting.rules = current.rules.clone();
             }
-            if let Some(patch) = self.settings.get(*source)
-                && let Some(setting) = settings.get_mut(*source)
+            if let Some(patch) = self.settings.get(&source)
+                && let Some(setting) = settings.get_mut(&source)
             {
                 patch.apply_to(setting);
             }
-            if let Some(setting) = settings.get(*source) {
+            if let Some(setting) = settings.get(&source) {
                 if setting.rules.len() > 50 {
                     return Err(format!(
                         "settings.{source}.rules: at most 50 rules are allowed"

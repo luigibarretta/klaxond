@@ -175,6 +175,7 @@ fn all_runtime_operations_are_documented_in_openapi() {
         ("post", "/api/render-config"),
         ("post", "/api/render-preview"),
         ("post", "/api/test/{severity}"),
+        ("post", "/ingest/{source}/{severity}"),
     ];
 
     for (method, path) in operations {
@@ -206,6 +207,7 @@ fn all_ingest_operations_document_fail_closed_auth_responses() {
         "/blackstart/{severity}",
         "/github/{severity}",
         "/revaulter/{severity}",
+        "/ingest/{source}/{severity}",
     ];
 
     for path in paths {

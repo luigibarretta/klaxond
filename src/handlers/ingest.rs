@@ -30,17 +30,17 @@ pub(super) async fn ingest(
     body: Bytes,
     peer: SocketAddr,
 ) -> Response<Body> {
-    let route = match ingest_route(path, full_path) {
+    let route = match state.with_cfg(|cfg| ingest_route(path, full_path, cfg)) {
         Ok(route) => route,
         Err(err) => return ingest_route_error_response(err),
     };
     let mut source = route.source;
-    let (mut auth_ok, mut auth_reason) = verify_ingest_auth(state, source, headers, &route.qs);
+    let (mut auth_ok, mut auth_reason) = verify_ingest_auth(state, &source, headers, &route.qs);
     if !auth_ok && source == "grafana" {
         let (blackstart_ok, blackstart_reason) =
             verify_ingest_auth(state, "blackstart", headers, &route.qs);
         if blackstart_ok {
-            source = "blackstart";
+            source = "blackstart".into();
             auth_ok = true;
             auth_reason = "blackstart-legacy-webhook-route".into();
             tracing::warn!(
@@ -82,10 +82,10 @@ pub(super) async fn ingest(
     };
     let dry_run = dry_run_requested(&route.qs, &payload);
 
-    let norm = normalize_labels(source, &payload);
-    let (should_send, reason) = inhibition::apply_inhibition(state, source, &norm, dry_run);
+    let norm = normalize_labels(&source, &payload);
+    let (should_send, reason) = inhibition::apply_inhibition(state, &source, &norm, dry_run);
     if !should_send {
-        return suppressed_ingest_response(state, source, &route.severity, &norm, reason, dry_run);
+        return suppressed_ingest_response(state, &source, &route.severity, &norm, reason, dry_run);
     }
 
     // A newly firing inhibition source may arrive after dependent emergencies
@@ -102,13 +102,13 @@ pub(super) async fn ingest(
         }
     }
 
-    let delivery = delivery_candidate(state, source, &route.severity, &payload, &norm);
+    let delivery = delivery_candidate(state, &source, &route.severity, &payload, &norm);
 
     if dry_run {
-        return dry_run_delivery_response(state, source, delivery, reason);
+        return dry_run_delivery_response(state, &source, delivery, reason);
     }
 
-    if maybe_buffer_dedup(state, source, &payload, &delivery).await {
+    if maybe_buffer_dedup(state, &source, &payload, &delivery).await {
         return text(StatusCode::ACCEPTED, "buffered (dedup window)");
     }
     let (ok, channel) = deliver(
@@ -117,7 +117,7 @@ pub(super) async fn ingest(
         delivery.parts,
         delivery.with_cascade,
         delivery.common_labels,
-        source,
+        &source,
     )
     .await;
     if channel == "repeat-suppressed" {

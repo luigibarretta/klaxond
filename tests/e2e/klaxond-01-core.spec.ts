@@ -52,6 +52,7 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator('[data-language-option="it"]')).toBeVisible();
   await expect(page.locator('[data-theme-mode-option="system"]')).toBeVisible();
   await expect(page.locator("#sidebar-user-card")).toBeVisible();
+  await expect(page.locator('[data-tab="status"]')).toHaveCSS("justify-content", "flex-start");
   await page.evaluate(() => {
     const w = window as unknown as {
       setTabBadge: (tabId: string, count: number, kind?: string) => void;
@@ -62,6 +63,7 @@ test("serves health and admin UI", async ({ page, request }) => {
   });
   await page.click("#sidebar-toggle");
   await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await expect(page.locator('[data-tab="status"]')).toHaveCSS("justify-content", "center");
   await expect(page.locator(".brand-logo")).toBeVisible();
   await expect(page.locator(".brand-name")).toBeHidden();
   await expect(page.locator('[data-tab="status"] .tab-icon')).toBeVisible();

@@ -134,6 +134,11 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
         "TOML/JSON auth.trusted_proxy.trusted_cidrs",
     ),
     (
+        "KLAXOND_CUSTOM_INGEST_SOURCES",
+        "TOML [ingest.custom_sources]",
+    ),
+    ("KLAXOND_CUSTOM_INGEST_SECRETS", "TOML [ingest.secrets]"),
+    (
         "KLAXOND_INGEST_SECRET_GRAFANA",
         "TOML [ingest.secrets].grafana",
     ),
@@ -347,7 +352,7 @@ fn split_frontend_proxy_template_covers_backend_routes() {
         "proxy_set_header X-Forwarded-Host $klaxond_forwarded_host",
         "absolute_redirect off",
         "location ~ ^/api/",
-        "location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve|blackstart|github|revaulter)(/|$)",
+        "location ~ ^/(webhook|beszel|healthchecks|wud|authentik|shelfmark|prowlarr|decypharr|pve|blackstart|github|revaulter|ingest)(/|$)",
         "location ~ ^/img/",
         "location ~ ^/(swagger|api/docs|api/swagger|api/swagger-ui)(/|$)",
         "location = /ui/meta.js",

@@ -1,4 +1,5 @@
 use super::super::{json_response, parse_query, text};
+use crate::config::RuntimeConfig;
 use crate::dedup;
 use crate::parsers::{Parts, parse_source};
 use crate::state::AppState;
@@ -9,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 pub(super) struct IngestRoute {
-    pub(super) source: &'static str,
+    pub(super) source: String,
     pub(super) severity: String,
     pub(super) qs: HashMap<String, String>,
 }
@@ -26,8 +27,12 @@ pub(super) struct DeliveryCandidate {
     pub(super) common_labels: HashMap<String, String>,
 }
 
-pub(super) fn ingest_route(path: &str, full_path: &str) -> Result<IngestRoute, IngestRouteError> {
-    let Some(source) = ingest_source(path) else {
+pub(super) fn ingest_route(
+    path: &str,
+    full_path: &str,
+    cfg: &RuntimeConfig,
+) -> Result<IngestRoute, IngestRouteError> {
+    let Some(source) = ingest_source(path, cfg) else {
         return Err(IngestRouteError::NotFound);
     };
     let severity = path.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
@@ -48,8 +53,8 @@ pub(super) fn ingest_route_error_response(err: IngestRouteError) -> Response<Bod
     }
 }
 
-fn ingest_source(path: &str) -> Option<&'static str> {
-    [
+fn ingest_source(path: &str, cfg: &RuntimeConfig) -> Option<String> {
+    if let Some(source) = [
         ("/webhook/", "grafana"),
         ("/beszel/", "beszel"),
         ("/healthchecks/", "healthchecks"),
@@ -66,6 +71,20 @@ fn ingest_source(path: &str) -> Option<&'static str> {
     ]
     .iter()
     .find_map(|(prefix, source)| path.starts_with(prefix).then_some(*source))
+    {
+        return Some(source.to_string());
+    }
+    let mut segments = path.strip_prefix("/ingest/")?.split('/');
+    let source = segments.next()?;
+    let severity = segments.next()?;
+    if source.is_empty()
+        || severity.is_empty()
+        || segments.next().is_some()
+        || cfg.custom_ingest_source(source).is_none()
+    {
+        return None;
+    }
+    Some(source.to_string())
 }
 
 pub(super) fn parse_ingest_payload(body: &Bytes) -> serde_json::Result<Value> {
@@ -288,64 +307,5 @@ pub(super) async fn maybe_buffer_dedup(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{common_labels, ingest_source};
-    use serde_json::json;
-
-    #[test]
-    fn dedicated_blackstart_route_preserves_source_identity() {
-        assert_eq!(ingest_source("/blackstart/critical"), Some("blackstart"));
-        assert_eq!(ingest_source("/webhook/critical"), Some("grafana"));
-    }
-
-    #[test]
-    fn dedicated_github_route_preserves_source_identity() {
-        assert_eq!(ingest_source("/github/info"), Some("github"));
-        assert_eq!(ingest_source("/webhook/info"), Some("grafana"));
-    }
-
-    #[test]
-    fn alertmanager_group_key_survives_common_label_expansion() {
-        let initial = json!({
-            "groupKey": "{}:{alertname=\"TrivyFixableCriticalNewEntry\"}",
-            "commonLabels": {
-                "alertname": "TrivyFixableCriticalNewEntry",
-                "host": "it1-prd-mgmt-01",
-                "container": "alertmanager"
-            }
-        });
-        let expanded = json!({
-            "groupKey": "{}:{alertname=\"TrivyFixableCriticalNewEntry\"}",
-            "commonLabels": {"alertname": "TrivyFixableCriticalNewEntry"}
-        });
-
-        let initial = common_labels("grafana", &initial);
-        let expanded = common_labels("grafana", &expanded);
-        assert_eq!(
-            initial.get("__klaxond_incident_key"),
-            expanded.get("__klaxond_incident_key")
-        );
-        assert_ne!(initial.get("host"), expanded.get("host"));
-    }
-
-    #[test]
-    fn alertmanager_group_labels_are_a_canonical_fallback() {
-        let first = json!({
-            "groupLabels": {"severity": "critical", "alertname": "DiskFull"}
-        });
-        let reordered = json!({
-            "groupLabels": {"alertname": "DiskFull", "severity": "critical"}
-        });
-
-        assert_eq!(
-            common_labels("grafana", &first).get("__klaxond_incident_key"),
-            common_labels("grafana", &reordered).get("__klaxond_incident_key")
-        );
-    }
-
-    #[test]
-    fn dedicated_revaulter_route_preserves_source_identity() {
-        assert_eq!(ingest_source("/revaulter/warning"), Some("revaulter"));
-        assert_eq!(ingest_source("/webhook/warning"), Some("grafana"));
-    }
-}
+#[path = "pipeline_tests.rs"]
+mod tests;

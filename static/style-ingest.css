@@ -1,0 +1,22 @@
+.ingest-source-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 12px;
+}
+
+.ingest-source-toolbar p { margin: 0; }
+.ingest-source-name { display: grid; gap: 3px; }
+.ingest-source-name small { color: var(--muted); }
+.ingest-source-endpoint { white-space: nowrap; }
+.ingest-source-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+@media (max-width: 760px) {
+  .ingest-source-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .ingest-source-toolbar .btn { width: 100%; }
+}

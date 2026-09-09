@@ -151,6 +151,11 @@ postgres_url = ""
 retention = 5000
 default_limit = 500
 
+# Custom JSON webhook sources use /ingest/<source>/<severity>. The UI writes
+# entries here and stores their secrets in [ingest.secrets].
+[ingest.custom_sources]
+# home-assistant = "Home Assistant"
+
 [ingest.secrets]
 grafana = ""
 beszel = ""

@@ -559,6 +559,32 @@ paths:
           $ref: "#/components/responses/IngestUnauthorized"
         "404":
           $ref: "#/components/responses/IngestSourceDisabled"
+  /ingest/{source}/{severity}:
+    post:
+      tags: [Ingest]
+      operationId: ingestCustomSource
+      summary: Receive a JSON notification from a registered custom source.
+      description: Custom sources are registered through `/api/ingest-auth`. The generic parser recognizes title, alertname, alert, name, message, body, description, summary, status, url and labels fields.
+      security: *ingestSecurity
+      parameters:
+        - $ref: "#/components/parameters/IngestSource"
+        - $ref: "#/components/parameters/Severity"
+        - $ref: "#/components/parameters/DryRun"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertPayload"
+      responses:
+        "200":
+          $ref: "#/components/responses/IngestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/IngestUnauthorized"
+        "404":
+          $ref: "#/components/responses/IngestSourceDisabled"
   /api/auth/login:
     get:
       tags: [Auth]
@@ -1762,6 +1788,18 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [sources, auth_methods_accepted]
+                properties:
+                  sources:
+                    type: object
+                    additionalProperties:
+                      $ref: "#/components/schemas/IngestSourceStatus"
+                  auth_methods_accepted:
+                    type: array
+                    items:
+                      type: string
+                  note:
+                    type: string
         "4XX":
           $ref: "#/components/responses/ClientError"
     post:
@@ -1777,7 +1815,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: "#/components/schemas/IngestAuthUpdate"
       responses:
         "200":
           $ref: "#/components/responses/OkJson"
@@ -2384,6 +2422,16 @@ components:
       scheme: basic
       description: Username/password auth for non-browser clients in basic or LDAP mode.
   parameters:
+    IngestSource:
+      name: source
+      in: path
+      required: true
+      description: Registered custom-source slug.
+      schema:
+        type: string
+        pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+        minLength: 2
+        maxLength: 40
     Severity:
       name: severity
       in: path
@@ -2517,6 +2565,43 @@ components:
           schema:
             type: string
   schemas:
+    IngestSourceStatus:
+      type: object
+      required: [configured, from, custom, definition_from, display_name, endpoint]
+      properties:
+        configured:
+          type: boolean
+        from:
+          type: string
+          enum: ["", env, toml]
+        custom:
+          type: boolean
+        definition_from:
+          type: string
+          enum: [builtin, env, toml]
+        display_name:
+          type: string
+        endpoint:
+          type: string
+    IngestAuthUpdate:
+      type: object
+      required: [source, action]
+      properties:
+        source:
+          type: string
+          description: Built-in source name or custom-source slug.
+        action:
+          type: string
+          enum: [add, set, generate, clear, remove]
+        secret:
+          type: string
+          minLength: 16
+          writeOnly: true
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Required when adding a custom source.
     Severity:
       type: string
       enum: [info, warning, critical]

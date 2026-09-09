@@ -5,12 +5,14 @@ use serde_json::Value;
 pub type Action = [String; 3];
 
 mod core_sources;
+mod generic;
 mod grafana;
 mod integrations;
 mod labels;
 mod uptime_kuma;
 
 pub use core_sources::{parse_beszel_payload, parse_healthchecks_payload, parse_pve_payload};
+pub use generic::parse_generic_payload;
 pub use grafana::parse_grafana_payload;
 pub use integrations::{
     decypharr_severity, parse_authentik_payload, parse_decypharr_payload, parse_github_payload,
@@ -127,10 +129,13 @@ pub fn parse_source(
             severity.to_string(),
             parse_revaulter_payload(payload, severity, cfg),
         ),
-        _ => (
-            severity.to_string(),
-            parse_beszel_payload(payload, severity, cfg),
-        ),
+        _ => {
+            let severity = generic::generic_delivery_severity(payload, severity);
+            (
+                severity.clone(),
+                parse_generic_payload(source, payload, &severity, cfg),
+            )
+        }
     }
 }
 

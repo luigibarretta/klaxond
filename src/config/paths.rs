@@ -21,6 +21,24 @@ pub struct Paths {
 }
 
 impl Paths {
+    #[cfg(test)]
+    pub(crate) fn for_root(root: &Path) -> Self {
+        Self {
+            config: root.join("klaxond.toml"),
+            default_config: root.join("klaxond.default.toml"),
+            render_config: root.join("render-config.json"),
+            ntfy_topics: root.join("ntfy-topics.json"),
+            dedup_config: root.join("dedup-config.json"),
+            dedup_pending_dir: root.join("dedup-pending"),
+            auth_config: root.join("auth-config.json"),
+            auth_session_key: root.join("auth-session.key"),
+            backup_dir: root.join("backups"),
+            static_dir: root.join("static"),
+            beszel_db: root.join("beszel.db"),
+            history_db: root.join("klaxond.db"),
+        }
+    }
+
     pub fn from_env() -> Self {
         let default_config = if Path::new("/app/klaxond.default.toml").exists() {
             PathBuf::from("/app/klaxond.default.toml")

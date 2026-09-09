@@ -17,6 +17,7 @@ pub const PUBLIC_ROUTES: &[PathPattern] = &[
     PathPattern::Prefix("/blackstart/"),
     PathPattern::Prefix("/github/"),
     PathPattern::Prefix("/revaulter/"),
+    PathPattern::Prefix("/ingest/"),
     PathPattern::Prefix("/healthz"),
     PathPattern::Prefix("/metrics"),
     PathPattern::Prefix("/api/ack/"),

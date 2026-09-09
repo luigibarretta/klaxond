@@ -190,15 +190,19 @@ export async function loadIngestAuth() {
                   : info.from === "toml" ? `<code>klaxond.toml</code>`
                   : "—";
       const isEnv = info.from === "env";
+      const definitionIsEnv = info.definition_from === "env";
+      const displayName = info.display_name || src;
       row.innerHTML = `
-        <td><code>${escapeHtml(src)}</code></td>
+        <td><span class="ingest-source-name"><strong>${escapeHtml(displayName)}</strong><small><code>${escapeHtml(src)}</code>${info.custom ? ` · ${escapeHtml(tr("ingest.custom"))}` : ""}</small></span></td>
         <td>${status}</td>
+        <td class="ingest-source-endpoint"><code>${escapeHtml(info.endpoint || `/${src}/{severity}`)}</code></td>
         <td><small>${from}</small></td>
-        <td>
+        <td><div class="ingest-source-actions">
           <button class="btn primary" data-act="generate" data-src="${escapeHtml(src)}" ${isEnv ? "disabled title='env override active'" : ""}>${escapeHtml(tr("ingest.generate"))}</button>
           <button class="btn" data-act="set" data-src="${escapeHtml(src)}" ${isEnv ? "disabled" : ""}>${escapeHtml(tr("ingest.set_custom"))}</button>
           <button class="btn" data-act="clear" data-src="${escapeHtml(src)}" ${(!info.configured || isEnv) ? "disabled" : ""} style="color:var(--red)">${escapeHtml(tr("ingest.clear"))}</button>
-        </td>`;
+          ${info.custom ? `<button class="btn danger" data-act="remove" data-src="${escapeHtml(src)}" ${(isEnv || definitionIsEnv) ? "disabled" : ""}>${escapeHtml(tr("ingest.remove"))}</button>` : ""}
+        </div></td>`;
       tb.appendChild(row);
     }
     // Wire button handlers
@@ -233,6 +237,13 @@ async function _ingestAuthAction(src, action) {
     );
     if (!confirmed) return;
   }
+  if (action === "remove") {
+    const confirmed = await confirmDialog(
+      tr("ingest.remove_confirm", { source: src }),
+      { title: tr("ingest.remove"), confirmLabel: tr("ingest.remove"), danger: true }
+    );
+    if (!confirmed) return;
+  }
   try {
     const res = await apiFetch("/api/ingest-auth", {
       method: "POST",
@@ -248,10 +259,15 @@ async function _ingestAuthAction(src, action) {
     if (r.secret) {
       await showSecretDialog(r.secret, {
         title: tr("ingest.generated", { source: src }),
-        message: `Copy this secret into the "${src}" emitter now. It will not be shown again.`,
+        message: tr("ingest.copy_secret", { source: src, endpoint: r.endpoint }),
         confirmLabel: tr("dialog.done"),
       });
-      notifySuccess(tr("ingest.generated", { source: src }), { durationMs: 4000 });
+      notifySuccess(
+        tr(action === "add" ? "ingest.added" : "ingest.generated", { source: src }),
+        { durationMs: 4000 }
+      );
+    } else if (action === "remove") {
+      notifySuccess(tr("ingest.removed", { source: src }), { durationMs: 4000 });
     } else {
       notifySuccess(tr("ingest.action_ok", { action, source: src }), { durationMs: 4000 });
     }
@@ -260,3 +276,50 @@ async function _ingestAuthAction(src, action) {
     notifyError(`ingest-auth-${action}`, e);
   }
 }
+
+$("#ingest-source-add")?.addEventListener("click", async () => {
+  const source = await promptDialog(tr("ingest.source_id_help"), {
+    title: tr("ingest.add_source"),
+    label: tr("ingest.source_id"),
+    autocomplete: "off",
+  });
+  if (source === null) return;
+  const normalized = source.trim().toLowerCase();
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalized) || normalized.length < 2 || normalized.length > 40) {
+    notifyValidationError("ingest-source-add", tr("ingest.source_id_help"));
+    return;
+  }
+  const displayName = await promptDialog(tr("ingest.display_name_help"), {
+    title: tr("ingest.add_source"),
+    label: tr("ingest.display_name"),
+    value: normalized.split("-").map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(" "),
+    autocomplete: "off",
+  });
+  if (!displayName?.trim()) return;
+
+  try {
+    const response = await apiFetch("/api/ingest-auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: normalized,
+        action: "add",
+        display_name: displayName.trim(),
+      }),
+    });
+    if (!response.ok) {
+      notifyResponseError("ingest-source-add", response, (await response.text()).slice(0, 200));
+      return;
+    }
+    const result = await response.json();
+    await showSecretDialog(result.secret, {
+      title: tr("ingest.generated", { source: normalized }),
+      message: tr("ingest.copy_secret", { source: normalized, endpoint: result.endpoint }),
+      confirmLabel: tr("dialog.done"),
+    });
+    notifySuccess(tr("ingest.added", { source: normalized }), { durationMs: 4000 });
+    loadIngestAuth();
+  } catch (error) {
+    notifyError("ingest-source-add", error);
+  }
+});

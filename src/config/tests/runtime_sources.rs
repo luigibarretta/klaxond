@@ -63,8 +63,12 @@ session_secret = "toml-session-secret"
 required_after_primary = true
 factor = "totp"
 
+[ingest.custom_sources]
+"home-assistant" = "Home Assistant"
+
 [ingest.secrets]
 grafana = "toml-grafana-secret"
+"home-assistant" = "toml-home-assistant-secret"
 "#,
     )
     .unwrap();
@@ -96,6 +100,19 @@ grafana = "toml-grafana-secret"
     assert_eq!(cfg.auth.session_secret, "toml-session-secret");
     assert!(cfg.auth.step_up.required_after_primary);
     assert_eq!(cfg.auth.step_up.factor, "totp");
+    assert_eq!(
+        cfg.custom_ingest_source("home-assistant"),
+        Some("Home Assistant")
+    );
+    assert!(cfg.dedup.contains_key("home-assistant"));
+    assert_eq!(
+        cfg.ingest_sources().first().map(String::as_str),
+        Some("grafana")
+    );
+    assert_eq!(
+        cfg.dedup_sources().first().map(String::as_str),
+        Some("grafana")
+    );
     assert_eq!(
         toml_get(&cfg.toml, &["ingest", "secrets", "grafana"]).and_then(|v| v.as_str()),
         Some("toml-grafana-secret")

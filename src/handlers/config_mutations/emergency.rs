@@ -1,8 +1,8 @@
 use super::super::config_admin::persist_reload;
 use super::super::{json_body, json_response, text};
 use crate::config::{
-    EmergencyConfig, EmergencyProfile, INGEST_SOURCES, emergency_timeline,
-    select_emergency_profile, validate_emergency_config, validate_runtime_config,
+    EmergencyConfig, EmergencyProfile, emergency_timeline, select_emergency_profile,
+    validate_emergency_config, validate_runtime_config,
 };
 use crate::state::AppState;
 use crate::util::toml_table_mut;
@@ -51,6 +51,7 @@ pub(in crate::handlers) fn emergency_config_payload(state: &AppState) -> Value {
         "mixed"
     };
     let known_severities = configured_severities(&cfg);
+    let known_sources = cfg.ingest_sources();
     let timeout = |name: &str, fallback: u64| {
         cfg.tiers
             .iter()
@@ -69,7 +70,7 @@ pub(in crate::handlers) fn emergency_config_payload(state: &AppState) -> Value {
             "escalation_attempts": {"min": 1, "max_field": "max_attempts"},
         },
         "known_severities": known_severities,
-        "known_sources": INGEST_SOURCES,
+        "known_sources": known_sources,
         "channel_timeouts": {
             "ntfy": timeout("ntfy", 15),
             "telegram": timeout("telegram", 8),
@@ -81,7 +82,7 @@ pub(in crate::handlers) fn emergency_config_payload(state: &AppState) -> Value {
             "false": "Absolute bypass after global source exclusions.",
             "true": "Selects a matching profile or the configured fallback profile.",
         },
-        "diagnostics": profile_diagnostics(&cfg.emergency, &known_severities),
+        "diagnostics": profile_diagnostics(&cfg.emergency, &known_severities, &known_sources),
         "managed_fields": managed_fields,
         "managed_by_environment": ownership != "ui",
         "source_of_truth": ownership,
@@ -293,7 +294,11 @@ fn configured_severities(cfg: &crate::config::RuntimeConfig) -> Vec<String> {
     severities
 }
 
-fn profile_diagnostics(config: &EmergencyConfig, severities: &[String]) -> Value {
+fn profile_diagnostics(
+    config: &EmergencyConfig,
+    severities: &[String],
+    sources: &[String],
+) -> Value {
     let shadowed = config
         .profiles
         .iter()
@@ -325,7 +330,7 @@ fn profile_diagnostics(config: &EmergencyConfig, severities: &[String]) -> Value
     let unrouted_severities = severities
         .iter()
         .filter(|severity| {
-            INGEST_SOURCES.iter().all(|source| {
+            sources.iter().all(|source| {
                 select_emergency_profile(&routing_config, severity, source, "", &HashMap::new())
                     .selected
                     .is_none()

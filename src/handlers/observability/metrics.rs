@@ -1,4 +1,3 @@
-use crate::config::DEDUP_SOURCES;
 use crate::state::{AppState, esc_label, lock_mutex};
 use axum::body::Body;
 use axum::http::header::CONTENT_TYPE;
@@ -36,11 +35,11 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
         lock_mutex(&state.suppressions, "suppressions").len() as f64,
     );
     if let Ok(d) = state.dedup.try_lock() {
-        for src in DEDUP_SOURCES {
+        for src in state.with_cfg(|cfg| cfg.dedup.keys().cloned().collect::<Vec<_>>()) {
             state.metric_set(
                 "klaxond_dedup_pending",
-                &[("source", src)],
-                d.queues.get(*src).map(|q| q.len()).unwrap_or(0) as f64,
+                &[("source", &src)],
+                d.queues.get(&src).map(|q| q.len()).unwrap_or(0) as f64,
             );
         }
     }

@@ -1,6 +1,6 @@
 use super::config_admin::persist_reload;
 use super::{json_body, json_response, json_to_toml, text};
-use crate::config::{DEDUP_SOURCES, InhibitionRule, Schedule};
+use crate::config::{InhibitionRule, Schedule};
 use crate::inhibition;
 use crate::state::{AppState, lock_mutex};
 use axum::body::{Body, Bytes};
@@ -21,6 +21,7 @@ pub(super) fn update_inhibition_rules(state: &AppState, body: Bytes) -> Response
     };
     let mut cleaned = Vec::new();
     let mut errors = Vec::new();
+    let available_sources = state.with_cfg(|cfg| cfg.dedup.keys().cloned().collect::<Vec<_>>());
     for (i, r) in arr.iter().enumerate() {
         let source = r
             .get("source")
@@ -91,7 +92,7 @@ pub(super) fn update_inhibition_rules(state: &AppState, body: Bytes) -> Response
                 .map(|a| {
                     a.iter()
                         .filter_map(|x| x.as_str().map(ToOwned::to_owned))
-                        .filter(|s| DEDUP_SOURCES.contains(&s.as_str()))
+                        .filter(|source| available_sources.contains(source))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -132,6 +133,7 @@ pub(super) fn update_schedules(state: &AppState, body: Bytes) -> Response<Body> 
     };
     let mut cleaned = Vec::<Schedule>::new();
     let mut errors = Vec::new();
+    let available_sources = state.with_cfg(|cfg| cfg.dedup.keys().cloned().collect::<Vec<_>>());
     for (i, s) in arr.iter().enumerate() {
         let name = s
             .get("name")
@@ -182,7 +184,7 @@ pub(super) fn update_schedules(state: &AppState, body: Bytes) -> Response<Body> 
             .map(|a| {
                 a.iter()
                     .filter_map(|v| v.as_str().map(ToOwned::to_owned))
-                    .filter(|s| DEDUP_SOURCES.contains(&s.as_str()))
+                    .filter(|source| available_sources.contains(source))
                     .collect()
             })
             .unwrap_or_default();

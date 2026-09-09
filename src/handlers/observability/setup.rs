@@ -1,5 +1,5 @@
 use super::super::ingest::ingest_secret_for;
-use crate::config::{INGEST_SOURCES, RuntimeConfig};
+use crate::config::RuntimeConfig;
 use crate::state::AppState;
 use serde_json::{Value, json};
 
@@ -7,7 +7,7 @@ pub(super) fn setup_status_payload(state: &AppState, matrix: Option<&Value>) -> 
     let cfg = state.cfg();
     let mut items = vec![
         auth_item(&cfg),
-        ingest_auth_item(count_ingest_secrets(state)),
+        ingest_auth_item(count_ingest_secrets(state), cfg.ingest_sources().len()),
         channels_item(configured_channel_count(&cfg)),
         backups_item(state),
         public_url_item(&cfg.public_url),
@@ -67,7 +67,8 @@ fn connectivity_item(matrix: &Value) -> Value {
 }
 
 fn count_ingest_secrets(state: &AppState) -> usize {
-    INGEST_SOURCES
+    state
+        .with_cfg(RuntimeConfig::ingest_sources)
         .iter()
         .filter(|source| !ingest_secret_for(state, source).is_empty())
         .count()
@@ -96,8 +97,7 @@ fn auth_item(cfg: &RuntimeConfig) -> Value {
     })
 }
 
-fn ingest_auth_item(configured: usize) -> Value {
-    let total = INGEST_SOURCES.len();
+fn ingest_auth_item(configured: usize, total: usize) -> Value {
     let disabled = total.saturating_sub(configured);
     json!({
         "key": "ingest_auth",
@@ -250,10 +250,10 @@ mod tests {
 
     #[test]
     fn readiness_requires_one_enabled_and_protected_ingest_source() {
-        let disabled = ingest_auth_item(0);
+        let disabled = ingest_auth_item(0, 13);
         assert_eq!(disabled["status"], "warn");
 
-        let enabled = ingest_auth_item(1);
+        let enabled = ingest_auth_item(1, 13);
         assert_eq!(enabled["status"], "ok");
         assert_eq!(enabled["values"]["configured"], 1);
         assert!(enabled["values"]["disabled"].as_u64().unwrap() > 0);

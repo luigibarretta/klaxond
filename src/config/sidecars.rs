@@ -17,7 +17,8 @@ pub fn restore_sidecars_from_toml(paths: &Paths, toml: &toml::Value) -> Result<V
         }
     }
     if toml_get(toml, &["dedup"]).is_some() {
-        let dedup = dedup_from_toml(toml_get(toml, &["dedup"]));
+        let custom_sources = super::custom_ingest_sources(toml);
+        let dedup = dedup_from_toml(toml_get(toml, &["dedup"]), custom_sources.keys());
         save_dedup(paths, &dedup)?;
         restored.push("dedup");
     }

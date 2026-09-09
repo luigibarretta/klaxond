@@ -211,6 +211,7 @@ fn legal_ui_pages_and_assets_are_public_but_admin_routes_are_not() {
     assert!(is_public("/ui/style.css"));
     assert!(is_public("/ui/meta.js"));
     assert!(is_public("/ui/app.js"));
+    assert!(is_public("/ingest/home-assistant/warning"));
     assert!(is_public("/"));
     assert!(is_public("/ui"));
     assert!(is_public("/ui/deliveries"));

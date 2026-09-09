@@ -1,6 +1,5 @@
 use super::{json_response, parse_query};
 use crate::audit;
-use crate::config::DEDUP_SOURCES;
 use crate::log_buffer;
 use crate::state::AppState;
 use crate::util::env_string;
@@ -189,8 +188,8 @@ pub(super) fn channel_config_payload(state: &AppState) -> Value {
 }
 
 pub(super) fn inhibition_rules_payload(state: &AppState) -> Value {
-    let rules = state
-        .cfg()
+    let cfg = state.cfg();
+    let rules = cfg
         .inhibition_rules
         .iter()
         .map(|r| {
@@ -205,7 +204,9 @@ pub(super) fn inhibition_rules_payload(state: &AppState) -> Value {
             })
         })
         .collect::<Vec<_>>();
-    json!({"rules": rules, "available_sources": DEDUP_SOURCES})
+    let mut available_sources = cfg.dedup.keys().cloned().collect::<Vec<_>>();
+    available_sources.sort();
+    json!({"rules": rules, "available_sources": available_sources})
 }
 
 pub(super) fn logs_payload(full_path: &str) -> log_buffer::LogQuery {

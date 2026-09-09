@@ -52,7 +52,7 @@ export function buildMermaidDiagram(cfgs, stats) {
 
   appendDiagramHeader(lines);
   appendUpstream(lines, sources);
-  const emitterIds = appendEmitters(lines, sources, cfgs.auth, safeStats, cfgs.dedup);
+  const emitterIds = appendEmitters(lines, sources, cfgs.ingest, cfgs.auth, safeStats, cfgs.dedup);
   const stageIds = appendKlaxondFlow(lines, emitterIds, cfgs);
   const sinkIds = appendSinks(lines, stageIds[stageIds.length - 1], cfgs.channel, cfgs.ntfy, tiers, safeStats);
   appendClickHandlers(lines, sources, stageIds, sinkIds, cfgs.render);
@@ -83,8 +83,9 @@ function titleCase(value) {
     .join(" ");
 }
 
-function sourceRoute(source) {
-  return SOURCE_ROUTES[source] || `/${source}/sev`;
+function sourceRoute(source, ingest) {
+  const configured = ingest?.sources?.[source]?.endpoint;
+  return configured?.replace("{severity}", "sev") || SOURCE_ROUTES[source] || `/${source}/sev`;
 }
 
 function sourceStat(stats, source) {
@@ -128,7 +129,7 @@ function appendUpstream(lines, sources) {
   lines.push("  class GRA src");
 }
 
-function appendEmitters(lines, sources, auth, stats, dedup) {
+function appendEmitters(lines, sources, ingest, auth, stats, dedup) {
   const authMode = auth?.settings?.mode || "?";
   lines.push(`  subgraph SRC["${mermaidEscape(tr("flow.enabled_emitters", { count: sources.length, mode: authMode }))}"]`);
   if (!sources.length) {
@@ -140,8 +141,8 @@ function appendEmitters(lines, sources, auth, stats, dedup) {
   const ids = [];
   for (const source of sources) {
     const id = sourceNodeId(source);
-    const label = SOURCE_LABELS[source] || titleCase(source);
-    const route = mermaidEscape(sourceRoute(source));
+    const label = ingest?.sources?.[source]?.display_name || SOURCE_LABELS[source] || titleCase(source);
+    const route = mermaidEscape(sourceRoute(source, ingest));
     lines.push(`    ${id}["${mermaidEscape(label)}<br/><small>POST ${route}</small>${sourceStat(stats, source)}${noiseStat(dedup, source)}"]`);
     ids.push(id);
   }

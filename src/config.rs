@@ -8,6 +8,7 @@ mod auth_sidecar;
 mod dedup_config;
 mod defaults;
 mod emergency_policy;
+mod ingest;
 mod models;
 mod ntfy_topics;
 mod paths;
@@ -30,6 +31,11 @@ pub use defaults::{
 pub use emergency_policy::{
     EmergencyRoutingDecision, EmergencyTimelineEvent, emergency_timeline, select_emergency_profile,
     validate_emergency_config,
+};
+pub use ingest::{
+    MAX_CUSTOM_INGEST_SOURCES, custom_ingest_sources, default_dedup_setting,
+    environment_custom_ingest_secrets, environment_custom_ingest_sources, source_is_builtin,
+    valid_ingest_source_slug,
 };
 pub use models::{
     AuthConfig, AuthStepUpConfig, AuthToken, BasicAuthConfig, DedupSetting, DeliveryConfig,
