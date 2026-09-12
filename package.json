@@ -16,7 +16,7 @@
     "test:e2e:authentik": "playwright test tests/e2e/live-authentik.spec.ts --config playwright.live.config.ts --workers=1"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.63.0",
     "@redocly/cli": "2.37.0",
     "swagger-ui-dist": "5.30.3"
   }
