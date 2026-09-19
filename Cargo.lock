@@ -1541,7 +1541,7 @@ dependencies = [
  "chrono",
  "fs2",
  "hex",
- "hmac 0.12.1",
+ "hmac 0.13.0",
  "ipnet",
  "lettre",
  "mime_guess",
