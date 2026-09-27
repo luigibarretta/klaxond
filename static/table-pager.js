@@ -13,7 +13,6 @@
 
   const TABLE_PAGER_SIZES = [10, 25, 50, 100, 200];
   const TABLE_PAGER_CONFIG = {
-    "t-deliv": { pageSize: 25, collapseDetails: true },
     "t-inhib-rules": { pageSize: 10 },
     "t-inhib": { pageSize: 10 },
     "t-acks": { pageSize: 10 },

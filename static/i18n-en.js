@@ -1,4 +1,5 @@
 import { EN_AUTH_MESSAGES } from "./i18n-en-auth.js";
+import { EN_DASHBOARD_MESSAGES } from "./i18n-en-dashboard.js";
 import { buildEnglishOperationalMessages } from "./i18n-en-operational.js";
 const EN_STATIC_MESSAGES = {
   "app.title": "klaxond — notification daemon",
@@ -25,6 +26,8 @@ const EN_STATIC_MESSAGES = {
   "theme.system": "System",
   "theme.light": "Light",
   "theme.dark": "Dark",
+  "common.search": "Search",
+  "common.all": "All",
   "nav.operations": "Operations",
   "nav.settings": "Settings",
   "nav.tools": "Tools",
@@ -472,20 +475,27 @@ const EN_STATIC_MESSAGES = {
   "deliveries.desc": "Includes both delivered and <span class=\"ch-suppressed\">suppressed</span> events. Suppressed rows show the rule that matched in the Channel column.",
   "deliveries.filter_placeholder": "Filter (title, source, severity, channel)…",
   "deliveries.show_suppressed": "Show suppressed",
+  "deliveries.suppressed": "Suppressed",
   "deliveries.export_csv": "Export CSV",
-  "deliveries.export_title": "Download visible rows as CSV",
+  "deliveries.export_title": "Download all matching rows as CSV",
   "deliveries.channel_or_suppressed": "Channel / Suppressed by",
   "deliveries.event_count": "{count} event(s)",
   "deliveries.event_count_filtered": "{shown} / {total} event(s)",
+  "deliveries.showing_range": "{from}-{to} of {total} event(s)",
   "deliveries.no_match": "No events match the filter.",
+  "deliveries.no_results": "No matching events",
+  "deliveries.page_empty": "This page is empty. Return to the previous page.",
   "deliveries.no_deliveries": "No deliveries yet.",
   "deliveries.suppressed_by": "suppressed by",
   "deliveries.dry_run": "dry-run",
   "deliveries.would_suppress": "would suppress",
   "deliveries.no_rows_export": "No rows to export",
+  "deliveries.export_too_large": "{total} rows match. Narrow the filters below {limit} rows before exporting.",
   "deliveries.exported": "Exported {count} row(s)",
   "deliveries.details": "Details",
   "deliveries.serialized_size": "{count} loaded · {size} serialized",
+  "deliveries.approximate_history_size": "{count} retained · approximately {size}",
+  "deliveries.page_payload_size": "{count} loaded · {size} page payload",
 };
 
 function englishAuthorMessages(authorLink) {
@@ -500,6 +510,7 @@ export function buildEnglishMessages({ authorLink }) {
     ...EN_STATIC_MESSAGES,
     ...englishAuthorMessages(authorLink),
     ...buildEnglishOperationalMessages(),
+    ...EN_DASHBOARD_MESSAGES,
     ...EN_AUTH_MESSAGES,
   };
 }

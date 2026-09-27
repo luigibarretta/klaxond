@@ -11,7 +11,7 @@ use super::super::ingest::{ack_response, ingest_auth_payload};
 use super::super::observability::{
     audit_payload, channel_config_payload, channel_test_matrix_payload, deliveries_response,
     inhibition_rules_payload, logs_payload, metrics_response, setup_ready, setup_status_payload,
-    status_payload,
+    status_activity_response, status_payload,
 };
 use super::super::passkeys::{passkey_login_page, public_passkey, webauthn_public_config};
 use super::super::step_up::{step_up_page, step_up_status_response};
@@ -157,7 +157,8 @@ async fn observability_get_response(
             Some(json_response(inhibition::inhibition_status(state)))
         }
         "/api/status" => Some(json_response(status_payload(state).await)),
-        "/api/deliveries" => Some(deliveries_response(state, full_path)),
+        "/api/status/activity" => Some(status_activity_response(state, full_path).await),
+        "/api/deliveries" => Some(deliveries_response(state, full_path).await),
         "/api/logs" => Some(json_response(logs_payload(full_path))),
         "/api/audit" => Some(json_response(audit_payload(full_path))),
         "/api/setup-status" => Some(json_response(setup_status_payload(state).await)),

@@ -1,6 +1,6 @@
-import { $, J, debounce, errorText, escapeHtml, navigateToTab, notifyError, queryGet, tr } from "./app.js";
-import { aggregateDeliveries24h, buildMermaidDiagram, sourceNodeId } from "./app-flow-diagram.js";
-import { fetchDeliveries } from "./app-status.js";
+import { $, J, debounce, errorText, escapeHtml, fetchError, navigateToTab, notifyError, queryGet, tr } from "./app.js";
+import { buildMermaidDiagram, sourceNodeId } from "./app-flow-diagram.js";
+import { fetchDeliveryActivity } from "./app-status.js";
 
 // Make tab-switcher callable from outside (mermaid click handlers).
 // Use the SPA router so the path stays in sync with the active pane.
@@ -42,7 +42,7 @@ export async function loadFlow(options = {}) {
   $("#flow-status").textContent = tr("flow.fetching_config");
   let cfgs = {}, stats = null;
   try {
-    const [channel, cascade, ntfy, dedup, auth, render, ingest, inhibition, emergency, deliveries] = await Promise.all([
+    const [channel, cascade, ntfy, dedup, auth, render, ingest, inhibition, emergency, activity] = await Promise.all([
       queryGet("flow-channel-config", "/api/channel-config", { cancelPrevious: false }),
       queryGet("flow-cascade-config", "/api/cascade-config", { cancelPrevious: false }),
       queryGet("flow-ntfy-topics", "/api/ntfy-topics", { cancelPrevious: false }),
@@ -52,10 +52,19 @@ export async function loadFlow(options = {}) {
       queryGet("flow-ingest-auth", "/api/ingest-auth", { cancelPrevious: false }),
       queryGet("flow-inhibition-rules", "/api/inhibition-rules", { cancelPrevious: false }),
       queryGet("flow-emergency-config", "/api/emergency-config", { cancelPrevious: false }),
-      fetchDeliveries(10000, { scope: "flow-deliveries" }),
+      fetchDeliveryActivity(24, { scope: "flow-delivery-activity" }).catch(error => {
+        fetchError("flow-delivery-activity", error);
+        return null;
+      }),
     ]);
     cfgs = { channel, cascade, ntfy, dedup, auth, render, ingest, inhibition, emergency };
-    stats = aggregateDeliveries24h(deliveries);
+    stats = activity ? {
+      bySource: activity.by_source || {},
+      bySeverity: activity.by_severity || {},
+      byChannel: activity.by_channel || {},
+      lastBySource: activity.latest_by_source || {},
+      lastByChannel: activity.latest_by_channel || {},
+    } : null;
     _renderFlowSummary(cfgs);
   } catch (e) {
     notifyError("flow-config", e, { status: "#flow-status", inlineText: tr("flow.config_fetch_failed", { message: errorText(e) }) });

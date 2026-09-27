@@ -1,4 +1,4 @@
-use crate::history::{DeliveryEntry, SCHEMA_VERSION, dedupe_hash};
+use crate::history::{SCHEMA_VERSION, delivery_search_values};
 use anyhow::{Result, bail};
 use postgres::Client;
 
@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS klaxond_deliveries (
   channel TEXT NOT NULL,
   suppressed_by TEXT NOT NULL DEFAULT '',
   emergency_receipt_id TEXT,
+  search_source TEXT NOT NULL DEFAULT '',
+  search_severity TEXT NOT NULL DEFAULT '',
+  search_title TEXT NOT NULL DEFAULT '',
+  search_channel TEXT NOT NULL DEFAULT '',
+  search_suppressed_by TEXT NOT NULL DEFAULT '',
+  search_version SMALLINT NOT NULL DEFAULT 0,
   dedupe_hash TEXT NOT NULL
 );
 
@@ -62,6 +68,18 @@ ALTER TABLE klaxond_repeat_state
 
 ALTER TABLE klaxond_deliveries
   ADD COLUMN IF NOT EXISTS emergency_receipt_id TEXT;
+ALTER TABLE klaxond_deliveries
+  ADD COLUMN IF NOT EXISTS search_source TEXT NOT NULL DEFAULT '';
+ALTER TABLE klaxond_deliveries
+  ADD COLUMN IF NOT EXISTS search_severity TEXT NOT NULL DEFAULT '';
+ALTER TABLE klaxond_deliveries
+  ADD COLUMN IF NOT EXISTS search_title TEXT NOT NULL DEFAULT '';
+ALTER TABLE klaxond_deliveries
+  ADD COLUMN IF NOT EXISTS search_channel TEXT NOT NULL DEFAULT '';
+ALTER TABLE klaxond_deliveries
+  ADD COLUMN IF NOT EXISTS search_suppressed_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE klaxond_deliveries
+  ADD COLUMN IF NOT EXISTS search_version SMALLINT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS klaxond_auth_sessions (
   id_hash TEXT PRIMARY KEY,
@@ -160,112 +178,39 @@ ALTER TABLE klaxond_emergencies
   ADD COLUMN IF NOT EXISTS policy_snapshot_json TEXT NOT NULL DEFAULT '';
 "#,
     )?;
+    let rows = tx.query(
+        "SELECT id, source, severity, title, channel, suppressed_by \
+         FROM klaxond_deliveries WHERE search_version < 1",
+        &[],
+    )?;
+    for row in rows {
+        let id = row.get::<_, i64>(0);
+        let source = row.get::<_, String>(1);
+        let severity = row.get::<_, String>(2);
+        let title = row.get::<_, String>(3);
+        let channel = row.get::<_, String>(4);
+        let suppressed_by = row.get::<_, String>(5);
+        let values = delivery_search_values(&source, &severity, &title, &channel, &suppressed_by);
+        tx.execute(
+            r#"
+UPDATE klaxond_deliveries SET
+  search_source = $2,
+  search_severity = $3,
+  search_title = $4,
+  search_channel = $5,
+  search_suppressed_by = $6,
+  search_version = 1
+WHERE id = $1
+"#,
+            &[
+                &id, &values[0], &values[1], &values[2], &values[3], &values[4],
+            ],
+        )?;
+    }
     tx.execute(
         "INSERT INTO klaxond_schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING",
         &[&SCHEMA_VERSION],
     )?;
     tx.commit()?;
-    Ok(())
-}
-
-pub(super) fn insert(client: &mut Client, entry: &DeliveryEntry) -> Result<()> {
-    let hash = dedupe_hash(entry);
-    client.execute(
-        r#"
-INSERT INTO klaxond_deliveries
-  (ts, source, severity, title, channel, suppressed_by, emergency_receipt_id, dedupe_hash)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-ON CONFLICT (dedupe_hash) DO NOTHING
-"#,
-        &[
-            &entry.ts,
-            &entry.source,
-            &entry.severity,
-            &entry.title,
-            &entry.channel,
-            &entry.suppressed_by,
-            &entry.emergency_receipt_id,
-            &hash,
-        ],
-    )?;
-    Ok(())
-}
-
-pub(super) fn count(client: &mut Client) -> Result<usize> {
-    let row = client.query_one("SELECT COUNT(*) FROM klaxond_deliveries", &[])?;
-    Ok(row.get::<_, i64>(0) as usize)
-}
-
-pub(super) fn page(client: &mut Client, limit: usize, offset: usize) -> Result<Vec<DeliveryEntry>> {
-    let rows = client.query(
-        r#"
-SELECT ts, source, severity, title, channel, suppressed_by, emergency_receipt_id
-FROM klaxond_deliveries
-ORDER BY ts DESC, id DESC
-LIMIT $1 OFFSET $2
-"#,
-        &[&(limit as i64), &(offset as i64)],
-    )?;
-    Ok(rows
-        .into_iter()
-        .map(|row| DeliveryEntry {
-            ts: row.get(0),
-            source: row.get(1),
-            severity: row.get(2),
-            title: row.get(3),
-            channel: row.get(4),
-            suppressed_by: row.get(5),
-            emergency_receipt_id: row.get(6),
-        })
-        .collect())
-}
-
-pub(super) fn export_all(client: &mut Client) -> Result<Vec<DeliveryEntry>> {
-    let mut tx = client.transaction()?;
-    let has_receipt = tx.query_one(
-        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'klaxond_deliveries' AND column_name = 'emergency_receipt_id')",
-        &[],
-    )?.get::<_, bool>(0);
-    let receipt_select = if has_receipt {
-        "emergency_receipt_id"
-    } else {
-        "NULL::TEXT AS emergency_receipt_id"
-    };
-    let rows = tx.query(
-        &format!(
-            "SELECT ts, source, severity, title, channel, suppressed_by, {receipt_select} \
-             FROM klaxond_deliveries ORDER BY ts ASC, id ASC"
-        ),
-        &[],
-    )?;
-    let entries = rows
-        .into_iter()
-        .map(|row| DeliveryEntry {
-            ts: row.get(0),
-            source: row.get(1),
-            severity: row.get(2),
-            title: row.get(3),
-            channel: row.get(4),
-            suppressed_by: row.get(5),
-            emergency_receipt_id: row.get(6),
-        })
-        .collect();
-    tx.commit()?;
-    Ok(entries)
-}
-
-pub(super) fn prune(client: &mut Client, retention: usize) -> Result<()> {
-    if retention == 0 {
-        return Ok(());
-    }
-    client.execute(
-        r#"
-DELETE FROM klaxond_deliveries
-WHERE id NOT IN (
-  SELECT id FROM klaxond_deliveries ORDER BY ts DESC, id DESC LIMIT $1
-)
-"#,
-        &[&(retention as i64)],
-    )?;
     Ok(())
 }

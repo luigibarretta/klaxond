@@ -2,6 +2,8 @@ export const EN_AUTH_MESSAGES = {
   "auth.title": "Authentication",
   "auth.desc": "Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user: <code id=\"auth-current-user\">—</code>.",
   "auth.desc_before_user": "Gates the UI and admin API. Webhook endpoints (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) are always public regardless of mode — emitters can't OIDC.<br>Current logged-in user:",
+  "auth.identity_details": "Technical identity details",
+  "auth.subject_identifier": "Immutable subject",
   "auth.sign_in": "Sign in",
   "auth.back_to_app": "Back to app",
   "auth.mode_none": "<b>None</b> — public (default; suitable when klaxond is on a trusted internal network)",

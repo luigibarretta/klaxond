@@ -163,6 +163,7 @@ test("unconfigured channels are neutral and the empty delivery state has next ac
   expect(payload.channel_configured).toEqual({ ntfy: true, telegram: false, smtp: false });
 
   await page.goto("/status");
+  await expect(page.locator("#operational-summary-title")).not.toHaveText("Checking delivery path…");
   await expect(page.locator("#ch-telegram .dot")).toHaveClass(/unknown/);
   await expect(page.locator("#ch-telegram .ch-status-text")).toHaveText("not configured");
   await expect(page.locator("#ch-smtp .dot")).toHaveClass(/unknown/);
@@ -175,6 +176,21 @@ test("unconfigured channels are neutral and the empty delivery state has next ac
   await expect(page.locator(".table-empty-state")).toBeVisible();
   await expect(page.locator('.table-empty-state a[href="/test"]')).toBeVisible();
   await expect(page.locator('.table-empty-state a[href="/setup"]')).toBeVisible();
+});
+
+test("status failure replaces a previous readiness result with an unknown state", async ({ page }) => {
+  await page.goto("/status");
+  await expect(page.locator("#operational-summary-title")).not.toHaveText("Checking delivery path…");
+  await page.route("**/api/status", route => route.fulfill({ status: 503, body: "forced status failure" }));
+
+  await page.evaluate(async () => {
+    const { loadStatus } = await import("/ui/app-status.js");
+    await loadStatus({ force: true });
+  });
+
+  await expect(page.locator("#operational-summary")).toHaveAttribute("data-state", "unknown");
+  await expect(page.locator("#operational-summary-title")).toHaveText("Channel state is unavailable");
+  await expect(page.locator("#status-active-emergencies")).toHaveText("—");
 });
 
 test("legacy UI URLs and hash URLs migrate to path routes", async ({ page, request }) => {

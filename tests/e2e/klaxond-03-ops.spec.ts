@@ -174,7 +174,7 @@ test("inhibition rule simulator reports source and suppression matches", async (
 });
 
 test("full config export includes TOML sidecars and runtime settings", async ({ page, request }) => {
-  await page.goto("/status");
+  await page.goto("/setup");
   await expect(page.locator("#cfg-backup-download")).toHaveAttribute("href", "/api/config/backup");
   await expect(page.locator("#cfg-full-export-download")).toHaveAttribute("href", "/api/config/export");
 
@@ -269,6 +269,18 @@ test("operational readiness endpoints cover import preview, audit, setup, channe
       expect.objectContaining({ name: "telegram" }),
       expect.objectContaining({ name: "smtp" })
     ])
+  });
+
+  const activity = await request.get("/api/status/activity?hours=24");
+  await expect(activity).toBeOK();
+  expect(await activity.json()).toMatchObject({
+    hours: 24,
+    total: expect.any(Number),
+    total_history: expect.any(Number),
+    suppressed: expect.any(Number),
+    by_source: expect.any(Object),
+    by_channel: expect.any(Object),
+    approximate_history_bytes: expect.any(Number)
   });
 
   const simulated = await request.post("/api/policy-simulate", {

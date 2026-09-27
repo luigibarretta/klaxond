@@ -1,8 +1,7 @@
-use super::storage;
 use super::{
-    DeliveryEntry, DeliveryPage, RepeatCandidate, RepeatDecision, RepeatState, RuntimeAuthState,
-    auth_state, connect_postgres, emergency, postgres_with_retry, repeat, worker_rate_limit,
-    worker_session,
+    DeliveryActivity, DeliveryEntry, DeliveryPage, DeliveryQuery, RepeatCandidate, RepeatDecision,
+    RepeatState, RuntimeAuthState, auth_state, connect_postgres, delivery, emergency,
+    postgres_with_retry, repeat, worker_rate_limit, worker_session,
 };
 use crate::history::{
     EmergencyAttempt, EmergencyCandidate, EmergencyIncident, EmergencyRegistration,
@@ -18,9 +17,14 @@ pub(super) enum PostgresCommand {
         reply: mpsc::Sender<Result<()>>,
     },
     Page {
-        limit: usize,
-        offset: usize,
+        query: DeliveryQuery,
         reply: mpsc::Sender<Result<DeliveryPage>>,
+    },
+    Activity {
+        hours: u16,
+        since: f64,
+        until: f64,
+        reply: mpsc::Sender<Result<DeliveryActivity>>,
     },
     ExportAll {
         reply: mpsc::Sender<Result<Vec<DeliveryEntry>>>,
@@ -139,11 +143,13 @@ impl WorkerContext {
     fn execute(&mut self, command: PostgresCommand) {
         match command {
             PostgresCommand::Record { entry, reply } => self.record(entry, reply),
-            PostgresCommand::Page {
-                limit,
-                offset,
+            PostgresCommand::Page { query, reply } => self.page(query, reply),
+            PostgresCommand::Activity {
+                hours,
+                since,
+                until,
                 reply,
-            } => self.page(limit, offset, reply),
+            } => self.activity(hours, since, until, reply),
             PostgresCommand::ExportAll { reply } => self.export_all(reply),
             PostgresCommand::ReserveRepeat { candidate, reply } => {
                 self.reserve_repeat(candidate, reply);
@@ -282,28 +288,39 @@ impl WorkerContext {
     fn record(&mut self, entry: DeliveryEntry, reply: mpsc::Sender<Result<()>>) {
         let retention = self.retention;
         let result = self.with_retry(|client| {
-            storage::insert(client, &entry)?;
-            storage::prune(client, retention)
+            delivery::insert(client, &entry)?;
+            delivery::prune(client, retention)
         });
         let _ = reply.send(result);
     }
 
-    fn page(&mut self, limit: usize, offset: usize, reply: mpsc::Sender<Result<DeliveryPage>>) {
+    fn page(&mut self, query: DeliveryQuery, reply: mpsc::Sender<Result<DeliveryPage>>) {
         let result = self.with_retry(|client| {
-            let total = storage::count(client)?;
-            let entries = storage::page(client, limit, offset)?;
+            let total = delivery::count(client, &query)?;
+            let entries = delivery::page(client, &query)?;
             Ok(DeliveryPage {
                 entries,
                 total,
-                limit,
-                offset,
+                limit: query.limit,
+                offset: query.offset,
             })
         });
         let _ = reply.send(result);
     }
 
+    fn activity(
+        &mut self,
+        hours: u16,
+        since: f64,
+        until: f64,
+        reply: mpsc::Sender<Result<DeliveryActivity>>,
+    ) {
+        let result = self.with_retry(|client| delivery::activity(client, hours, since, until));
+        let _ = reply.send(result);
+    }
+
     fn export_all(&mut self, reply: mpsc::Sender<Result<Vec<DeliveryEntry>>>) {
-        let result = self.with_retry(storage::export_all);
+        let result = self.with_retry(delivery::export_all);
         let _ = reply.send(result);
     }
 

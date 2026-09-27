@@ -1,13 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { assertTablePagerWorks } from "./klaxond-helpers";
 
-test("recent deliveries are paginated", async ({ page, request }) => {
+test("recent deliveries are paginated", async ({ page, request }, testInfo) => {
+  const runId = `${testInfo.project.name}-${Date.now()}`;
+  const realProbe = `DeliveryRealHistoryProbe-${runId}`;
+  const paginationProbe = `DeliveryPaginationProbe-${runId}-`;
   const real = await request.post("/webhook/warning", {
     headers: { Authorization: "bearer e2e-secret" },
     data: {
       status: "firing",
       commonLabels: {
-        alertname: "DeliveryRealHistoryProbe",
+        alertname: realProbe,
         component: "host",
         host: "real-history"
       }
@@ -19,7 +22,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
     await expect(res).toBeOK();
     const payload = await res.json();
     return payload.entries.some((entry: any) =>
-      entry.title.includes("DeliveryRealHistoryProbe") && entry.channel.includes("failed")
+      entry.title.includes(realProbe) && entry.channel.includes("failed")
     );
   }).toBe(true);
 
@@ -29,7 +32,7 @@ test("recent deliveries are paginated", async ({ page, request }) => {
       data: {
         status: "firing",
         commonLabels: {
-          alertname: `DeliveryPaginationProbe${i}`,
+          alertname: `${paginationProbe}${i}`,
           component: "host",
           host: `dev-${i}`
         }
@@ -38,20 +41,138 @@ test("recent deliveries are paginated", async ({ page, request }) => {
     await expect(res).toBeOK();
   }
 
+  const deliveryRequestUrls: string[] = [];
+  page.on("request", req => {
+    if (new URL(req.url()).pathname === "/api/deliveries") deliveryRequestUrls.push(req.url());
+  });
   await page.goto("/deliveries");
-  await expect(page.locator("#deliv-storage")).toContainText(/loaded · .* serialized/);
-  const pager = page.locator('[data-table-pager="t-deliv"]');
-  await expect(pager).toBeVisible();
-  await page.selectOption('[data-table-pager="t-deliv"] [data-pager-size]', "10");
-  await expect(pager.locator("[data-pager-range]")).toContainText(/1-10 \/ \d+/);
-  await expect(page.locator("#t-deliv tbody tr.deliv-row:visible")).toHaveCount(10);
-  await expect(page.locator("#t-deliv tbody tr.deliv-row:visible").first()).toContainText("DeliveryPaginationProbe31");
-  await expect(pager.locator("[data-pager-next]")).toBeEnabled();
+  await page.fill("#deliv-filter", paginationProbe);
+  await expect(page.locator("#deliv-storage")).toContainText(/retained|serialized/i);
+  const pagers = page.locator("[data-deliveries-pager]");
+  await expect(pagers).toHaveCount(2);
+  const pager = pagers.last();
+  await expect(pager.locator("[data-deliv-range]")).toContainText("1-25 of 32");
+  await expect(page.locator("#t-deliv tbody tr.deliv-row")).toHaveCount(25);
+  await expect(page.locator("#t-deliv tbody tr.deliv-row:visible").first()).toContainText(`${paginationProbe}31`);
+  await expect(pager.locator('[data-deliv-page="next"]')).toBeEnabled();
 
-  await pager.locator("[data-pager-next]").click();
-  await expect(pager.locator("[data-pager-range]")).toContainText(/11-20 \/ \d+/);
-  await expect(page.locator("#t-deliv tbody tr.deliv-row:visible")).toHaveCount(10);
-  await expect(pager.locator("[data-pager-prev]")).toBeEnabled();
+  await pager.locator('[data-deliv-page="next"]').click();
+  await expect(pager.locator("[data-deliv-range]")).toContainText("26-32 of 32");
+  await expect(page.locator("#t-deliv tbody tr.deliv-row")).toHaveCount(7);
+  await expect(pager.locator('[data-deliv-page="prev"]')).toBeEnabled();
+  expect(deliveryRequestUrls.some(url => new URL(url).searchParams.get("q") === paginationProbe)).toBe(true);
+  expect(deliveryRequestUrls.every(url => new URL(url).searchParams.get("limit") !== "10000")).toBe(true);
+
+  let releaseExport!: () => void;
+  const exportRelease = new Promise<void>(resolve => { releaseExport = resolve; });
+  const exportUrls: string[] = [];
+  await page.route(/\/api\/deliveries\?.*/, async route => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("limit") !== "10000") return route.continue();
+    exportUrls.push(url.toString());
+    await exportRelease;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ total: 1, limit: 10000, offset: 0, entries: [{
+        ts: Date.now() / 1000,
+        source: "grafana",
+        severity: "warning",
+        title: `${paginationProbe}31`,
+        channel: "dry-run",
+        suppressed_by: "",
+      }] }),
+    });
+  });
+  const download = page.waitForEvent("download");
+  await page.locator("#deliv-export-csv").click();
+  await expect.poll(() => exportUrls.length).toBe(1);
+  await page.fill("#deliv-filter", "changed while exporting");
+  releaseExport();
+  await download;
+  expect(new URL(exportUrls[0]).searchParams.get("q")).toBe(paginationProbe);
+  expect(exportUrls).toHaveLength(1);
+
+  const suppressedRequest = page.waitForRequest(req => {
+    const url = new URL(req.url());
+    return url.pathname === "/api/deliveries"
+      && url.searchParams.get("suppressed") === "only";
+  });
+  await page.selectOption("#deliv-channel", "__suppressed__");
+  const suppressedUrl = new URL((await suppressedRequest).url());
+  expect(suppressedUrl.searchParams.has("channel")).toBe(false);
+  await expect(page.locator("#deliv-show-suppressed")).toBeChecked();
+  await expect(page.locator("#deliv-show-suppressed")).toBeDisabled();
+
+  const excludedRequest = page.waitForRequest(req => {
+    const url = new URL(req.url());
+    return url.pathname === "/api/deliveries"
+      && url.searchParams.get("channel") === "ntfy"
+      && url.searchParams.get("suppressed") === "exclude";
+  });
+  await page.selectOption("#deliv-channel", "ntfy");
+  await expect(page.locator("#deliv-show-suppressed")).toBeEnabled();
+  await page.uncheck("#deliv-show-suppressed");
+  await excludedRequest;
+
+  const suppressedAgainRequest = page.waitForRequest(req => {
+    const url = new URL(req.url());
+    return url.pathname === "/api/deliveries"
+      && url.searchParams.get("suppressed") === "only";
+  });
+  await page.selectOption("#deliv-channel", "__suppressed__");
+  await suppressedAgainRequest;
+  await expect(page.locator("#deliv-show-suppressed")).toBeChecked();
+  await expect(page.locator("#deliv-show-suppressed")).toBeDisabled();
+});
+
+test("delivery export validates the current filters instead of a stale page count", async ({ page }) => {
+  const exportQueries: string[] = [];
+  await page.route(/\/api\/deliveries\?.*/, async route => {
+    const url = new URL(route.request().url());
+    const query = url.searchParams.get("q") || "";
+    const limit = url.searchParams.get("limit");
+    if (limit === "10000") {
+      exportQueries.push(query);
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ total: 1, limit: 10000, offset: 0, entries: [{
+          ts: Date.now() / 1000,
+          source: "grafana",
+          severity: "warning",
+          title: "Exportable",
+          channel: "dry-run",
+          suppressed_by: "",
+        }] }),
+      });
+    }
+    const total = query === "no-results" ? 0 : query === "too-many" ? 10_001 : 1;
+    return route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ total, limit: 25, offset: 0, entries: [] }),
+    });
+  });
+
+  await page.goto("/deliveries");
+  await page.fill("#deliv-filter", "no-results");
+  await expect(page.locator("#deliv-count")).toContainText("0");
+  await page.fill("#deliv-filter", "exportable-after-empty");
+  await Promise.all([
+    page.waitForEvent("download"),
+    page.locator("#deliv-export-csv").click(),
+  ]);
+
+  await page.fill("#deliv-filter", "too-many");
+  await expect(page.locator("#deliv-count")).toContainText("10001");
+  await page.fill("#deliv-filter", "exportable-after-large");
+  await Promise.all([
+    page.waitForEvent("download"),
+    page.locator("#deliv-export-csv").click(),
+  ]);
+
+  expect(exportQueries).toEqual(["exportable-after-empty", "exportable-after-large"]);
 });
 
 test("all configured finite admin tables use the shared pager", async ({ page }) => {
@@ -76,7 +197,11 @@ test("all configured finite admin tables use the shared pager", async ({ page })
 });
 
 test("cascade timeout editor explains and highlights unsafe ntfy values", async ({ page }) => {
+  let savedDefault: boolean | undefined;
   await page.route("**/api/cascade-config", async route => {
+    if (route.request().method() === "POST") {
+      savedDefault = (await route.request().postDataJSON()).default_enabled_for_webhook;
+    }
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -95,6 +220,11 @@ test("cascade timeout editor explains and highlights unsafe ntfy values", async 
   });
 
   await page.goto("/cascade");
+  await expect(page.locator("#cas-default")).not.toBeChecked();
+  await page.locator("#cas-default").check();
+  await page.locator("#btn-cas-save").click();
+  await expect.poll(() => savedDefault).toBe(true);
+  await expect(page.locator('[id="cas-default"]')).toHaveCount(1);
   await expect(page.locator("#cas-timeout-help")).toContainText("at least 15 seconds");
   const timeout = page.locator('#t-cas [data-f="timeout"]').first();
   await timeout.fill("5");
@@ -209,12 +339,12 @@ test("inhibition applies-to checkboxes stay compact and aligned", async ({ page 
 
 test("delivery history exposes keyboard details and ACK only for an active receipt", async ({ page }) => {
   let acknowledged = false;
-  await page.route("**/api/deliveries?limit=10000", route => route.fulfill({
+  await page.route(/\/api\/deliveries\?.*/, route => route.fulfill({
     status: 200,
     contentType: "application/json",
     body: JSON.stringify({
       total: 1,
-      limit: 10000,
+      limit: 25,
       offset: 0,
       entries: [{
         ts: Date.now() / 1000,

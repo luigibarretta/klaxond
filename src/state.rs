@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+mod delivery;
 mod locks;
 mod metrics;
 mod session;
@@ -14,10 +15,7 @@ pub use self::types::{
     Suppression,
 };
 use crate::config::{Paths, RuntimeConfig, load_runtime_config};
-use crate::history::{
-    DeliveryEntry, DeliveryPage, HistoryStore, RepeatSuppressionSummary,
-    snapshot_runtime_auth_state,
-};
+use crate::history::{DeliveryActivity, HistoryStore, snapshot_runtime_auth_state};
 use crate::util::tmp_path;
 use anyhow::{Context, Result};
 use fs2::FileExt;
@@ -33,6 +31,8 @@ use self::metrics::metric_key;
 use self::session::load_or_create_session_key;
 use self::types::{DeliveryLog, Metrics};
 
+type DeliveryActivityCache = Arc<Mutex<HashMap<u16, (Instant, u64, DeliveryActivity)>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub paths: Paths,
@@ -45,6 +45,10 @@ pub struct AppState {
     pub history: Arc<RwLock<Arc<HistoryStore>>>,
     pub(crate) auth_store_transition: Arc<RwLock<()>>,
     pub delivery_log: Arc<Mutex<DeliveryLog>>,
+    pub(crate) delivery_activity_cache: DeliveryActivityCache,
+    pub(crate) history_generation: Arc<AtomicU64>,
+    pub(crate) delivery_activity_slots: Arc<Semaphore>,
+    pub(crate) history_read_slots: Arc<Semaphore>,
     pub suppressions: Arc<Mutex<Vec<Suppression>>>,
     pub ack_suppressions: Arc<Mutex<HashMap<String, f64>>>,
     pub active_mutes: Arc<Mutex<HashMap<String, f64>>>,
@@ -111,6 +115,10 @@ impl AppState {
             history: Arc::new(RwLock::new(history)),
             auth_store_transition: Arc::new(RwLock::new(())),
             delivery_log: Arc::new(Mutex::new(DeliveryLog::with_capacity(50))),
+            delivery_activity_cache: Arc::new(Mutex::new(HashMap::new())),
+            history_generation: Arc::new(AtomicU64::new(0)),
+            delivery_activity_slots: Arc::new(Semaphore::new(1)),
+            history_read_slots: Arc::new(Semaphore::new(4)),
             suppressions: Arc::new(Mutex::new(Vec::new())),
             ack_suppressions: Arc::new(Mutex::new(HashMap::new())),
             active_mutes: Arc::new(Mutex::new(HashMap::new())),
@@ -201,7 +209,12 @@ impl AppState {
                     &mut rollback,
                 )
             })?;
+        let mut activity_cache =
+            lock_mutex(&self.delivery_activity_cache, "delivery activity cache");
         *write_lock(&self.history, "history store") = Arc::new(store);
+        self.history_generation.fetch_add(1, Ordering::SeqCst);
+        activity_cache.clear();
+        drop(activity_cache);
         self.apply_runtime_config(cfg, update_cascade_runtime);
         Ok(result)
     }
@@ -251,95 +264,6 @@ impl AppState {
             tracing::error!("unlock {} failed: {err}", lock_path.display());
         }
         Ok(result)
-    }
-
-    pub fn log_delivery(
-        &self,
-        source: &str,
-        severity: &str,
-        title: &str,
-        channel: &str,
-        suppressed_by: &str,
-    ) {
-        self.log_delivery_with_receipt(source, severity, title, channel, suppressed_by, None);
-    }
-
-    pub fn log_delivery_with_receipt(
-        &self,
-        source: &str,
-        severity: &str,
-        title: &str,
-        channel: &str,
-        suppressed_by: &str,
-        emergency_receipt_id: Option<&str>,
-    ) {
-        let entry = DeliveryEntry {
-            ts: crate::util::now_epoch(),
-            source: source.to_string(),
-            severity: severity.to_string(),
-            title: title.to_string(),
-            channel: channel.to_string(),
-            suppressed_by: suppressed_by.to_string(),
-            emergency_receipt_id: emergency_receipt_id.map(str::to_string),
-        };
-        if let Err(err) = self.history_store().record_delivery(&entry) {
-            tracing::error!("persist delivery history failed: {err}");
-        }
-        let mut log = lock_mutex(&self.delivery_log, "delivery log");
-        if log.len() == 50 {
-            log.pop_front();
-        }
-        log.push_back(entry);
-    }
-
-    pub fn recent_deliveries(&self) -> Vec<DeliveryEntry> {
-        let limit = self.with_cfg(|cfg| cfg.history.default_limit);
-        match self.history_store().deliveries_page(limit, 0) {
-            Ok(page) => page.entries,
-            Err(err) => {
-                tracing::error!("read delivery history failed: {err}");
-                self.recent_deliveries_from_memory()
-            }
-        }
-    }
-
-    pub fn deliveries_page(&self, limit: usize, offset: usize) -> DeliveryPage {
-        match self.history_store().deliveries_page(limit, offset) {
-            Ok(page) => page,
-            Err(err) => {
-                tracing::error!("read paginated delivery history failed: {err}");
-                let entries = self
-                    .recent_deliveries_from_memory()
-                    .into_iter()
-                    .skip(offset)
-                    .take(limit)
-                    .collect::<Vec<_>>();
-                DeliveryPage {
-                    total: lock_mutex(&self.delivery_log, "delivery log").len(),
-                    entries,
-                    limit,
-                    offset,
-                }
-            }
-        }
-    }
-
-    pub fn recent_repeat_suppressions(&self, limit: usize) -> Vec<RepeatSuppressionSummary> {
-        match self.history_store().recent_repeat_suppressions(limit) {
-            Ok(entries) => entries,
-            Err(err) => {
-                tracing::error!("read repeat suppression history failed: {err}");
-                Vec::new()
-            }
-        }
-    }
-
-    fn recent_deliveries_from_memory(&self) -> Vec<DeliveryEntry> {
-        lock_mutex(&self.delivery_log, "delivery log")
-            .iter()
-            .rev()
-            .cloned()
-            .collect()
     }
 
     pub fn metric_inc(&self, name: &str, labels: &[(&str, &str)], by: i64) {

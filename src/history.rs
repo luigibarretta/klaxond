@@ -1,9 +1,8 @@
 use crate::config::HistoryConfig;
 use anyhow::{Result, bail};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::{Mutex, MutexGuard};
 
+mod delivery;
 pub mod emergency;
 mod emergency_store;
 mod migration;
@@ -16,6 +15,13 @@ mod sqlite;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use delivery::approximate_delivery_bytes;
+pub(crate) use delivery::{APPROXIMATE_DELIVERY_ROW_OVERHEAD, dedupe_hash, delivery_search_values};
+pub use delivery::{
+    DeliveryActivity, DeliveryEntry, DeliveryPage, DeliveryQuery, MAX_DELIVERY_QUERY_CHARS,
+    SuppressedFilter,
+};
 pub use emergency::{
     EmergencyAttempt, EmergencyCandidate, EmergencyChannelSnapshot, EmergencyIncident,
     EmergencyPayload, EmergencyPolicySnapshot, EmergencyRegistration,
@@ -29,31 +35,11 @@ pub use repeat::{
 };
 pub use session::{AuthSessionRecord, OidcLogoutResult, OidcLogoutTokenRecord};
 use sqlite::{
-    SqliteConnection, migrate_sqlite, open_sqlite, sqlite_count, sqlite_export_all, sqlite_insert,
-    sqlite_page, sqlite_prune, validate_sqlite_schema,
+    SqliteConnection, migrate_sqlite, open_sqlite, sqlite_delivery_activity, sqlite_delivery_count,
+    sqlite_delivery_page, sqlite_export_all, sqlite_insert, sqlite_prune, validate_sqlite_schema,
 };
 
-const SCHEMA_VERSION: i64 = 8;
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DeliveryEntry {
-    pub ts: f64,
-    pub source: String,
-    pub severity: String,
-    pub title: String,
-    pub channel: String,
-    pub suppressed_by: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub emergency_receipt_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct DeliveryPage {
-    pub entries: Vec<DeliveryEntry>,
-    pub total: usize,
-    pub limit: usize,
-    pub offset: usize,
-}
+const SCHEMA_VERSION: i64 = 9;
 
 pub struct HistoryStore {
     backend: HistoryBackend,
@@ -123,21 +109,41 @@ impl HistoryStore {
     }
 
     pub fn deliveries_page(&self, limit: usize, offset: usize) -> Result<DeliveryPage> {
-        let limit = limit.clamp(1, 10_000);
-        let offset = offset.min(1_000_000);
+        self.query_deliveries(&DeliveryQuery::page(limit, offset))
+    }
+
+    pub fn query_deliveries(&self, query: &DeliveryQuery) -> Result<DeliveryPage> {
+        let query = query.normalized();
         match &self.backend {
             HistoryBackend::Sqlite(conn) => {
                 let conn = lock(conn, "sqlite history connection");
-                let total = sqlite_count(&conn)?;
-                let entries = sqlite_page(&conn, limit, offset)?;
+                let total = sqlite_delivery_count(&conn, &query)?;
+                let entries = sqlite_delivery_page(&conn, &query)?;
                 Ok(DeliveryPage {
                     entries,
                     total,
-                    limit,
-                    offset,
+                    limit: query.limit,
+                    offset: query.offset,
                 })
             }
-            HistoryBackend::Postgres(worker) => worker.deliveries_page(limit, offset),
+            HistoryBackend::Postgres(worker) => worker.query_deliveries(&query),
+        }
+    }
+
+    pub fn delivery_activity(
+        &self,
+        hours: u16,
+        since: f64,
+        until: f64,
+    ) -> Result<DeliveryActivity> {
+        match &self.backend {
+            HistoryBackend::Sqlite(conn) => sqlite_delivery_activity(
+                &lock(conn, "sqlite history connection"),
+                hours,
+                since,
+                until,
+            ),
+            HistoryBackend::Postgres(worker) => worker.delivery_activity(hours, since, until),
         }
     }
 
@@ -283,26 +289,6 @@ impl HistoryStore {
             HistoryBackend::Postgres(worker) => worker.import_runtime_auth_state(state),
         }
     }
-}
-
-fn dedupe_hash(entry: &DeliveryEntry) -> String {
-    let mut h = Sha256::new();
-    h.update(entry.ts.to_bits().to_be_bytes());
-    h.update(b"\0");
-    h.update(entry.source.as_bytes());
-    h.update(b"\0");
-    h.update(entry.severity.as_bytes());
-    h.update(b"\0");
-    h.update(entry.title.as_bytes());
-    h.update(b"\0");
-    h.update(entry.channel.as_bytes());
-    h.update(b"\0");
-    h.update(entry.suppressed_by.as_bytes());
-    if let Some(receipt_id) = &entry.emergency_receipt_id {
-        h.update(b"\0");
-        h.update(receipt_id.as_bytes());
-    }
-    hex::encode(h.finalize())
 }
 
 fn lock<'a, T>(mutex: &'a Mutex<T>, name: &str) -> MutexGuard<'a, T> {

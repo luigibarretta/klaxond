@@ -1111,6 +1111,39 @@ paths:
                 $ref: "#/components/schemas/StatusPayload"
         "4XX":
           $ref: "#/components/responses/ClientError"
+  /api/status/activity:
+    get:
+      tags: [Operations]
+      operationId: getDeliveryActivity
+      summary: Aggregate recent delivery activity in storage.
+      description: |
+        Returns SQL-aggregated delivery counts and latest timestamps for the
+        requested window without loading delivery rows into the application.
+        `latest_ts`, `total_history`, and `approximate_history_bytes` describe
+        all retained delivery records; grouped counts and grouped timestamps
+        describe only the requested window.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ActivityHours"
+      responses:
+        "200":
+          description: Aggregated delivery activity and retained-history metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryActivity"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: Persistent delivery history or the bounded activity worker is unavailable; partial in-memory counts are never returned as complete history.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/setup-status:
     get:
       tags: [Operations]
@@ -1234,9 +1267,16 @@ paths:
       parameters:
         - $ref: "#/components/parameters/HistoryLimit"
         - $ref: "#/components/parameters/Offset"
+        - $ref: "#/components/parameters/DeliverySearchQuery"
+        - $ref: "#/components/parameters/DeliverySourceFilter"
+        - $ref: "#/components/parameters/DeliverySeverityFilter"
+        - $ref: "#/components/parameters/DeliveryChannelFilter"
+        - $ref: "#/components/parameters/DeliveryFromFilter"
+        - $ref: "#/components/parameters/DeliveryToFilter"
+        - $ref: "#/components/parameters/DeliverySuppressedFilter"
       responses:
         "200":
-          description: Recent deliveries. Without pagination query parameters this endpoint returns the legacy array shape; with `limit` or `offset` it returns a paginated object.
+          description: Recent deliveries. Without query parameters this endpoint returns the legacy array shape; with any query parameter it returns a paginated object whose `total` uses the same filters as `entries`.
           content:
             application/json:
               schema:
@@ -1245,6 +1285,10 @@ paths:
                     items:
                       $ref: "#/components/schemas/Delivery"
                   - $ref: "#/components/schemas/PaginatedDeliveries"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          description: Delivery history worker is temporarily unavailable.
         "4XX":
           $ref: "#/components/responses/ClientError"
   /emergency/{token}:
@@ -2476,6 +2520,65 @@ components:
         maximum: 10000
         default: 500
       description: Page size for delivery history. Supplying this parameter opts into the paginated response shape.
+    DeliverySearchQuery:
+      name: q
+      in: query
+      schema:
+        type: string
+        maxLength: 256
+      description: Case-insensitive substring search across source, severity, title, channel, and suppression reason. Longer values are truncated to 256 characters.
+    DeliverySourceFilter:
+      name: source
+      in: query
+      schema:
+        type: string
+        maxLength: 256
+      description: Exact source name. Longer values are truncated to 256 characters.
+    DeliverySeverityFilter:
+      name: severity
+      in: query
+      schema:
+        type: string
+        maxLength: 256
+      description: Exact persisted severity value. Longer values are truncated to 256 characters.
+    DeliveryChannelFilter:
+      name: channel
+      in: query
+      schema:
+        type: string
+        maxLength: 256
+      description: Exact delivery channel. Longer values are truncated to 256 characters.
+    DeliveryFromFilter:
+      name: from
+      in: query
+      schema:
+        type: number
+        format: double
+      description: Inclusive lower delivery timestamp bound as finite Unix seconds.
+    DeliveryToFilter:
+      name: to
+      in: query
+      schema:
+        type: number
+        format: double
+      description: Inclusive upper delivery timestamp bound as finite Unix seconds. Must not precede `from`.
+    DeliverySuppressedFilter:
+      name: suppressed
+      in: query
+      schema:
+        type: string
+        enum: [include, exclude, only]
+        default: include
+      description: Include every delivery, exclude suppressed deliveries, or return only suppressed deliveries.
+    ActivityHours:
+      name: hours
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 168
+        default: 24
+      description: Rolling activity window ending at request time.
     Offset:
       name: offset
       in: query
@@ -3452,9 +3555,81 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/Delivery"
+    DeliveryActivity:
+      type: object
+      additionalProperties: false
+      required:
+        - hours
+        - total
+        - total_history
+        - suppressed
+        - by_source
+        - by_severity
+        - by_channel
+        - latest_by_source
+        - latest_by_channel
+        - latest_ts
+        - approximate_history_bytes
+      properties:
+        hours:
+          type: integer
+          minimum: 1
+          maximum: 168
+          description: Requested rolling window in hours.
+        total:
+          type: integer
+          minimum: 0
+          description: Deliveries whose timestamps fall within the requested window.
+        total_history:
+          type: integer
+          minimum: 0
+          description: All retained delivery records, including records outside the requested window.
+        suppressed:
+          type: integer
+          minimum: 0
+          description: Records in the requested window with a non-empty suppression reason, including dry-run suppression simulations.
+        by_source:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+          description: Delivery count per source within the requested window.
+        by_severity:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+          description: Delivery count per severity within the requested window.
+        by_channel:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+          description: Delivery count per channel within the requested window.
+        latest_by_source:
+          type: object
+          additionalProperties:
+            type: number
+            format: double
+          description: Latest delivery Unix timestamp per source within the requested window.
+        latest_by_channel:
+          type: object
+          additionalProperties:
+            type: number
+            format: double
+          description: Latest delivery Unix timestamp per channel within the requested window.
+        latest_ts:
+          type: [number, "null"]
+          format: double
+          description: Latest delivery Unix timestamp across all retained records, or null when history is empty.
+        approximate_history_bytes:
+          type: integer
+          minimum: 0
+          description: Approximate bytes occupied by retained delivery rows, computed in SQL as UTF-8 octet lengths of persisted text fields and the deduplication hash plus 32 bytes of fixed overhead per row. This is not the database file or table size.
     Delivery:
       type: object
-      additionalProperties: true
+      additionalProperties: false
+      required: [ts, source, severity, title, channel, suppressed_by]
       properties:
         ts:
           type: number
@@ -3462,19 +3637,21 @@ components:
           description: Unix timestamp in seconds.
         source:
           type: string
+          description: Built-in or registered custom source name.
         severity:
           $ref: "#/components/schemas/Severity"
         title:
           type: string
+          description: Rendered delivery title retained for operational history.
         channel:
           type: string
+          description: Selected downstream channel, or the recorded suppression/dry-run channel marker.
         suppressed_by:
           type: string
+          description: Suppression reason or rule identifier; empty when the delivery was not suppressed.
         emergency_receipt_id:
           type: [string, "null"]
           description: Stable emergency receipt correlation. Present only when this delivery belongs to an acknowledgement workflow.
-        ok:
-          type: boolean
     LogEntry:
       type: object
       additionalProperties: true
@@ -3531,6 +3708,7 @@ components:
           type: integer
     PaginatedDeliveries:
       type: object
+      additionalProperties: false
       required: [entries, total, limit, offset]
       properties:
         entries:
@@ -3539,10 +3717,18 @@ components:
             $ref: "#/components/schemas/Delivery"
         total:
           type: integer
+          minimum: 0
+          description: Total retained deliveries matching every active filter.
         limit:
           type: integer
+          minimum: 1
+          maximum: 10000
+          description: Effective page size after server-side clamping.
         offset:
           type: integer
+          minimum: 0
+          maximum: 1000000
+          description: Effective zero-based row offset after server-side clamping.
     SetupStatus:
       type: object
       additionalProperties: true

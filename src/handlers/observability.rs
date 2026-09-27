@@ -1,20 +1,22 @@
-use super::{json_response, parse_query};
+use super::parse_query;
 use crate::audit;
 use crate::log_buffer;
 use crate::state::AppState;
 use crate::util::env_string;
-use axum::body::Body;
-use axum::http::Response;
 use chrono::Utc;
 use serde_json::{Value, json};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 mod client_logs;
+mod deliveries;
 mod metrics;
 mod setup;
 
 pub(super) use client_logs::client_log_response;
+pub(super) use deliveries::{
+    activity_response as status_activity_response, response as deliveries_response,
+};
 pub(super) use metrics::metrics_response;
 pub(super) use setup::setup_ready;
 
@@ -236,23 +238,4 @@ pub(super) fn audit_payload(full_path: &str) -> Value {
         .unwrap_or(0);
     let query = qs.get("q").map(String::as_str).unwrap_or("");
     audit::query(query, limit, offset)
-}
-
-pub(super) fn deliveries_response(state: &AppState, full_path: &str) -> Response<Body> {
-    let qs = parse_query(full_path);
-    let paginated = qs.contains_key("limit") || qs.contains_key("offset");
-    if !paginated {
-        return json_response(state.recent_deliveries());
-    }
-    let default_limit = state.with_cfg(|cfg| cfg.history.default_limit);
-    let limit = qs
-        .get("limit")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(default_limit)
-        .clamp(1, 10_000);
-    let offset = qs
-        .get("offset")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(0);
-    json_response(state.deliveries_page(limit, offset))
 }

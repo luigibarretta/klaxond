@@ -11,9 +11,12 @@ export { loadConfigBackups } from "./app-config-backups.js";
 
 // ---- Status ----
 export async function loadStatus(opts = {}) {
+  setOperationalSummaryLoading();
   try {
     const s = await queryGet("status", "/api/status", { force: opts.force });
+    const channelStates = {};
     const setCh = (id, configured, up, detail) => {
+      channelStates[id.replace(/^ch-/, "")] = { configured, up };
       const card = $("#" + id);
       const dot = card.querySelector(".dot");
       const state = !configured ? "unknown" : up ? "up" : "down";
@@ -48,12 +51,68 @@ export async function loadStatus(opts = {}) {
     setCh("ch-ntfy", configured.ntfy, s.channels.ntfy, channelDetail(s.ntfy_url, configured.ntfy));
     setCh("ch-telegram", configured.telegram, s.channels.telegram, channelDetail(configured.telegram ? tr("channel.bot_configured") : "", configured.telegram));
     setCh("ch-smtp", configured.smtp, s.channels.smtp, channelDetail(s.smtp_host, configured.smtp));
+    updateOperationalSummary(s, channelStates);
     updateAppVersion(s.version);
-    $("#cas-default").textContent = s.cascade_enabled_default;
+    $("#cas-runtime-default").textContent = s.cascade_enabled_default;
     $("#cas-runtime").textContent = s.cascade_enabled_runtime;
     updateStatusLogWidget(s.logs || {});
-  } catch (e) { fetchError("status", e); }
+  } catch (e) {
+    setOperationalSummaryUnavailable(e);
+    fetchError("status", e);
+  }
   loadStatusActivity();
+}
+
+function setOperationalSummaryLoading() {
+  const summary = $("#operational-summary");
+  if (!summary) return;
+  summary.dataset.state = "loading";
+  summary.querySelector(".operational-summary-icon").textContent = "…";
+  $("#operational-summary-title").textContent = tr("status.checking");
+  $("#operational-summary-detail").textContent = "";
+}
+
+function setOperationalSummaryUnavailable(error) {
+  const summary = $("#operational-summary");
+  if (!summary) return;
+  summary.dataset.state = "unknown";
+  summary.querySelector(".operational-summary-icon").textContent = "?";
+  $("#operational-summary-title").textContent = tr("status.channel_state_unknown");
+  $("#operational-summary-detail").textContent = tr("status.channel_state_unknown_detail", {
+    message: errorText(error),
+  });
+  $("#status-active-emergencies").textContent = "—";
+}
+
+function updateOperationalSummary(status, channelStates) {
+  const summary = $("#operational-summary");
+  if (!summary) return;
+  const configured = Object.entries(channelStates).filter(([, state]) => state.configured);
+  const reachable = configured.filter(([, state]) => state.up);
+  const unavailable = configured.filter(([, state]) => !state.up).map(([name]) => name);
+  const emergencyStorageOk = status.emergency?.storage_ok !== false;
+  let state = "healthy";
+  let title = tr("status.channels_reachable");
+  let detail = tr("status.delivery_healthy_detail", { count: reachable.length });
+  if (!configured.length || !emergencyStorageOk || !reachable.length) {
+    state = "action";
+    title = tr("status.delivery_action_required");
+    detail = !configured.length
+      ? tr("status.no_channels_configured")
+      : !emergencyStorageOk
+        ? tr("status.emergency_storage_unavailable")
+        : tr("status.no_channels_reachable");
+  } else if (unavailable.length) {
+    state = "degraded";
+    title = tr("status.delivery_degraded");
+    detail = tr("status.channels_unavailable", { channels: unavailable.join(", ") });
+  }
+  summary.dataset.state = state;
+  const icon = summary.querySelector(".operational-summary-icon");
+  if (icon) icon.textContent = state === "healthy" ? "✓" : state === "degraded" ? "!" : "×";
+  $("#operational-summary-title").textContent = title;
+  $("#operational-summary-detail").textContent = detail;
+  $("#status-active-emergencies").textContent = String(status.emergency?.active || 0);
 }
 
 function updateStatusLogWidget(logs) {
@@ -148,7 +207,12 @@ export function updateCurrentUserUI(user = {}) {
   if (modeEl) modeEl.textContent = readOnly ? `mode=${mode} · viewer` : `mode=${mode}`;
   if (avatar) avatar.textContent = initials;
   const authUser = $("#auth-current-user");
-  if (authUser) authUser.textContent = `${user.sub || "?"} (mode=${mode})`;
+  if (authUser) {
+    const email = user.email && user.email !== name ? ` · ${user.email}` : "";
+    authUser.textContent = `${name}${email}`;
+  }
+  const authSub = $("#auth-current-sub");
+  if (authSub) authSub.textContent = `${user.sub || "?"} · ${mode}`;
   applyReadOnlyViewerMode(user);
 }
 
@@ -215,6 +279,14 @@ export async function fetchDeliveries(limit = 0, opts = {}) {
   }));
 }
 
+export async function fetchDeliveryActivity(hours = 24, opts = {}) {
+  const boundedHours = Math.max(1, Math.min(Number(hours) || 24, 168));
+  return queryGet(opts.scope || `delivery-activity:${boundedHours}`, `/api/status/activity?hours=${boundedHours}`, {
+    cancelPrevious: false,
+    force: opts.force,
+  });
+}
+
 export function deliveryTsSeconds(item) {
   const raw = Number(item?.ts ?? item?.timestamp ?? 0);
   return raw > 1000000000000 ? raw / 1000 : raw;
@@ -223,26 +295,30 @@ export function deliveryTsSeconds(item) {
 // Aggregate 24h activity from persisted delivery history.
 // Also updates the tab badges (deliveries24h / suppressions / dedup-pending).
 export async function loadStatusActivity() {
-  // Deliveries: fetch persisted history + count last 24h
+  // Delivery aggregates are computed by the storage backend. The overview never
+  // downloads raw history merely to count it.
   try {
-    const items = await fetchDeliveries(10000);
-    const cutoff = Date.now() / 1000 - 24 * 3600;
-    const recent = (items || []).filter(it => deliveryTsSeconds(it) >= cutoff);
-    const bySource = {};
-    for (const it of recent) {
-      const k = it.source || "?";
-      bySource[k] = (bySource[k] || 0) + 1;
-    }
-    $("#stat-deliv-total").textContent = recent.length;
+    const activity = await fetchDeliveryActivity(24, { scope: "status-delivery-activity" });
+    const total = Number(activity.total || activity.window_total || 0);
+    const bySource = activity.by_source || {};
+    const byChannel = activity.by_channel || {};
+    $("#stat-deliv-total").textContent = total;
     const parts = Object.entries(bySource).sort((a,b) => b[1]-a[1])
                   .map(([k,v]) => `${k}: ${v}`);
     $("#stat-deliv-breakdown").innerHTML = parts.length
       ? tr("status.by_source") + " " + parts.map(p => `<code>${escapeHtml(p)}</code>`).join(" · ")
       : `${tr("status.by_source")} <span class='muted'>${escapeHtml(tr("status.no_activity"))}</span>`;
-    setTabBadge("deliveries", recent.length);
+    setTabBadge("deliveries", total);
+    const failed = Object.entries(byChannel)
+      .filter(([channel]) => channel.includes("failed"))
+      .reduce((sum, [, count]) => sum + Number(count || 0), 0);
+    $("#status-failed-24h").textContent = String(failed);
+    $("#status-suppressed-24h").textContent = String(activity.suppressed || 0);
   } catch (e) {
     $("#stat-deliv-total").textContent = "?";
     $("#stat-deliv-breakdown").textContent = tr("status.deliveries_unreachable");
+    $("#status-failed-24h").textContent = "—";
+    $("#status-suppressed-24h").textContent = "—";
     fetchError("status-activity-deliveries", e);
   }
   // Active suppressions count
@@ -260,8 +336,6 @@ export async function loadStatusActivity() {
     $("#stat-dedup-count").textContent = total;
     setTabBadge("grouping", total, total > 0 ? "warn" : "");
   } catch (e) { $("#stat-dedup-count").textContent = "?"; fetchError("status-activity-dedup", e); }
-  // Refresh config backup list (also belongs to the Status pane)
-  loadConfigBackups();
 }
 
 $("#btn-cascade-toggle").addEventListener("click", async () => {

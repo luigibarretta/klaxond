@@ -149,7 +149,8 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     await page.context().credentials.install();
 
     await page.goto(`${LOCAL_ORIGIN}/authentication`);
-    await expect(page.locator("#auth-current-user")).toContainText("admin (mode=basic)");
+    await expect(page.locator("#auth-current-user")).toHaveText("admin");
+    await expect(page.locator("#auth-current-sub")).toContainText("admin · basic");
     await page.fill("#passkey-name", "e2e virtual key");
     await page.click("#passkey-register");
     await expect(page.locator("#t-passkeys tbody")).toContainText("e2e virtual key");
@@ -164,7 +165,8 @@ test("passkeys can be registered, used for login, and deleted", async ({ page, r
     expect(passkeyUser).toMatchObject({ sub: BASIC_USER, mode: "passkey" });
 
     await page.goto(`${LOCAL_ORIGIN}/authentication`);
-    await expect(page.locator("#auth-current-user")).toContainText("admin (mode=passkey)");
+    await expect(page.locator("#auth-current-user")).toHaveText("admin");
+    await expect(page.locator("#auth-current-sub")).toContainText("admin · passkey");
     const deleteButton = page.locator("#t-passkeys tbody tr", { hasText: "e2e virtual key" }).locator("[data-passkey-del]");
     await deleteButton.click();
     await expect(page.getByRole("dialog")).toBeVisible();

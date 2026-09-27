@@ -4,7 +4,8 @@ import {
   updatePublicLoginLinksText,
 } from "./app.js";
 import { loadAuth, renderTokens, authTokens } from "./app-auth-view.js";
-import { loadDeliv, loadLogs, renderDeliv } from "./app-deliveries-logs.js";
+import { loadDeliv, renderDeliv } from "./app-deliveries.js";
+import { loadLogs } from "./app-logs.js";
 import {
   loadCascade, loadDedup, loadDelivery, renderCascadeTable, renderDedupCards,
   renderDeliveryDefault, renderPoliciesTable, renderRulesTable,
@@ -40,7 +41,7 @@ document.addEventListener("klaxond:languagechange", () => {
   refreshTablePagers();
   if (document.querySelector("#tab-flow.active")) loadFlow();
   if (document.querySelector("#tab-logs.active")) loadLogs();
-  if (document.querySelector("#tab-setup.active")) loadSetup({ force: true });
+  if (document.querySelector("#tab-setup.active")) { loadSetup({ force: true }); loadConfigBackups(); }
 });
 
 

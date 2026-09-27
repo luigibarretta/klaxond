@@ -1,11 +1,15 @@
 use super::RuntimeAuthState;
-use super::{DeliveryEntry, DeliveryPage, RepeatCandidate, RepeatDecision, RepeatState};
+use super::{
+    DeliveryActivity, DeliveryEntry, DeliveryPage, DeliveryQuery, RepeatCandidate, RepeatDecision,
+    RepeatState,
+};
 use anyhow::{Context, Result};
 use postgres::{Client, NoTls};
 use std::sync::mpsc;
 use std::time::Duration;
 
 mod auth_state;
+mod delivery;
 mod emergency;
 mod rate_limit;
 mod repeat;
@@ -45,18 +49,37 @@ impl PostgresWorker {
             .context("receive postgres history record response")?
     }
 
-    pub(super) fn deliveries_page(&self, limit: usize, offset: usize) -> Result<DeliveryPage> {
+    pub(super) fn query_deliveries(&self, query: &DeliveryQuery) -> Result<DeliveryPage> {
         let (reply, result) = mpsc::channel();
         self.tx
             .send(PostgresCommand::Page {
-                limit,
-                offset,
+                query: query.clone(),
                 reply,
             })
             .context("send postgres history page request")?;
         result
             .recv()
             .context("receive postgres history page response")?
+    }
+
+    pub(super) fn delivery_activity(
+        &self,
+        hours: u16,
+        since: f64,
+        until: f64,
+    ) -> Result<DeliveryActivity> {
+        let (reply, result) = mpsc::channel();
+        self.tx
+            .send(PostgresCommand::Activity {
+                hours,
+                since,
+                until,
+                reply,
+            })
+            .context("send postgres history activity request")?;
+        result
+            .recv()
+            .context("receive postgres history activity response")?
     }
 
     pub(super) fn export_all(&self) -> Result<Vec<DeliveryEntry>> {

@@ -2,6 +2,8 @@ export const IT_AUTH_MESSAGES = {
   "auth.title": "Autenticazione",
   "auth.desc": "Protegge UI e admin API. Gli endpoint webhook (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) restano sempre pubblici a prescindere dalla modalità — gli emitter non possono fare OIDC.<br>Utente loggato corrente: <code id=\"auth-current-user\">—</code>.",
   "auth.desc_before_user": "Protegge UI e admin API. Gli endpoint webhook (<code>/webhook/</code>, <code>/beszel/</code>, <code>/healthchecks/</code>, <code>/wud/</code>) restano sempre pubblici a prescindere dalla modalità — gli emitter non possono fare OIDC.<br>Utente loggato corrente:",
+  "auth.identity_details": "Dettagli tecnici identita'",
+  "auth.subject_identifier": "Identificativo immutabile",
   "auth.sign_in": "Accedi",
   "auth.back_to_app": "Torna all'app",
   "auth.mode_none": "<b>Nessuna</b> — pubblico (default; adatto quando klaxond è su una rete interna fidata)",

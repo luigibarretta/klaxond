@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use tempfile::TempDir;
 
+mod delivery;
 mod emergency;
+mod postgres_delivery;
 mod postgres_rate_limit;
 mod postgres_repeat;
 mod postgres_session;
@@ -38,21 +40,6 @@ fn entry(i: usize) -> DeliveryEntry {
         suppressed_by: String::new(),
         emergency_receipt_id: None,
     }
-}
-
-#[test]
-fn sqlite_delivery_history_preserves_emergency_receipt_id() {
-    let tmp = TempDir::new().unwrap();
-    let store = HistoryStore::open(&sqlite_cfg(tmp.path().join("history.db"), 10)).unwrap();
-    let mut delivery = entry(1);
-    delivery.emergency_receipt_id = Some("receipt-123".to_string());
-    store.record_delivery(&delivery).unwrap();
-
-    let page = store.deliveries_page(10, 0).unwrap();
-    assert_eq!(
-        page.entries[0].emergency_receipt_id.as_deref(),
-        Some("receipt-123")
-    );
 }
 
 fn repeat_candidate(now: f64, token: &str) -> RepeatCandidate {
@@ -120,25 +107,6 @@ fn import_auth_state(
             rate_limits,
         })
         .unwrap();
-}
-
-#[test]
-fn sqlite_history_paginates_and_prunes_by_retention() {
-    let tmp = TempDir::new().unwrap();
-    let store = HistoryStore::open(&sqlite_cfg(tmp.path().join("history.db"), 3)).unwrap();
-    for i in 0..5 {
-        store.record_delivery(&entry(i)).unwrap();
-    }
-
-    let page = store.deliveries_page(2, 0).unwrap();
-    assert_eq!(page.total, 3);
-    assert_eq!(page.entries.len(), 2);
-    assert_eq!(page.entries[0].title, "Alert 4");
-    assert_eq!(page.entries[1].title, "Alert 3");
-
-    let second = store.deliveries_page(2, 2).unwrap();
-    assert_eq!(second.entries.len(), 1);
-    assert_eq!(second.entries[0].title, "Alert 2");
 }
 
 #[test]

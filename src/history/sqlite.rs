@@ -1,4 +1,4 @@
-use super::{DeliveryEntry, SCHEMA_VERSION, dedupe_hash};
+use super::SCHEMA_VERSION;
 use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OpenFlags, params};
 use std::fs;
@@ -6,10 +6,17 @@ use std::path::Path;
 use std::time::Duration;
 
 pub(super) mod auth_state;
+mod delivery;
 pub(super) mod emergency;
 pub(super) mod rate_limit;
 pub(super) mod repeat;
 pub(super) mod session;
+
+pub(super) use delivery::{
+    activity as sqlite_delivery_activity, count as sqlite_delivery_count,
+    export_all as sqlite_export_all, insert as sqlite_insert, page as sqlite_delivery_page,
+    prune as sqlite_prune,
+};
 
 pub(super) type SqliteConnection = Connection;
 
@@ -64,6 +71,12 @@ CREATE TABLE IF NOT EXISTS klaxond_deliveries (
   channel TEXT NOT NULL,
   suppressed_by TEXT NOT NULL DEFAULT '',
   emergency_receipt_id TEXT,
+  search_source TEXT NOT NULL DEFAULT '',
+  search_severity TEXT NOT NULL DEFAULT '',
+  search_title TEXT NOT NULL DEFAULT '',
+  search_channel TEXT NOT NULL DEFAULT '',
+  search_suppressed_by TEXT NOT NULL DEFAULT '',
+  search_version INTEGER NOT NULL DEFAULT 0,
   dedupe_hash TEXT NOT NULL
 );
 
@@ -201,6 +214,7 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_created
     if !sqlite_column_exists(conn, "klaxond_deliveries", "emergency_receipt_id")? {
         conn.execute_batch("ALTER TABLE klaxond_deliveries ADD COLUMN emergency_receipt_id TEXT;")?;
     }
+    migrate_delivery_search_columns(conn)?;
     conn.execute(
         "UPDATE klaxond_auth_sessions SET family_hash = id_hash WHERE family_hash = ''",
         [],
@@ -216,6 +230,69 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_created
     Ok(())
 }
 
+fn migrate_delivery_search_columns(conn: &Connection) -> Result<()> {
+    for column in [
+        "search_source",
+        "search_severity",
+        "search_title",
+        "search_channel",
+        "search_suppressed_by",
+    ] {
+        if !sqlite_column_exists(conn, "klaxond_deliveries", column)? {
+            conn.execute_batch(&format!(
+                "ALTER TABLE klaxond_deliveries ADD COLUMN {column} TEXT NOT NULL DEFAULT '';"
+            ))?;
+        }
+    }
+    if !sqlite_column_exists(conn, "klaxond_deliveries", "search_version")? {
+        conn.execute_batch(
+            "ALTER TABLE klaxond_deliveries ADD COLUMN search_version INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+
+    let rows = {
+        let mut statement = conn.prepare(
+            "SELECT id, source, severity, title, channel, suppressed_by \
+             FROM klaxond_deliveries WHERE search_version < 1",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut update = tx.prepare(
+            r#"
+UPDATE klaxond_deliveries SET
+  search_source = ?2,
+  search_severity = ?3,
+  search_title = ?4,
+  search_channel = ?5,
+  search_suppressed_by = ?6,
+  search_version = 1
+WHERE id = ?1
+"#,
+        )?;
+        for (id, source, severity, title, channel, suppressed_by) in rows {
+            let values =
+                super::delivery_search_values(&source, &severity, &title, &channel, &suppressed_by);
+            update.execute(params![
+                id, &values[0], &values[1], &values[2], &values[3], &values[4]
+            ])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 fn sqlite_column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
     let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
     let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
@@ -225,107 +302,4 @@ fn sqlite_column_exists(conn: &Connection, table: &str, column: &str) -> Result<
         }
     }
     Ok(false)
-}
-
-pub(super) fn sqlite_insert(conn: &Connection, entry: &DeliveryEntry) -> Result<()> {
-    let hash = dedupe_hash(entry);
-    conn.execute(
-        r#"
-INSERT OR IGNORE INTO klaxond_deliveries
-  (ts, source, severity, title, channel, suppressed_by, emergency_receipt_id, dedupe_hash)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-"#,
-        params![
-            entry.ts,
-            &entry.source,
-            &entry.severity,
-            &entry.title,
-            &entry.channel,
-            &entry.suppressed_by,
-            &entry.emergency_receipt_id,
-            hash,
-        ],
-    )?;
-    Ok(())
-}
-
-pub(super) fn sqlite_count(conn: &Connection) -> Result<usize> {
-    Ok(
-        conn.query_row("SELECT COUNT(*) FROM klaxond_deliveries", [], |row| {
-            row.get::<_, i64>(0)
-        })? as usize,
-    )
-}
-
-pub(super) fn sqlite_page(
-    conn: &Connection,
-    limit: usize,
-    offset: usize,
-) -> Result<Vec<DeliveryEntry>> {
-    let mut stmt = conn.prepare(
-        r#"
-SELECT ts, source, severity, title, channel, suppressed_by, emergency_receipt_id
-FROM klaxond_deliveries
-ORDER BY ts DESC, id DESC
-LIMIT ?1 OFFSET ?2
-"#,
-    )?;
-    let rows = stmt.query_map(params![limit as i64, offset as i64], |row| {
-        Ok(DeliveryEntry {
-            ts: row.get(0)?,
-            source: row.get(1)?,
-            severity: row.get(2)?,
-            title: row.get(3)?,
-            channel: row.get(4)?,
-            suppressed_by: row.get(5)?,
-            emergency_receipt_id: row.get(6)?,
-        })
-    })?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-pub(super) fn sqlite_export_all(conn: &mut Connection) -> Result<Vec<DeliveryEntry>> {
-    let tx = conn.unchecked_transaction()?;
-    let rows = {
-        let receipt_select =
-            if sqlite_column_exists(&tx, "klaxond_deliveries", "emergency_receipt_id")? {
-                "emergency_receipt_id"
-            } else {
-                "NULL AS emergency_receipt_id"
-            };
-        let mut stmt = tx.prepare(&format!(
-            "SELECT ts, source, severity, title, channel, suppressed_by, {receipt_select} \
-             FROM klaxond_deliveries ORDER BY ts ASC, id ASC"
-        ))?;
-        let rows = stmt.query_map([], |row| {
-            Ok(DeliveryEntry {
-                ts: row.get(0)?,
-                source: row.get(1)?,
-                severity: row.get(2)?,
-                title: row.get(3)?,
-                channel: row.get(4)?,
-                suppressed_by: row.get(5)?,
-                emergency_receipt_id: row.get(6)?,
-            })
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()?
-    };
-    tx.commit()?;
-    Ok(rows)
-}
-
-pub(super) fn sqlite_prune(conn: &Connection, retention: usize) -> Result<()> {
-    if retention == 0 {
-        return Ok(());
-    }
-    conn.execute(
-        r#"
-DELETE FROM klaxond_deliveries
-WHERE id NOT IN (
-  SELECT id FROM klaxond_deliveries ORDER BY ts DESC, id DESC LIMIT ?1
-)
-"#,
-        params![retention as i64],
-    )?;
-    Ok(())
 }

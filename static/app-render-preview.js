@@ -5,7 +5,7 @@ import {
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
 } from "./app.js";
-import { loadDeliv } from "./app-deliveries-logs.js";
+import { loadDeliv } from "./app-deliveries.js";
 
 // ---- Render config ----
 let rcData = {};
@@ -286,5 +286,4 @@ $("#btn-test-fire").addEventListener("click", async () => {
     button.disabled = false;
   }
 });
-
 

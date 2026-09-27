@@ -1,4 +1,5 @@
 import { IT_AUTH_MESSAGES } from "./i18n-it-auth.js";
+import { IT_DASHBOARD_MESSAGES } from "./i18n-it-dashboard.js";
 import { buildItalianOperationalMessages } from "./i18n-it-operational.js";
 const IT_STATIC_MESSAGES = {
   "app.title": "klaxond — demone notifiche",
@@ -23,6 +24,8 @@ const IT_STATIC_MESSAGES = {
   "theme.system": "Sistema",
   "theme.light": "Chiaro",
   "theme.dark": "Scuro",
+  "common.search": "Cerca",
+  "common.all": "Tutti",
   "nav.operations": "Operazioni",
   "nav.settings": "Impostazioni",
   "nav.tools": "Strumenti",
@@ -470,20 +473,27 @@ const IT_STATIC_MESSAGES = {
   "deliveries.desc": "Include sia eventi consegnati sia eventi <span class=\"ch-suppressed\">soppressi</span>. Le righe soppresse mostrano la regola che ha fatto match nella colonna Canale.",
   "deliveries.filter_placeholder": "Filtra (titolo, sorgente, severità, canale)…",
   "deliveries.show_suppressed": "Mostra soppressi",
+  "deliveries.suppressed": "Soppressi",
   "deliveries.export_csv": "Esporta CSV",
-  "deliveries.export_title": "Scarica le righe visibili come CSV",
+  "deliveries.export_title": "Scarica tutte le righe corrispondenti come CSV",
   "deliveries.channel_or_suppressed": "Canale / Soppressa da",
   "deliveries.event_count": "{count} evento/i",
   "deliveries.event_count_filtered": "{shown} / {total} evento/i",
+  "deliveries.showing_range": "{from}-{to} di {total} evento/i",
   "deliveries.no_match": "Nessun evento corrisponde al filtro.",
+  "deliveries.no_results": "Nessun evento corrispondente",
+  "deliveries.page_empty": "Questa pagina e' vuota. Torna alla pagina precedente.",
   "deliveries.no_deliveries": "Nessuna consegna finora.",
   "deliveries.suppressed_by": "soppressa da",
   "deliveries.dry_run": "dry-run",
   "deliveries.would_suppress": "sopprimerebbe",
   "deliveries.no_rows_export": "Nessuna riga da esportare",
+  "deliveries.export_too_large": "Corrispondono {total} righe. Restringi i filtri sotto {limit} righe prima di esportare.",
   "deliveries.exported": "Esportate {count} righe",
   "deliveries.details": "Dettagli",
   "deliveries.serialized_size": "{count} caricati · {size} serializzati",
+  "deliveries.approximate_history_size": "{count} conservati · circa {size}",
+  "deliveries.page_payload_size": "{count} caricati · payload pagina {size}",
 };
 
 function italianAuthorMessages(authorLink) {
@@ -498,6 +508,7 @@ export function buildItalianMessages({ authorLink }) {
     ...IT_STATIC_MESSAGES,
     ...italianAuthorMessages(authorLink),
     ...buildItalianOperationalMessages(),
+    ...IT_DASHBOARD_MESSAGES,
     ...IT_AUTH_MESSAGES,
   };
 }

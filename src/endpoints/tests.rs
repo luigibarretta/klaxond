@@ -113,6 +113,7 @@ fn all_runtime_operations_are_documented_in_openapi() {
         ("post", "/api/auth/step-up/totp/setup/confirm"),
         ("post", "/api/auth/step-up/totp/verify"),
         ("get", "/api/status"),
+        ("get", "/api/status/activity"),
         ("get", "/api/setup-status"),
         ("get", "/api/channel-test-matrix"),
         ("get", "/api/logs"),
@@ -266,6 +267,10 @@ fn sudo_mutations_are_documented_with_reauth_required() {
 fn scope_policy_preserves_existing_access_contracts() {
     assert_eq!(required_scope(&Method::GET, "/api/logs"), "logs:read");
     assert_eq!(required_scope(&Method::GET, "/api/audit"), "audit:read");
+    assert_eq!(
+        required_scope(&Method::GET, "/api/status/activity"),
+        "status:read"
+    );
     assert_eq!(
         required_scope(&Method::GET, "/api/config/backup"),
         "config:read"

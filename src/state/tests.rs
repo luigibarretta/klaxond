@@ -87,6 +87,29 @@ fn history_store_reopens_when_runtime_config_changes() {
 }
 
 #[test]
+fn history_store_switch_rejects_activity_from_the_previous_generation() {
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    state.log_delivery("grafana", "warning", "Old activity", "dry-run", "");
+    let old_generation = state.history_generation();
+    let old_activity = state
+        .delivery_activity(24, crate::util::now_epoch() + 1.0)
+        .unwrap();
+    assert!(state.cache_delivery_activity(old_generation, old_activity.clone()));
+    assert!(state.cached_delivery_activity(24, old_generation).is_some());
+
+    let mut cfg = state.cfg();
+    cfg.history.sqlite_path = tmp.path().join("replacement.db");
+    state.try_replace_config(cfg).unwrap();
+
+    let new_generation = state.history_generation();
+    assert_ne!(new_generation, old_generation);
+    assert!(state.cached_delivery_activity(24, new_generation).is_none());
+    assert!(!state.cache_delivery_activity(old_generation, old_activity));
+    assert!(state.cached_delivery_activity(24, new_generation).is_none());
+}
+
+#[test]
 fn history_store_switch_preserves_runtime_auth_state() {
     let tmp = TempDir::new().unwrap();
     let paths = temp_paths(&tmp);

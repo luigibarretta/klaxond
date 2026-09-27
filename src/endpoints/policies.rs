@@ -90,6 +90,7 @@ pub const ENDPOINT_POLICIES: &[EndpointPolicy] = &[
     get("/api/config/export", "admin:*"),
     get("/api/config/backups", "status:read"),
     get("/api/status", "status:read"),
+    get("/api/status/activity", "status:read"),
     get("/api/deliveries", "status:read"),
     get("/api/emergencies", "status:read"),
     EndpointPolicy {
