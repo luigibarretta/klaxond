@@ -84,6 +84,8 @@ function appendInhibitionRule(rule) {
 
 function installInhibitionPresetControl(addButton) {
   if (!addButton || document.getElementById("inhib-preset")) return;
+  const savebar = addButton.closest(".editor-savebar");
+  if (!savebar) return;
   const control = document.createElement("div");
   control.className = "inhib-preset-control";
   control.innerHTML = `
@@ -96,7 +98,7 @@ function installInhibitionPresetControl(addButton) {
       </select>
     </label>
     <button type="button" class="btn" id="inhib-preset-add">${escapeHtml(tr("inhib.add_preset"))}</button>`;
-  addButton.insertAdjacentElement("beforebegin", control);
+  savebar.insertAdjacentElement("beforebegin", control);
   control.querySelector("#inhib-preset-add")?.addEventListener("click", () => {
     const preset = INHIBITION_PRESETS[control.querySelector("#inhib-preset")?.value];
     if (preset) appendInhibitionRule({ ...preset, applies_to: [...preset.applies_to] });

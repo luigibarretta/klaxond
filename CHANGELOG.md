@@ -1,5 +1,20 @@
 # Klaxond — CHANGELOG
 
+## 0.20.6 — 2026-09-28
+
+- Clarify Klaxond's public positioning as a self-hosted alert-delivery gateway,
+  streamline the sidebar information architecture and make its responsive
+  drawer, identity and visual language consistent across viewports.
+- Move delivery and log history to bounded server-side pagination, search and
+  aggregates so operational pages no longer download the full retained history.
+- Turn Flow into an inspectable configuration-derived route map and make noise
+  controls and inhibition rules easier to understand, scope, validate and edit.
+- Add section navigation, explicit dirty state and race-safe save/discard flows
+  to channel routing and authentication without mixing operational actions into
+  configuration changes.
+- Keep local login methods in a clear single-column layout on desktop and mobile
+  so password, passkey and magic-link actions cannot overlap or shrink.
+
 ## 0.20.5 — 2026-09-09
 
 - Add operator-defined JSON ingest sources with one-time secrets, portable

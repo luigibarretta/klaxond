@@ -88,7 +88,7 @@ export async function loadFlow(options = {}) {
     const canvas = viewport.querySelector(".flow-canvas");
     canvas.innerHTML = svg;
     if (bindFunctions) bindFunctions(canvas);
-    _prepareFlowZoom(previous?.zoom || (window.innerWidth <= 760 ? 4 : 1));
+    _prepareFlowZoom(previous?.zoom ?? null);
     if (previous) {
       viewport.scrollLeft = previous.left;
       viewport.scrollTop = previous.top;
@@ -160,7 +160,14 @@ function _prepareFlowZoom(zoom) {
   svg.style.maxWidth = "none";
   svg.style.display = "block";
   svg.style.transformOrigin = "top left";
-  _flowZoom = zoom;
+  if (zoom === null) {
+    const viewport = $("#flow-diagram");
+    const availableWidth = Math.max(1, (viewport?.clientWidth || 1) - 32);
+    const fit = Math.min(1, availableWidth / _flowNaturalSize.width);
+    _flowZoom = Math.max(1, Math.min(5, 0.85 / fit));
+  } else {
+    _flowZoom = zoom;
+  }
   _applyFlowZoom();
 }
 
@@ -178,7 +185,7 @@ function _applyFlowZoom() {
   canvas.style.width = `${Math.ceil(_flowNaturalSize.width * scale)}px`;
   canvas.style.height = `${Math.ceil(_flowNaturalSize.height * scale)}px`;
   const output = $("#flow-zoom-level");
-  if (output) output.textContent = `${Math.round(_flowZoom * 100)}%`;
+  if (output) output.textContent = `${Math.round(scale * 100)}%`;
   if ($("#flow-zoom-out")) $("#flow-zoom-out").disabled = _flowZoom <= 0.5;
   if ($("#flow-zoom-in")) $("#flow-zoom-in").disabled = _flowZoom >= 5;
 }

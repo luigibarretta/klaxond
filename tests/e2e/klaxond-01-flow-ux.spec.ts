@@ -1,5 +1,22 @@
 import { expect, test } from "@playwright/test";
 
+test("flow opens at a readable scale and exposes a true fit control", async ({ page }) => {
+  await page.goto("/flow");
+  await expect(page.locator("#flow-diagram svg")).toBeVisible();
+  const zoom = page.locator("#flow-zoom-level");
+  const percentage = async () => Number((await zoom.textContent())?.replace("%", ""));
+  const initial = await percentage();
+  expect(initial).toBeGreaterThanOrEqual(80);
+
+  await page.locator("#flow-zoom-fit").click();
+  const fitted = await percentage();
+  expect(fitted).toBeLessThanOrEqual(100);
+  expect(fitted).toBeLessThanOrEqual(initial);
+
+  await page.locator("#flow-zoom-in").click();
+  expect(await percentage()).toBeGreaterThan(fitted);
+});
+
 test("flow refresh preserves focused route step", async ({ page }) => {
   await page.goto("/flow");
   const selector = page.locator('[data-flow-step="policy-selector"]');

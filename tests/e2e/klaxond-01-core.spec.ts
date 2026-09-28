@@ -122,6 +122,15 @@ test("setup separates release blockers from recommended hardening", async ({ pag
   await expect(page.locator('[data-setup-group="required"] .log-level').first()).not.toHaveText(/^(ok|warn|error|partial|info)$/);
   await expect(page.locator('.setup-item.is-ok .setup-status-badge.success').first()).toContainText(/Complete|Complet/);
   await expect(page.locator("#setup-next")).toBeVisible();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/setup");
+    await expect(page.locator(".setup-item")).toHaveCount(8);
+    const overflowingCards = await page.locator(".setup-item").evaluateAll((cards) =>
+      cards.filter((card) => card.scrollWidth > card.clientWidth + 1).length,
+    );
+    expect(overflowingCards).toBe(0);
+  }
 });
 
 test("unconfigured channels are neutral and the empty delivery state has next actions", async ({ page, request }) => {
@@ -218,8 +227,11 @@ test("direct flow refresh initializes without frontend TDZ errors", async ({ pag
   await expect(page.locator("#flow-step-inspector")).toContainText("Delivery policy selection");
   await expect(page.locator("#flow-step-inspector a")).toHaveAttribute("href", "/delivery");
 
+  const initialZoom = Number((await page.locator("#flow-zoom-level").textContent())?.replace("%", ""));
   await page.click("#flow-zoom-in");
-  await expect(page.locator("#flow-zoom-level")).toHaveText("125%");
+  await expect.poll(async () =>
+    Number((await page.locator("#flow-zoom-level").textContent())?.replace("%", "")),
+  ).toBeGreaterThan(initialZoom);
   await page.click("#flow-animate");
   await page.click("#flow-autorefresh");
   await page.click("#flow-show-source");

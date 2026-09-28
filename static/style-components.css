@@ -147,7 +147,19 @@ input.input-warning {
   color: var(--muted);
   background: var(--panel-light);
 }
-.login-actions,
+.login-actions {
+  display: grid;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 14px;
+}
+.login-actions > *,
+.login-actions .btn {
+  width: 100%;
+}
+.login-actions .btn {
+  justify-content: center;
+}
 .login-legal {
   display: flex;
   align-items: center;
@@ -161,7 +173,7 @@ input.input-warning {
 .login-form {
   display: grid;
   gap: 12px;
-  margin-top: 14px;
+  margin: 0;
 }
 .login-form label {
   display: grid;
@@ -385,7 +397,7 @@ pre {
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
 .row button, .row .btn { white-space: nowrap; }
 code { background: var(--panel-light); padding: 1px 6px; border-radius: 3px; font-size: 12px; }
-.sev-info { color: #3b82f6; }
+.sev-info { color: var(--info-text); }
 .sev-warning { color: var(--yellow); }
 .sev-critical { color: var(--red); font-weight: 600; }
 .sev-active { color: var(--red); font-weight: 700; }
@@ -393,7 +405,7 @@ code { background: var(--panel-light); padding: 1px 6px; border-radius: 3px; fon
 .sev-expired, .sev-cancelled { color: var(--muted); }
 .ch-ntfy { color: var(--green); }
 .ch-telegram { color: var(--telegram); }
-.ch-smtp { color: #a855f7; }
+.ch-smtp { color: var(--smtp-text); }
 .ch-all-failed, .ch-suppressed { color: var(--red); }
 .ch-dry-run { color: var(--muted); font-style: italic; }
 

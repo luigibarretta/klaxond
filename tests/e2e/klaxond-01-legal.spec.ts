@@ -130,6 +130,40 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
     expect(loginHtml).toContain(AUTHOR_URL);
     expect(loginHtml).not.toContain("klaxond.luigibarretta.com");
 
+    for (const viewport of [
+      { width: 1440, height: 1000 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(viewport);
+      await page.goto("/api/auth/login?return_to=%2Fstatus");
+      const layout = await page.locator(".login-actions").evaluate((container) => {
+        const parent = container.getBoundingClientRect();
+        return [...container.children].map((child) => {
+          const rect = child.getBoundingClientRect();
+          return {
+            widthGap: Math.round(parent.width - rect.width),
+            leftGap: Math.round(rect.left - parent.left),
+          };
+        });
+      });
+      expect(layout.length).toBeGreaterThan(0);
+      expect(
+        layout.every(({ widthGap, leftGap }) => Math.abs(widthGap) <= 2 && Math.abs(leftGap) <= 2),
+      ).toBe(true);
+      const inputs = await page.locator(".login-form input:not([type=hidden])").evaluateAll((elements) =>
+        elements.map((element) => {
+          const style = getComputedStyle(element);
+          return {
+            height: Math.round(element.getBoundingClientRect().height),
+            background: style.backgroundColor,
+          };
+        }),
+      );
+      const expectedHeight = viewport.width <= 760 ? 44 : 40;
+      expect(inputs.every(({ height }) => height >= expectedHeight)).toBe(true);
+      expect(new Set(inputs.map(({ background }) => background))).toHaveProperty("size", 1);
+    }
+
     const logout = await request.post("/api/auth/logout");
     expect(logout.status()).toBe(200);
     expect(await logout.json()).toEqual({ ok: true });

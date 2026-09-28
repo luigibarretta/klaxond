@@ -23,6 +23,15 @@ test("inhibition applies-to checkboxes stay compact and aligned", async ({ page 
   expect(await firstRow.locator("[data-inhib-preview]").evaluate(element => (
     element.scrollWidth <= element.clientWidth + 1
   ))).toBe(true);
+
+  const savebar = page.locator("#tab-inhibitions .editor-savebar");
+  await expect(savebar.locator("#inhib-preset")).toHaveCount(0);
+  expect((await savebar.boundingBox())?.height).toBeLessThanOrEqual(84);
+  const ttl = firstRow.locator('[data-k="ttl_seconds"]');
+  await ttl.evaluate(element => element.scrollIntoView({ block: "center" }));
+  const ttlBox = await ttl.boundingBox();
+  const savebarBox = await savebar.boundingBox();
+  expect(ttlBox && savebarBox && ttlBox.y + ttlBox.height <= savebarBox.y).toBe(true);
 });
 
 test("inhibition editor explains rules, filters source scope and validates regex inline", async ({ page }) => {

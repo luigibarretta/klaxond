@@ -18,9 +18,9 @@ pub(super) fn login_page(
         "basic" => format!(
             r#"<form class="login-form" method="post" action="/api/auth/local/login">
 <input type="hidden" name="return_to" value="{return_to}">
-<label><span>Username</span><input name="username" autocomplete="username" required></label>
+<label><span>Username</span><input name="username" type="text" autocomplete="username" required></label>
 <label><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label>
-<label><span>TOTP code</span><input name="totp" inputmode="numeric" pattern="[0-9]{{6}}" autocomplete="one-time-code" placeholder="000000"></label>
+<label><span>TOTP code</span><input name="totp" type="text" inputmode="numeric" pattern="[0-9]{{6}}" autocomplete="one-time-code" placeholder="000000"></label>
 <button class="btn primary" type="submit">Sign in</button>
 </form>"#
         ),
@@ -40,7 +40,7 @@ pub(super) fn login_page(
         format!(
             r#"<form class="login-form" method="post" action="/api/auth/magic/request">
 <input type="hidden" name="return_to" value="{return_to}">
-<label><span>Username</span><input name="username" autocomplete="username" required></label>
+<label><span>Username</span><input name="username" type="text" autocomplete="username" required></label>
 <button class="btn" type="submit">Use magic link</button>
 </form>"#
         )
