@@ -818,7 +818,8 @@ klaxond/
 ├── playwright.config.ts
 ├── README.md
 ├── CHANGELOG.md
-└── LICENSE
+├── LICENSE
+└── NOTICE
 ```
 
 ## Development
@@ -901,7 +902,8 @@ The threat model and review checklist are tracked in
 
 ## License
 
-Apache-2.0 — see [LICENSE](./LICENSE).
+Apache-2.0 — see [LICENSE](./LICENSE). Redistributions must preserve the
+attribution in [NOTICE](./NOTICE) as required by section 4 of the license.
 
 ---
 The maintainer's Gitea repository is the canonical write source and GitHub is

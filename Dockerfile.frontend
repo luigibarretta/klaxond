@@ -11,6 +11,7 @@ ENV KLAXOND_BACKEND_URL=http://klaxond-backend:8181 \
 
 COPY static/ /usr/share/nginx/html/
 COPY deploy/frontend/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY LICENSE NOTICE /usr/share/licenses/klaxond/
 
 RUN find /usr/share/nginx/html -type d -exec chmod 755 {} + \
     && find /usr/share/nginx/html -type f -exec chmod 644 {} +

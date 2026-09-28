@@ -1,5 +1,10 @@
 # Klaxond — CHANGELOG
 
+## Unreleased
+
+- Add the project attribution notice and preserve `LICENSE` and `NOTICE` in
+  backend/frontend container images and future Compose release bundles.
+
 ## 0.20.7 — 2026-09-28
 
 - Unify delivery policy management on `/delivery`: expose the built-in cascade

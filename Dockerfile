@@ -30,6 +30,7 @@ WORKDIR /app
 COPY --from=build /tmp/klaxond /usr/local/bin/klaxond
 COPY static/ /app/static/
 COPY klaxond.default.toml /app/klaxond.default.toml
+COPY LICENSE NOTICE /usr/share/licenses/klaxond/
 
 VOLUME ["/data"]
 

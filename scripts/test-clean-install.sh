@@ -36,6 +36,9 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 curl -fsS "http://${PUBLISHED}/healthz" | grep -qx OK
+docker exec "$CONTAINER" test -r /usr/share/licenses/klaxond/LICENSE
+docker exec "$CONTAINER" grep -Fqx 'Copyright 2026 Luigi Barretta' \
+  /usr/share/licenses/klaxond/NOTICE
 
 # A blank durable volume must enter the guided setup instead of pretending to
 # be production-ready. The setup API remains machine-verifiable for installers.
