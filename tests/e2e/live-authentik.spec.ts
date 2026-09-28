@@ -14,7 +14,14 @@ async function clickVisibleButton(page: Page, names: RegExp[]): Promise<boolean>
   for (const name of names) {
     const button = page.getByRole("button", { name }).first();
     if (await button.isVisible().catch(() => false)) {
-      await button.click({ timeout: 3_000 });
+      try {
+        await button.click({ timeout: 3_000 });
+      } catch (error) {
+        // Authentik can replace a completed stage while Playwright is waiting
+        // for the old button to stabilize. Treat that disappearance as flow
+        // progress, but preserve genuine click failures on a visible control.
+        if (await button.isVisible().catch(() => false)) throw error;
+      }
       return true;
     }
   }
