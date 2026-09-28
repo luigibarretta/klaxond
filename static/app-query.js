@@ -32,6 +32,7 @@ const QUERY_CACHE_MUTATION_BYPASS_PATHS = new Set([
 const _queryCache = new Map();
 const _queryInflight = new Map();
 const _queryPendingByKey = new Map();
+let _queryCacheGeneration = 0;
 
 function urlPath(url) {
   try {
@@ -70,13 +71,20 @@ function shouldInvalidateQueryCache(method, url, opts = {}) {
 }
 
 export function invalidateQueryCache(match = null) {
+  _queryCacheGeneration += 1;
   if (!match) {
     _queryCache.clear();
+    _queryPendingByKey.clear();
     return;
   }
   const patterns = Array.isArray(match) ? match : [match];
   for (const key of Array.from(_queryCache.keys())) {
     if (patterns.some(pattern => key.startsWith(pattern) || key.includes(pattern))) _queryCache.delete(key);
+  }
+  for (const key of Array.from(_queryPendingByKey.keys())) {
+    if (patterns.some(pattern => key.startsWith(pattern) || key.includes(pattern))) {
+      _queryPendingByKey.delete(key);
+    }
   }
 }
 
@@ -99,12 +107,19 @@ export function debounce(fn, delayMs = SEARCH_DEBOUNCE_MS) {
 export async function queryGet(scope, url, opts = {}) {
   const ttlMs = opts.ttlMs ?? queryTtlFor(url);
   const key = queryCacheKey(url);
+  const cacheGeneration = _queryCacheGeneration;
   const now = Date.now();
   if (ttlMs > 0 && !opts.force) {
     const cached = _queryCache.get(key);
     if (cached && cached.expiresAt > now) return cloneQueryValue(cached.value);
     const pending = _queryPendingByKey.get(key);
-    if (pending && opts.joinInflight !== false) return cloneQueryValue(await pending);
+    if (pending && opts.joinInflight !== false) {
+      const payload = await pending;
+      if (cacheGeneration !== _queryCacheGeneration) {
+        return queryGet(scope, url, { ...opts, force: true, joinInflight: false });
+      }
+      return cloneQueryValue(payload);
+    }
   }
   if (opts.cancelPrevious !== false) {
     const prev = _queryInflight.get(scope);
@@ -116,7 +131,7 @@ export async function queryGet(scope, url, opts = {}) {
     ...(opts.fetchOptions || {}),
     signal: controller.signal,
   }).then(payload => {
-    if (ttlMs > 0) {
+    if (ttlMs > 0 && cacheGeneration === _queryCacheGeneration) {
       _queryCache.set(key, {
         expiresAt: Date.now() + ttlMs,
         value: cloneQueryValue(payload),
@@ -126,7 +141,11 @@ export async function queryGet(scope, url, opts = {}) {
   });
   if (ttlMs > 0 && !opts.force) _queryPendingByKey.set(key, requestPromise);
   try {
-    return await requestPromise;
+    const payload = await requestPromise;
+    if (ttlMs > 0 && cacheGeneration !== _queryCacheGeneration) {
+      return queryGet(scope, url, { ...opts, force: true, joinInflight: false });
+    }
+    return payload;
   } finally {
     if (_queryInflight.get(scope) === controller) _queryInflight.delete(scope);
     if (_queryPendingByKey.get(key) === requestPromise) _queryPendingByKey.delete(key);

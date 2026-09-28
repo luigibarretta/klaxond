@@ -175,7 +175,8 @@ export function applyReadOnlyViewerMode(user = {}) {
   const writeSelectors = [
     "#btn-cascade-toggle", "#cfg-import-apply", "#inhib-add", "#inhib-save", "#inhib-clear-all",
     "#sched-add", "#sched-save", "#btn-rc-add", "#btn-rc-save", "#ntfy-topic-add",
-    "#ntfy-topics-save", "#btn-routing-save", "#btn-cas-add", "#btn-cas-save",
+    "#ntfy-topics-save", "#btn-routing-save", "#routing-save-all", "#routing-discard",
+    "#btn-cas-add", "#btn-cas-save",
     "#btn-pol-add", "#btn-rule-add", "#btn-delivery-save", "[data-dedup-save]", "[data-auth-save]",
     "#token-create", "#passkey-register", "#totp-start", "#totp-enable", "#totp-disable", "#btn-preview", "#inhib-test-run", "#btn-test-fire",
     "button.danger", "[data-clear-suppression]", "[data-clear-ack]", "[data-del]", "[data-revoke]", "[data-passkey-del]", "button[data-act]", "button[data-emergency-action]"
@@ -185,6 +186,7 @@ export function applyReadOnlyViewerMode(user = {}) {
     el.disabled = readOnly || Boolean(dirtyTab && !dirtyTabs.has(dirtyTab));
     if (readOnly) el.title = tr("auth.viewer_readonly");
   });
+  document.dispatchEvent(new CustomEvent("klaxond:readonlychange"));
 }
 window.applyReadOnlyViewerMode = applyReadOnlyViewerMode;
 

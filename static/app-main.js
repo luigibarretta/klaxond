@@ -9,11 +9,12 @@ import { loadCascade, loadDedup, loadDelivery } from "./app-delivery-grouping.js
 import { loadFlow, setupFlowAutorefresh } from "./app-flow.js";
 import { loadAcks, loadInhibRules, loadSchedules } from "./app-inhibitions.js";
 import { loadRC } from "./app-render-preview.js";
-import { loadIngestAuth, loadNtfyTopics } from "./app-routing.js";
+import { loadIngestAuth, loadNtfyTopics, loadRouting } from "./app-routing.js";
 import { loadSetup, runPolicySimulation } from "./app-setup-simulator.js";
 import { loadConfigBackups, loadStatus, setTabBadge } from "./app-status.js";
 import { loadEmergencies } from "./app-emergencies.js";
 import { setupSidebar } from "./app-sidebar.js";
+import { setupSettingsNavigation } from "./app-settings-nav.js";
 import { startApp } from "./app-bootstrap.js";
 
 setTabActivationHandlers({
@@ -22,7 +23,7 @@ setTabActivationHandlers({
   auth: () => loadAuth(),
   deliveries: () => loadDeliv(),
   emergencies: () => loadEmergencies(),
-  routing: () => { loadNtfyTopics(); loadIngestAuth(); },
+  routing: () => { loadRouting(); loadNtfyTopics(); loadIngestAuth(); },
   render: () => loadRC(),
   cascade: () => loadCascade(),
   delivery: () => loadDelivery(),
@@ -43,4 +44,5 @@ Object.assign(window, {
 });
 
 setupSidebar();
+setupSettingsNavigation();
 startApp();

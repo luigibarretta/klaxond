@@ -1,0 +1,78 @@
+.settings-index {
+  display: flex;
+  gap: 4px;
+  margin: 16px 0 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.settings-index button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 5px 10px;
+  border-color: transparent;
+  color: var(--muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+}
+.settings-index button:hover,
+.settings-index button:focus-visible {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--panel-light);
+}
+.settings-actions {
+  justify-content: flex-start;
+}
+.settings-actions [role="status"]:empty { display: none; }
+.settings-actions #auth-status:not(:empty) {
+  width: 100%;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+}
+[data-settings-target]:focus-visible,
+[id$="-section"]:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 3px;
+}
+[id$="-section"] { scroll-margin-top: var(--settings-section-offset, 82px); }
+.ntfy-topic-row {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.ntfy-topic-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.ntfy-topic-row:last-child { padding-bottom: 0; }
+
+@media (max-width: 760px) {
+  .settings-index {
+    margin-inline: -4px;
+    padding-inline: 4px;
+  }
+  .settings-index button { min-height: 44px; }
+  .settings-actions > button {
+    flex: 1 1 140px;
+    min-height: 44px;
+  }
+  .settings-actions [role="status"] { flex-basis: 100%; }
+}
+
+@media (max-width: 520px) {
+  .settings-index {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+  .settings-index button {
+    width: 100%;
+    white-space: normal;
+  }
+  .scope-pill code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

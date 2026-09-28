@@ -199,7 +199,8 @@ main {
   margin: 0 auto;
 }
 main:focus { outline: none; }
-.auth-actions {
+.auth-actions,
+.settings-actions {
   position: sticky;
   top: 8px;
   z-index: 10;
@@ -286,7 +287,8 @@ main:focus { outline: none; }
     justify-content: flex-start;
   }
   main { padding: 18px; }
-  .auth-actions { top: 70px; }
+  .auth-actions,
+  .settings-actions { top: 70px; }
   .setup-readiness { align-items: stretch; flex-direction: column; }
   .public-legal-bar {
     align-items: flex-start;

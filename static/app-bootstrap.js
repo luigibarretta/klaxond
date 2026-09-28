@@ -75,6 +75,7 @@ function _wireDirtyTracking() {
     const tabId = pane.id.replace(/^tab-/, "");
     if (!tabId) return;
     if (tabId === "logs") return;
+    if (tabId === "auth" || tabId === "routing") return;
     pane.addEventListener("input", e => {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
@@ -132,6 +133,9 @@ function activateTabWithDirtyGuard(tabId) {
         _dirtyNavigationPending = false;
         if (!confirmed) return;
         markTabDirty(activeId, false);
+        document.dispatchEvent(new CustomEvent("klaxond:tabdiscard", {
+          detail: { tabId: activeId },
+        }));
         navigateToTab(tabId);
       });
     }
@@ -160,6 +164,12 @@ function _activeTabPane() {
 function _clickPrimarySaveOnActiveTab() {
   const pane = _activeTabPane();
   if (!pane) return false;
+  const designated = pane.querySelector("button[data-shortcut-save]");
+  if (designated) {
+    if (designated.disabled) return false;
+    designated.click();
+    return true;
+  }
   // Find the most likely "save" button — class=primary takes precedence,
   // then look for any button whose text starts with "Save".
   const primary = pane.querySelector("button.primary:not(:disabled)");

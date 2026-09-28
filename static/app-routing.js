@@ -1,35 +1,97 @@
 import {
-  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
-  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
-  confirmDialog, markTabDirty, notifyError, notifyResponseError, notifySuccess,
-  notifyValidationError, onReady, promptDialog,
-  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
-  showSecretDialog, showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels,
-  updatePublicLoginLinksText,
+  $, J, apiFetch, confirmDialog, escapeHtml, fetchError, markTabDirty, notifyError,
+  notifyResponseError, notifySuccess, queryGet, setInlineStatus, tr,
 } from "./app.js";
-import { applyReadOnlyViewerMode, loadStatus } from "./app-status.js";
+import { loadStatus } from "./app-status.js";
+export { loadIngestAuth } from "./app-routing-ingest.js";
 
 // ---- ntfy topics (0.7.1+ editor) ----
 let ntfyTopicsData = { topics: [], known_severities: [], note: "", writeable: false };
+const routingDirtySections = new Set();
+const routingEditRevisions = new Map([["channels", 0], ["topics", 0]]);
+const routingLoadGenerations = new Map([["channels", 0], ["topics", 0]]);
+const routingSavingSections = new Set();
+const routingForceReloadSections = new Set();
+let routingBatchGeneration = 0;
+let routingBatchActive = false;
 
-export async function loadNtfyTopics() {
+function updateRoutingDirtyState() {
+  const dirty = routingDirtySections.size > 0;
+  markTabDirty("routing", dirty);
+  const readOnly = document.body.classList.contains("viewer-readonly");
+  const saveAll = $("#routing-save-all");
+  if (saveAll) saveAll.disabled = !dirty || readOnly || routingSavingSections.size > 0 || routingBatchActive;
+  const discard = $("#routing-discard");
+  if (discard) discard.disabled = !dirty || readOnly || routingSavingSections.size > 0 || routingBatchActive;
+  for (const section of ["channels", "topics"]) {
+    document.querySelectorAll(`[data-routing-save-section="${section}"]`).forEach(button => {
+      button.disabled = !routingDirtySections.has(section)
+        || readOnly
+        || routingSavingSections.has(section)
+        || routingBatchActive;
+    });
+  }
+  const status = $("#routing-dirty-status");
+  if (status) {
+    status.textContent = dirty
+      ? tr("settings.unsaved_sections", { count: routingDirtySections.size })
+      : tr("settings.no_unsaved_changes");
+  }
+}
+
+function markRoutingSectionDirty(section, dirty = true) {
+  if (dirty) {
+    routingDirtySections.add(section);
+    routingForceReloadSections.delete(section);
+    routingEditRevisions.set(section, (routingEditRevisions.get(section) || 0) + 1);
+  }
+  else routingDirtySections.delete(section);
+  updateRoutingDirtyState();
+}
+
+function renderNtfyTopicsSummary(data) {
+  const severities = (data.known_severities || []).filter(severity => severity !== "resolved");
+  const severityList = severities.length
+    ? severities.map(severity => `<code>${escapeHtml(severity)}</code>`).join(", ")
+    : `<em>${escapeHtml(tr("routing.none"))}</em>`;
+  $("#ntfy-topics-summary").innerHTML = `<small>${tr("routing.summary", {
+    count: (data.topics || []).length,
+    severities: severityList,
+  })}</small>`;
+  $("#ntfy-topics-note").textContent = data.note || "";
+}
+
+export async function loadNtfyTopics(options = {}) {
+  const force = options.force || routingForceReloadSections.has("topics");
+  if (routingSavingSections.has("topics")) {
+    if (force) routingForceReloadSections.add("topics");
+    return true;
+  }
+  if (!force && routingDirtySections.has("topics")) return true;
+  const requestedRevision = routingEditRevisions.get("topics");
+  const loadGeneration = (routingLoadGenerations.get("topics") || 0) + 1;
+  routingLoadGenerations.set("topics", loadGeneration);
   try {
-    const j = await queryGet("ntfy-topics", "/api/ntfy-topics");
+    const j = await queryGet("ntfy-topics", "/api/ntfy-topics", { force });
+    if (routingLoadGenerations.get("topics") !== loadGeneration) return true;
+    if (routingEditRevisions.get("topics") !== requestedRevision) return true;
     ntfyTopicsData = j;
     renderNtfyTopicsEditor();
-    const sev = (j.known_severities || []).filter(s => s !== "resolved");
-    const sevStr = sev.length ? sev.map(s => `<code>${escapeHtml(s)}</code>`).join(", ") : `<em>${escapeHtml(tr("routing.none"))}</em>`;
-    $("#ntfy-topics-summary").innerHTML = `<small>${tr("routing.summary", { count: (j.topics || []).length, severities: sevStr })}</small>`;
-    $("#ntfy-topics-note").textContent = j.note || "";
+    renderNtfyTopicsSummary(j);
+    routingForceReloadSections.delete("topics");
+    markRoutingSectionDirty("topics", false);
+    return true;
   } catch (e) {
+    if (routingLoadGenerations.get("topics") !== loadGeneration) return true;
     fetchError("ntfy-topics", e);
+    return false;
   }
 }
 
 function _renderTopicRow(t, idx) {
   const handlesStr = (t.handles || []).join(", ");
   return `
-    <div class="card" data-topic-idx="${idx}" style="margin-bottom:8px">
+    <div class="ntfy-topic-row" data-topic-idx="${idx}">
       <div class="grid2">
         <label>${escapeHtml(tr("routing.topic_name"))} <input type="text" class="ntfy-t-name" value="${escapeHtml(t.name || "")}" placeholder="${escapeHtml(tr("routing.topic_placeholder"))}"></label>
         <label>${escapeHtml(tr("routing.token"))}
@@ -55,29 +117,48 @@ export function renderNtfyTopicsEditor() {
   c.querySelectorAll(".ntfy-t-delete").forEach(b => {
     b.addEventListener("click", () => {
       const idx = parseInt(b.dataset.idx, 10);
+      syncNtfyTopicsDraft();
       ntfyTopicsData.topics.splice(idx, 1);
       renderNtfyTopicsEditor();
+      markRoutingSectionDirty("topics");
     });
   });
 }
 
+function collectNtfyTopicsDraft({ skipEmpty = false } = {}) {
+  const topics = [];
+  $("#ntfy-topics-editor")?.querySelectorAll("[data-topic-idx]").forEach(card => {
+    const name = card.querySelector(".ntfy-t-name").value.trim();
+    if (skipEmpty && !name) return;
+    topics.push({
+      name,
+      token: card.querySelector(".ntfy-t-token").value,
+      handles: card.querySelector(".ntfy-t-handles").value
+        .split(",").map(value => value.trim().toLowerCase()).filter(Boolean),
+    });
+  });
+  return topics;
+}
+
+function syncNtfyTopicsDraft() {
+  ntfyTopicsData.topics = collectNtfyTopicsDraft();
+}
+
 $("#ntfy-topic-add")?.addEventListener("click", () => {
+  syncNtfyTopicsDraft();
   if (!ntfyTopicsData.topics) ntfyTopicsData.topics = [];
   ntfyTopicsData.topics.push({ name: "", token: "", handles: ["info"] });
   renderNtfyTopicsEditor();
+  markRoutingSectionDirty("topics");
 });
 
-$("#ntfy-topics-save")?.addEventListener("click", async () => {
-  // Collect from DOM
-  const out = [];
-  $("#ntfy-topics-editor")?.querySelectorAll("[data-topic-idx]").forEach(card => {
-    const name = card.querySelector(".ntfy-t-name").value.trim();
-    const tokenRaw = card.querySelector(".ntfy-t-token").value;
-    const handlesStr = card.querySelector(".ntfy-t-handles").value;
-    const handles = handlesStr.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
-    if (!name) return;  // skip empty rows on save (use Delete instead)
-    out.push({ name, token: tokenRaw, handles });
-  });
+export async function saveNtfyTopics(options = {}) {
+  if (routingSavingSections.has("topics") || (routingBatchActive && !options.batch)) return false;
+  routingSavingSections.add("topics");
+  routingLoadGenerations.set("topics", (routingLoadGenerations.get("topics") || 0) + 1);
+  updateRoutingDirtyState();
+  const submittedRevision = options.revision ?? routingEditRevisions.get("topics");
+  const out = options.topics ?? collectNtfyTopicsDraft({ skipEmpty: true });
   setInlineStatus("#ntfy-topics-status", tr("status.saving"));
   try {
     const r = await apiFetch("/api/ntfy-topics", {
@@ -88,27 +169,51 @@ $("#ntfy-topics-save")?.addEventListener("click", async () => {
     if (!r.ok) {
       const txt = await r.text();
       notifyResponseError("ntfy-topics-save", r, txt.slice(0, 200), "#ntfy-topics-status");
-      return;
+      return false;
     }
     const j = await r.json();
-    notifySuccess(tr("routing.saved_topics", {
-      count: j.topics.length,
-      severities: (j.known_severities || []).filter(s => s !== "resolved").join(", ")
-    }), { status: "#ntfy-topics-status" });
-    markTabDirty("routing", false);
-    // Reload to refresh badges
-    setTimeout(() => loadNtfyTopics(), 500);
+    if (routingEditRevisions.get("topics") === submittedRevision) {
+      ntfyTopicsData = j;
+      renderNtfyTopicsEditor();
+      renderNtfyTopicsSummary(j);
+      markRoutingSectionDirty("topics", false);
+      notifySuccess(tr("routing.saved_topics", {
+        count: j.topics.length,
+        severities: (j.known_severities || []).filter(s => s !== "resolved").join(", ")
+      }), { status: "#ntfy-topics-status" });
+    } else {
+      notifySuccess(tr("settings.saved_newer_pending"), { status: "#ntfy-topics-status" });
+    }
+    return true;
   } catch (e) {
     notifyError("ntfy-topics-save", e, { status: "#ntfy-topics-status" });
+    return false;
+  } finally {
+    routingSavingSections.delete("topics");
+    updateRoutingDirtyState();
+    if (routingForceReloadSections.has("topics")) void loadNtfyTopics({ force: true });
   }
-});
+}
+
+$("#ntfy-topics-save")?.addEventListener("click", () => saveNtfyTopics());
 
 
 
 // ---- Routing (channel config) ----
-export async function loadRouting() {
+export async function loadRouting(options = {}) {
+  const force = options.force || routingForceReloadSections.has("channels");
+  if (routingSavingSections.has("channels")) {
+    if (force) routingForceReloadSections.add("channels");
+    return true;
+  }
+  if (!force && routingDirtySections.has("channels")) return true;
+  const requestedRevision = routingEditRevisions.get("channels");
+  const loadGeneration = (routingLoadGenerations.get("channels") || 0) + 1;
+  routingLoadGenerations.set("channels", loadGeneration);
   try {
-    const c = await queryGet("channel-config", "/api/channel-config");
+    const c = await queryGet("channel-config", "/api/channel-config", { force });
+    if (routingLoadGenerations.get("channels") !== loadGeneration) return true;
+    if (routingEditRevisions.get("channels") !== requestedRevision) return true;
     $("#r-ntfy-url").value = c.ntfy.url || "";
     // ntfy topics are managed by the rich-view editor below (loadNtfyTopics).
     // The "Save routing" button only persists ntfy URL + telegram + smtp.
@@ -135,12 +240,19 @@ export async function loadRouting() {
       (c.smtp.host_from_env ? ` · <em>${escapeHtml(tr("routing.host_overridden_env"))}</em>` : "") +
       (c.smtp.user_from_env ? ` · <em>${escapeHtml(tr("routing.user_overridden_env"))}</em>` : "") +
       (c.smtp.password_from_env ? ` · <em>${escapeHtml(tr("routing.password_overridden_env"))}</em>` : "");
-  } catch (e) { fetchError("routing", e); }
+    routingForceReloadSections.delete("channels");
+    markRoutingSectionDirty("channels", false);
+    return true;
+  } catch (e) {
+    if (routingLoadGenerations.get("channels") !== loadGeneration) return true;
+    fetchError("routing", e);
+    return false;
+  }
 }
 
 const badge = ok => ok ? `<span style='color:var(--green)'>✓ ${escapeHtml(tr("common.configured"))}</span>` : `<span style='color:var(--red)'>✗ ${escapeHtml(tr("common.missing"))}</span>`;
 
-$("#btn-routing-save").addEventListener("click", async () => {
+function channelConfigDraft() {
   // ntfy topics intentionally omitted — managed by the topic editor + /api/ntfy-topics.
   const payload = {
     ntfy: { url: $("#r-ntfy-url").value.trim() },
@@ -163,163 +275,97 @@ $("#btn-routing-save").addEventListener("click", async () => {
   const smtpPassword = $("#r-smtp-password").value;
   if ($("#r-smtp-password-clear").checked) payload.smtp.password = "";
   else if (smtpPassword) payload.smtp.password = smtpPassword;
+  return payload;
+}
+
+export async function saveRouting(options = {}) {
+  if (routingSavingSections.has("channels") || (routingBatchActive && !options.batch)) return false;
+  routingSavingSections.add("channels");
+  routingLoadGenerations.set("channels", (routingLoadGenerations.get("channels") || 0) + 1);
+  updateRoutingDirtyState();
+  const submittedRevision = options.revision ?? routingEditRevisions.get("channels");
+  const payload = options.payload ?? channelConfigDraft();
   try {
     await J("/api/channel-config", { method: "POST", body: JSON.stringify(payload), headers: { "Content-Type": "application/json" } });
-    notifySuccess(tr("routing.saved"), { status: "#routing-msg", clearMs: 4000 });
-    markTabDirty("routing", false);
-    loadStatus();
-  } catch (e) { notifyError("routing-save", e, { status: "#routing-msg" }); }
-});
-
-
-// ---- Ingest auth (per-source webhook secret, 0.9.18+) ----
-export async function loadIngestAuth() {
-  const tb = $("#t-ingest-auth tbody"); if (!tb) return;
-  try {
-    const data = await queryGet("ingest-auth", "/api/ingest-auth");
-    const srcs = data.sources || {};
-    tb.innerHTML = "";
-    for (const src of Object.keys(srcs).sort()) {
-      const info = srcs[src];
-      const row = document.createElement("tr");
-      const status = info.configured
-        ? `<span style='color:var(--green)'>${escapeHtml(tr("ingest.secret_set"))}</span>`
-        : `<span style='color:var(--muted)'>${escapeHtml(tr("ingest.disabled"))}</span>`;
-      const envName = `KLAXOND_INGEST_SECRET_${src.toUpperCase().replaceAll("-", "_")}`;
-      const from = info.from === "env" ? `${escapeHtml(tr("ingest.env_readonly", { name: envName }))}`
-                  : info.from === "toml" ? `<code>klaxond.toml</code>`
-                  : "—";
-      const isEnv = info.from === "env";
-      const definitionIsEnv = info.definition_from === "env";
-      const displayName = info.display_name || src;
-      row.innerHTML = `
-        <td><span class="ingest-source-name"><strong>${escapeHtml(displayName)}</strong><small><code>${escapeHtml(src)}</code>${info.custom ? ` · ${escapeHtml(tr("ingest.custom"))}` : ""}</small></span></td>
-        <td>${status}</td>
-        <td class="ingest-source-endpoint"><code>${escapeHtml(info.endpoint || `/${src}/{severity}`)}</code></td>
-        <td><small>${from}</small></td>
-        <td><div class="ingest-source-actions">
-          <button class="btn primary" data-act="generate" data-src="${escapeHtml(src)}" ${isEnv ? "disabled title='env override active'" : ""}>${escapeHtml(tr("ingest.generate"))}</button>
-          <button class="btn" data-act="set" data-src="${escapeHtml(src)}" ${isEnv ? "disabled" : ""}>${escapeHtml(tr("ingest.set_custom"))}</button>
-          <button class="btn" data-act="clear" data-src="${escapeHtml(src)}" ${(!info.configured || isEnv) ? "disabled" : ""} style="color:var(--red)">${escapeHtml(tr("ingest.clear"))}</button>
-          ${info.custom ? `<button class="btn danger" data-act="remove" data-src="${escapeHtml(src)}" ${(isEnv || definitionIsEnv) ? "disabled" : ""}>${escapeHtml(tr("ingest.remove"))}</button>` : ""}
-        </div></td>`;
-      tb.appendChild(row);
-    }
-    // Wire button handlers
-    tb.querySelectorAll("button[data-act]").forEach(btn => {
-      btn.addEventListener("click", () => _ingestAuthAction(btn.dataset.src, btn.dataset.act));
-    });
-    if (document.body.classList.contains("viewer-readonly")) applyReadOnlyViewerMode(getCurrentUser());
-  } catch (e) { fetchError("ingest-auth", e); }
-}
-
-async function _ingestAuthAction(src, action) {
-  let body = { source: src, action };
-  if (action === "set") {
-    const sec = await promptDialog(
-      `Paste the secret to use for source "${src}". It must contain at least 16 characters.`,
-      {
-        title: tr("ingest.set_custom"),
-        label: tr("routing.token"),
-        type: "password",
-        minLength: 16,
-        autocomplete: "new-password",
-      }
-    );
-    if (!sec) return;
-    if (sec.length < 16) { notifyError(`ingest-auth-${action}`, new Error(tr("ingest.secret_too_short"))); return; }
-    body.secret = sec;
-  }
-  if (action === "clear") {
-    const confirmed = await confirmDialog(
-      `Clear the webhook secret for "${src}"? Klaxond will disable that inbound route.`,
-      { title: tr("ingest.clear"), confirmLabel: tr("ingest.clear"), danger: true }
-    );
-    if (!confirmed) return;
-  }
-  if (action === "remove") {
-    const confirmed = await confirmDialog(
-      tr("ingest.remove_confirm", { source: src }),
-      { title: tr("ingest.remove"), confirmLabel: tr("ingest.remove"), danger: true }
-    );
-    if (!confirmed) return;
-  }
-  try {
-    const res = await apiFetch("/api/ingest-auth", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const txt = await res.text();
-      notifyResponseError(`ingest-auth-${action}`, res, txt.slice(0, 200));
-      return;
-    }
-    const r = await res.json();
-    if (r.secret) {
-      await showSecretDialog(r.secret, {
-        title: tr("ingest.generated", { source: src }),
-        message: tr("ingest.copy_secret", { source: src, endpoint: r.endpoint }),
-        confirmLabel: tr("dialog.done"),
-      });
-      notifySuccess(
-        tr(action === "add" ? "ingest.added" : "ingest.generated", { source: src }),
-        { durationMs: 4000 }
-      );
-    } else if (action === "remove") {
-      notifySuccess(tr("ingest.removed", { source: src }), { durationMs: 4000 });
+    if (routingEditRevisions.get("channels") === submittedRevision) {
+      markRoutingSectionDirty("channels", false);
+      notifySuccess(tr("routing.saved"), { status: "#routing-msg", clearMs: 4000 });
     } else {
-      notifySuccess(tr("ingest.action_ok", { action, source: src }), { durationMs: 4000 });
+      notifySuccess(tr("settings.saved_newer_pending"), { status: "#routing-msg" });
     }
-    loadIngestAuth();
+    loadStatus();
+    return true;
   } catch (e) {
-    notifyError(`ingest-auth-${action}`, e);
+    notifyError("routing-save", e, { status: "#routing-msg" });
+    return false;
+  } finally {
+    routingSavingSections.delete("channels");
+    updateRoutingDirtyState();
+    if (routingForceReloadSections.has("channels")) void loadRouting({ force: true });
   }
 }
 
-$("#ingest-source-add")?.addEventListener("click", async () => {
-  const source = await promptDialog(tr("ingest.source_id_help"), {
-    title: tr("ingest.add_source"),
-    label: tr("ingest.source_id"),
-    autocomplete: "off",
-  });
-  if (source === null) return;
-  const normalized = source.trim().toLowerCase();
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(normalized) || normalized.length < 2 || normalized.length > 40) {
-    notifyValidationError("ingest-source-add", tr("ingest.source_id_help"));
-    return;
-  }
-  const displayName = await promptDialog(tr("ingest.display_name_help"), {
-    title: tr("ingest.add_source"),
-    label: tr("ingest.display_name"),
-    value: normalized.split("-").map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(" "),
-    autocomplete: "off",
-  });
-  if (!displayName?.trim()) return;
+$("#btn-routing-save")?.addEventListener("click", () => saveRouting());
 
+document.querySelectorAll("[data-routing-section]").forEach(section => {
+  const markDirty = event => {
+    if (event.target.closest("[data-dirty-ignore]")) return;
+    markRoutingSectionDirty(section.dataset.routingSection);
+  };
+  section.addEventListener("input", markDirty);
+  section.addEventListener("change", markDirty);
+});
+
+$("#routing-save-all")?.addEventListener("click", async () => {
+  if (routingSavingSections.size > 0 || routingBatchActive) return;
+  routingBatchActive = true;
+  updateRoutingDirtyState();
+  const batchGeneration = ++routingBatchGeneration;
+  const pending = [...routingDirtySections];
+  const channels = pending.includes("channels") ? {
+    payload: channelConfigDraft(),
+    revision: routingEditRevisions.get("channels"),
+  } : null;
+  const topics = pending.includes("topics") ? {
+    topics: collectNtfyTopicsDraft({ skipEmpty: true }),
+    revision: routingEditRevisions.get("topics"),
+  } : null;
   try {
-    const response = await apiFetch("/api/ingest-auth", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        source: normalized,
-        action: "add",
-        display_name: displayName.trim(),
-      }),
-    });
-    if (!response.ok) {
-      notifyResponseError("ingest-source-add", response, (await response.text()).slice(0, 200));
-      return;
-    }
-    const result = await response.json();
-    await showSecretDialog(result.secret, {
-      title: tr("ingest.generated", { source: normalized }),
-      message: tr("ingest.copy_secret", { source: normalized, endpoint: result.endpoint }),
-      confirmLabel: tr("dialog.done"),
-    });
-    notifySuccess(tr("ingest.added", { source: normalized }), { durationMs: 4000 });
-    loadIngestAuth();
-  } catch (error) {
-    notifyError("ingest-source-add", error);
+    if (channels) await saveRouting({ ...channels, batch: true });
+    if (batchGeneration !== routingBatchGeneration) return;
+    if (topics) await saveNtfyTopics({ ...topics, batch: true });
+  } finally {
+    routingBatchActive = false;
+    updateRoutingDirtyState();
   }
 });
+
+$("#routing-discard")?.addEventListener("click", async () => {
+  if (!routingDirtySections.size) return;
+  const confirmed = await confirmDialog(tr("settings.discard_confirm"), {
+    title: tr("settings.discard_changes"),
+    confirmLabel: tr("shortcut.discard"),
+    danger: true,
+  });
+  if (!confirmed) return;
+  routingBatchGeneration += 1;
+  const [routingLoaded, topicsLoaded] = await Promise.all([
+    loadRouting({ force: true }),
+    loadNtfyTopics({ force: true }),
+  ]);
+  if (routingLoaded && topicsLoaded) {
+    notifySuccess(tr("settings.changes_discarded"));
+  }
+});
+
+document.addEventListener("klaxond:languagechange", updateRoutingDirtyState);
+document.addEventListener("klaxond:readonlychange", updateRoutingDirtyState);
+document.addEventListener("klaxond:tabdiscard", event => {
+  if (event.detail?.tabId !== "routing") return;
+  routingBatchGeneration += 1;
+  routingDirtySections.clear();
+  routingForceReloadSections.add("channels");
+  routingForceReloadSections.add("topics");
+  updateRoutingDirtyState();
+});
+updateRoutingDirtyState();
