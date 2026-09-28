@@ -14,6 +14,7 @@
   configuration changes.
 - Keep local login methods in a clear single-column layout on desktop and mobile
   so password, passkey and magic-link actions cannot overlap or shrink.
+- Update rustls to 0.23.45 to address RUSTSEC-2026-0285 in outbound TLS clients.
 
 ## 0.20.5 — 2026-09-09
 
