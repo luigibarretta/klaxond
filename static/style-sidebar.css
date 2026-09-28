@@ -13,7 +13,7 @@
   padding: 14px;
   border-right: 1px solid var(--border);
   background: var(--panel);
-  overflow-y: auto;
+  overflow: hidden;
   z-index: 20;
 }
 .sidebar-head {
@@ -45,6 +45,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+.icon-btn svg { width: 18px; height: 18px; }
+.sidebar-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 .prefs {
   display: flex;
@@ -107,22 +117,65 @@ nav.tabs {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  gap: 12px;
+  gap: 6px;
   padding: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .tab-group {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
-.tab-group-label {
+.tab-group-toggle {
+  width: 100%;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
   font-size: 9px;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--muted);
   padding: 6px 10px 2px;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
 }
+.tab-group-toggle:hover { color: var(--text); background: var(--row-hover); }
+.tab-group-toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform .12s ease-out;
+}
+.group-indicator {
+  min-width: 18px;
+  height: 18px;
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--border);
+  font-size: 10px;
+  line-height: 18px;
+  text-align: center;
+  letter-spacing: 0;
+}
+.group-indicator.warn { color: #fff; background: var(--warning-fill); }
+.group-indicator.crit { color: #fff; background: var(--danger-fill); }
+.tab-group:not(.is-collapsed) .group-indicator { display: none; }
+.tab-group-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tab-group.is-collapsed .tab-group-items { display: none; }
+.tab-group.is-collapsed .tab-group-toggle svg { transform: rotate(-90deg); }
 .sidebar .tab {
   position: relative;
   background: transparent;
@@ -156,10 +209,11 @@ nav.tabs {
   font-size: 13px;
   line-height: 1;
 }
+.tab-icon svg { width: 16px; height: 16px; }
 .tab.active .tab-icon {
   color: #fff;
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: var(--accent-fill);
+  background: var(--accent-fill);
 }
 .tab-label {
   min-width: 0;
@@ -181,19 +235,18 @@ nav.tabs {
   border-radius: 9px;
   vertical-align: 1px;
 }
-.tab .tab-badge.warn { background: var(--yellow); color: var(--badge-warn-fg); }
-.tab .tab-badge.crit { background: var(--red); color: #fff; }
+.tab .tab-badge.warn { background: var(--warning-fill); color: #fff; }
+.tab .tab-badge.crit { background: var(--danger-fill); color: #fff; }
 .tab .tab-dirty {
   display: inline-block;
   width: 6px; height: 6px;
   border-radius: 50%;
-  background: var(--yellow);
+  background: var(--warning-text);
   margin-left: 6px;
   vertical-align: 2px;
   title: "Unsaved changes";
 }
 .sidebar-user {
-  margin-top: auto;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -209,7 +262,7 @@ nav.tabs {
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   font-weight: 700;
   text-transform: uppercase;
@@ -227,6 +280,9 @@ nav.tabs {
   white-space: nowrap;
 }
 .sidebar-user a { color: var(--muted); text-decoration: none; margin-left: auto; }
+.sidebar-user > a { display: grid; place-items: center; }
+.sidebar-user > a svg { width: 18px; height: 18px; }
+.icon-seg svg { width: 15px; height: 15px; }
 body.sidebar-collapsed .app-shell { grid-template-columns: 72px minmax(0, 1fr); }
 body.sidebar-collapsed .sidebar { padding: 12px 10px; align-items: stretch; }
 body.sidebar-collapsed .sidebar-head {
@@ -247,13 +303,14 @@ body.sidebar-collapsed .brand-logo {
 }
 body.sidebar-collapsed .brand-lockup small,
 body.sidebar-collapsed .brand-name,
-body.sidebar-collapsed .tab-group-label,
+body.sidebar-collapsed .tab-group-toggle,
 body.sidebar-collapsed .tab-label,
 body.sidebar-collapsed .pref-label,
 body.sidebar-collapsed .sidebar-user-meta,
 body.sidebar-collapsed .sidebar-user a {
   display: none;
 }
+body.sidebar-collapsed .tab-group.is-collapsed .tab-group-items { display: flex; }
 body.sidebar-collapsed .tab {
   min-height: 34px;
   justify-content: center;
@@ -308,71 +365,4 @@ body.public-info-route .app-shell {
 }
 body.public-info-route .app-main {
   grid-column: 1 / -1;
-}
-
-/* This breakpoint intentionally lives after the desktop collapsed rules.
- * It is the final authority for the mobile shell in every import order. */
-@media (max-width: 760px) {
-  .app-shell,
-  body.sidebar-collapsed .app-shell {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-  .sidebar,
-  body.sidebar-collapsed .sidebar {
-    position: sticky;
-    top: 0;
-    width: 100%;
-    height: auto;
-    max-height: min(78vh, 680px);
-    padding: 12px;
-    align-items: stretch;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-    overflow-x: hidden;
-    overflow-y: auto;
-  }
-  .sidebar-head,
-  body.sidebar-collapsed .sidebar-head {
-    min-height: 38px;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-  }
-  .brand-lockup,
-  body.sidebar-collapsed .brand-lockup { flex: 1 1 auto; }
-  .brand-lockup h1,
-  body.sidebar-collapsed .brand-lockup h1 { justify-content: flex-start; }
-  body.sidebar-collapsed .brand-name { display: inline; }
-  body.sidebar-collapsed .brand-lockup small { display: block; }
-  body.sidebar-collapsed .brand-logo {
-    width: 30px;
-    height: 30px;
-    flex-basis: 30px;
-  }
-  #sidebar-toggle,
-  .sidebar-user a {
-    min-width: 44px;
-    min-height: 44px;
-  }
-  body.sidebar-collapsed .sidebar {
-    height: auto;
-    max-height: 68px;
-    overflow: hidden;
-  }
-  body:not(.sidebar-collapsed) .sidebar {
-    height: 100vh;
-    height: 100dvh;
-    max-height: 100vh;
-    max-height: 100dvh;
-    overscroll-behavior: contain;
-  }
-  body.sidebar-collapsed nav.tabs,
-  body.sidebar-collapsed .prefs,
-  body.sidebar-collapsed .sidebar-user { display: none; }
-  body:not(.sidebar-collapsed) nav.tabs,
-  body:not(.sidebar-collapsed) .prefs,
-  body:not(.sidebar-collapsed) .sidebar-user { display: flex; }
-  body:not(.sidebar-collapsed) .tab { min-height: 44px; }
 }

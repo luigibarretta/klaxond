@@ -13,6 +13,7 @@ import { loadIngestAuth, loadNtfyTopics } from "./app-routing.js";
 import { loadSetup, runPolicySimulation } from "./app-setup-simulator.js";
 import { loadConfigBackups, loadStatus, setTabBadge } from "./app-status.js";
 import { loadEmergencies } from "./app-emergencies.js";
+import { setupSidebar } from "./app-sidebar.js";
 import { startApp } from "./app-bootstrap.js";
 
 setTabActivationHandlers({
@@ -41,4 +42,5 @@ Object.assign(window, {
   setTabBadge,
 });
 
+setupSidebar();
 startApp();

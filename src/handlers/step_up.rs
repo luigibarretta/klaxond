@@ -18,8 +18,8 @@ const STEP_UP_TOTP_TTL_SECONDS: f64 = 600.0;
 pub(super) fn step_up_page() -> Response<Body> {
     let html = r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>klaxond step-up</title><link rel="stylesheet" href="/ui/style.css"></head>
-<body><main class="passkey-login"><section class="card"><h1>klaxond</h1><h2>Second factor required</h2>
+<title>Klaxond step-up</title><link rel="stylesheet" href="/ui/style.css"></head>
+<body><main class="passkey-login"><section class="card"><h1>Klaxond</h1><h2>Second factor required</h2>
 <p id="summary" class="muted">Loading challenge...</p>
 <div id="passkey-panel" class="hidden">
 <button id="passkey-login" class="primary">Use passkey</button>

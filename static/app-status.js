@@ -1,7 +1,7 @@
 import {
   $, $$, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, dirtyTabs, errorText,
   escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
-  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
+  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError,
   queryGet, refreshTablePagers, setAuthPasswordPolicy, setCurrentUser, setInlineStatus, setLocalTotpEnabled,
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
   updateTabAccessibleLabel,
@@ -223,47 +223,6 @@ export async function loadCurrentUser() {
     updateCurrentUserUI({ sub: "anonymous", mode: "none" });
   }
 }
-
-(function setupSidebar() {
-  const media = window.matchMedia?.("(max-width: 760px)");
-  const savedDesktopState = () => {
-    try {
-      const saved = localStorage.getItem("klaxond.sidebarCollapsed");
-      if (saved === "1" || saved === "0") return saved === "1";
-    } catch (e) {}
-    return false;
-  };
-  const setCollapsed = (collapsed, persist = false) => {
-    document.body.classList.toggle("sidebar-collapsed", collapsed);
-    const toggle = $("#sidebar-toggle");
-    toggle?.setAttribute("aria-expanded", String(!collapsed));
-    if (persist && !media?.matches) {
-      try { localStorage.setItem("klaxond.sidebarCollapsed", collapsed ? "1" : "0"); } catch (e) {}
-    }
-  };
-  setCollapsed(media?.matches ? true : savedDesktopState());
-  onReady(() => {
-    const toggle = $("#sidebar-toggle");
-    toggle?.setAttribute("aria-controls", "sidebar");
-    toggle?.addEventListener("click", () => {
-      const next = !document.body.classList.contains("sidebar-collapsed");
-      setCollapsed(next, true);
-    });
-    document.querySelectorAll(".tab").forEach(tab => {
-      tab.addEventListener("click", () => {
-        if (media?.matches) setCollapsed(true);
-      });
-    });
-    document.addEventListener("keydown", event => {
-      if (event.key !== "Escape" || !media?.matches || document.body.classList.contains("sidebar-collapsed")) return;
-      setCollapsed(true);
-      toggle?.focus();
-    });
-    const handleViewportChange = event => setCollapsed(event.matches ? true : savedDesktopState());
-    if (media?.addEventListener) media.addEventListener("change", handleViewportChange);
-    else media?.addListener?.(handleViewportChange);
-  });
-})();
 
 function normalizeDeliveries(payload) {
   if (Array.isArray(payload)) return payload;

@@ -5,8 +5,8 @@ use axum::http::{Response, StatusCode};
 pub(in crate::handlers) fn passkey_login_page() -> Response<Body> {
     let html = r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>klaxond passkey login</title><link rel="stylesheet" href="/ui/style.css"></head>
-<body><main class="passkey-login"><section class="card"><h1>klaxond</h1><h2>Passkey login</h2>
+<title>Klaxond passkey login</title><link rel="stylesheet" href="/ui/style.css"></head>
+<body><main class="passkey-login"><section class="card"><h1>Klaxond</h1><h2>Passkey login</h2>
 <label>User, email or subject <input id="user" autocomplete="username webauthn"></label>
 <button id="login" class="primary">Use passkey</button><p id="status" class="muted"></p>
 <p><a href="/status">Back to UI</a></p></section></main>

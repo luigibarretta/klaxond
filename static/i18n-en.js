@@ -1,24 +1,16 @@
 import { EN_AUTH_MESSAGES } from "./i18n-en-auth.js";
 import { EN_DASHBOARD_MESSAGES } from "./i18n-en-dashboard.js";
+import { buildEnglishLegalMessages } from "./i18n-en-legal.js";
 import { buildEnglishOperationalMessages } from "./i18n-en-operational.js";
 const EN_STATIC_MESSAGES = {
-  "app.title": "klaxond — notification daemon",
-  "app.tagline": "klaxond — cascade • inhibition • render",
+  "app.title": "Klaxond — Reliable alert delivery",
+  "app.tagline": "Reliable alerts. Less noise.",
   "footer.legal_links": "Legal links",
   "footer.privacy": "Privacy",
   "footer.accessibility": "Accessibility",
   "footer.terms": "Terms",
   "footer.cookies": "Cookies",
   "footer.legal": "Legal notice",
-  "legal.privacy.title": "Privacy notice",
-  "legal.privacy.body": `<p><strong>Controller:</strong> the person or organization operating this self-hosted klaxond installation.</p><p>klaxond processes only the data needed to operate the alerting console: authentication identifiers, session state, audit and backend logs, configuration records, alert payload metadata and delivery history.</p><h3>Purposes and legal basis</h3><ul><li>Operate the service, route alerts, and protect administrative access.</li><li>Keep security and audit evidence for troubleshooting and abuse prevention.</li><li>Store user preferences such as language, theme and sidebar state.</li></ul><p>The normal legal bases are legitimate interest in operating and securing the service, contract or pre-contract steps where the service is provided to a user, and legal obligation where records must be retained.</p><h3>Retention and sharing</h3><p>Runtime logs and recent deliveries are retained for the configured operational window. Configuration backups are retained according to the server policy. Data is not sold and is shared only with infrastructure, identity, notification or hosting providers needed to run the service.</p><h3>Your rights</h3><p>Where GDPR applies, you may request access, correction, deletion, restriction, portability or objection. Use the contact details in the legal notice. You may also contact your local data protection authority. Reference: <a href="https://commission.europa.eu/law/law-topic/data-protection_en" target="_blank" rel="noopener">European Commission data protection guidance</a>.</p>`,
-  "legal.accessibility.title": "Accessibility statement",
-  "legal.accessibility.body": `<p>klaxond aims to meet <a href="https://www.w3.org/TR/WCAG22/" target="_blank" rel="noopener">WCAG 2.2</a> AA principles: perceivable, operable, understandable and robust. The interface supports keyboard navigation, visible focus, text labels next to status colors, dark/light/system themes and responsive layouts.</p><h3>Current status</h3><p>This admin console is continuously tested with automated UI checks, but it has not yet been certified by an external accessibility auditor. The <a href="https://commission.europa.eu/strategy-and-policy/policies/justice-and-fundamental-rights/disability/european-accessibility-act-eaa_en" target="_blank" rel="noopener">European Accessibility Act</a> should be reviewed for any covered public offering.</p><h3>Known limitations</h3><ul><li>The flow diagram is visual-first; the surrounding text and tables provide the operational data in standard HTML.</li><li>Large administrative tables may require horizontal scrolling on small screens.</li></ul><h3>Feedback</h3><p>If you encounter an accessibility barrier, use the contacts in the legal notice and include the page URL, browser, assistive technology and a short description of the problem.</p>`,
-  "legal.terms.title": "Terms of use",
-  "legal.terms.body": `<p>klaxond is an operational notification and alert-management tool. Access is limited to authorized users and integrations.</p><h3>Acceptable use</h3><ul><li>Do not attempt to bypass authentication, authorization, rate limits or audit controls.</li><li>Do not submit unlawful, abusive, malicious or unrelated payloads.</li><li>Protect API keys, PATs, passkeys and SSO credentials.</li></ul><h3>Service operation</h3><p>The service may change, restart or be unavailable during maintenance. Alert delivery depends on configured downstream providers such as ntfy, Telegram and SMTP.</p><h3>Liability</h3><p>To the maximum extent allowed by law, klaxond is provided for operational use without warranties beyond those expressly agreed in writing.</p>`,
-  "legal.cookies.title": "Cookie notice",
-  "legal.cookies.body": `<p>klaxond uses only strictly necessary local storage and authentication state. It does not use advertising, profiling or cross-site tracking cookies.</p><h3>What is stored</h3><ul><li><code>klaxond_session</code>: secure session cookie used to keep authorized users logged in.</li><li><code>klaxond.lang</code>, <code>klaxond.themeMode</code> and UI state values: browser-local preferences for language, theme and layout.</li></ul><p>Because these items are necessary for security or explicitly requested UI preferences, no marketing cookie banner is shown.</p>`,
-  "legal.notice.title": "Legal notice and contacts",
   "prefs.language": "Language",
   "prefs.theme": "Theme",
   "lang.en": "English",
@@ -31,23 +23,29 @@ const EN_STATIC_MESSAGES = {
   "nav.operations": "Operations",
   "nav.settings": "Settings",
   "nav.tools": "Tools",
+  "nav.overview": "Overview",
+  "nav.activity": "Activity",
+  "nav.configure": "Configure",
+  "nav.inspect": "Test & inspect",
+  "nav.system": "System",
+  "nav.main": "Main navigation",
   "nav.toggle_sidebar": "Toggle sidebar",
   "nav.skip_to_content": "Skip to main content",
-  "tab.status": "Status",
+  "tab.status": "Overview",
   "tab.flow": "Flow",
-  "tab.inhibitions": "Inhibitions",
-  "tab.deliveries": "Recent deliveries",
+  "tab.inhibitions": "Inhibition rules",
+  "tab.deliveries": "Deliveries",
   "tab.emergencies": "Emergencies",
   "tab.logs": "Logs",
   "tab.audit": "Audit",
   "tab.setup": "Setup",
-  "tab.render": "Render config",
-  "tab.routing": "Routing",
-  "tab.cascade": "Cascade",
-  "tab.delivery": "Delivery rules",
+  "tab.render": "Notification content",
+  "tab.routing": "Sources & channels",
+  "tab.cascade": "Fallback chain",
+  "tab.delivery": "Delivery policy",
   "tab.grouping": "Noise control",
-  "tab.auth": "Authentication",
-  "tab.preview": "Render preview",
+  "tab.auth": "Security",
+  "tab.preview": "Notification preview",
   "tab.simulator": "Policy simulator",
   "tab.test": "Send test",
   "tab.badge_count": "{count} active indicator(s)",
@@ -354,7 +352,7 @@ const EN_STATIC_MESSAGES = {
   "channel.bot_configured": "bot configured",
   "channel.not_configured": "(not configured)",
 
-  "flow.title": "Flow — how klaxond routes inbound events",
+  "flow.title": "Flow — how Klaxond routes inbound events",
   "flow.desc": "Live map generated from the active configuration. Select a stage to open its settings.",
   "flow.animate": "Animate",
   "flow.animate_title": "Animated dashes flowing along arrows + pulse on recently active nodes",
@@ -498,17 +496,10 @@ const EN_STATIC_MESSAGES = {
   "deliveries.page_payload_size": "{count} loaded · {size} page payload",
 };
 
-function englishAuthorMessages(authorLink) {
-  return {
-    "footer.byline": `by ${authorLink()}`,
-    "legal.notice.body": `<p><strong>Application:</strong> klaxond</p><p><strong>Author:</strong> ${authorLink()}</p><p><strong>Instance operator:</strong> the person or organization running this self-hosted deployment.</p><p>klaxond is a self-hosted administrative console for alert routing and notification delivery. It is not intended to be a public website, marketplace, social network, advertising platform or user-generated content hosting service.</p><p>For privacy, accessibility, security or legal requests, use the operational contact configured by the instance operator and include enough detail to identify the affected account, URL, request ID or timestamp.</p>`,
-  };
-}
-
 export function buildEnglishMessages({ authorLink }) {
   return {
     ...EN_STATIC_MESSAGES,
-    ...englishAuthorMessages(authorLink),
+    ...buildEnglishLegalMessages(authorLink),
     ...buildEnglishOperationalMessages(),
     ...EN_DASHBOARD_MESSAGES,
     ...EN_AUTH_MESSAGES,

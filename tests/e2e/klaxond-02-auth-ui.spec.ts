@@ -198,9 +198,10 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
 
   await page.click('[data-language-option="it"]');
   await expect(page.locator("html")).toHaveAttribute("lang", "it");
-  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Stato");
-  await expect(page.locator('[data-tab="deliveries"]')).toContainText("Consegne recenti");
-  await expect(page).toHaveTitle(/demone notifiche/);
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Panoramica");
+  await expect(page.locator('[data-tab="deliveries"]')).toContainText("Consegne");
+  await expect(page).toHaveTitle(/Consegna affidabile degli alert/);
+  await expect(page.locator("nav.tabs")).toHaveAttribute("aria-label", "Navigazione principale");
   await expect(page.locator("#gbase")).toHaveText("https://grafana.example.com");
   await expect.poll(() => page.evaluate(() => localStorage.getItem("klaxond.lang"))).toBe("it");
   await expect(page.locator('[data-language-option="it"]')).toHaveAttribute("aria-pressed", "true");
@@ -219,7 +220,7 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
 
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("lang", "it");
-  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Stato");
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Panoramica");
   await expect(page.locator('[data-theme-mode-option="dark"]')).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
@@ -229,6 +230,6 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
 
   await page.click('[data-language-option="en"]');
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
-  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Status");
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Overview");
   await expect(page.locator('[data-language-option="en"]')).toHaveAttribute("aria-pressed", "true");
 });

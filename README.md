@@ -8,12 +8,20 @@ Klaxond is a self-hosted alert-delivery gateway for operators who need important
 events to arrive clearly, without repeated noise and without depending on one
 notification channel.
 
+**Reliable alerts. Less noise. No single-channel failure.**
+
 It normalizes events from monitoring tools, renders phone-friendly
 notifications, records every delivery decision and can fall back from ntfy to
 Telegram and SMTP. Selected emergencies remain active until acknowledgement,
 producer recovery or a bounded expiry.
 
-## The need it serves
+| Control repeated notifications | Inspect the live delivery path |
+| --- | --- |
+| [![Klaxond noise-control workspace](docs/screenshots/noise-control.png)](docs/screenshots/noise-control.png) | [![Klaxond live routing flow](docs/screenshots/flow.png)](docs/screenshots/flow.png) |
+
+[![Klaxond production-readiness setup](docs/screenshots/setup.png)](docs/screenshots/setup.png)
+
+## Why Klaxond
 
 When something important changes in your systems, you need to understand it at
 a glance, know that a channel accepted it and retain enough evidence to act or
@@ -30,6 +38,18 @@ including jobs to be done, effectiveness criteria and non-goals.
 Klaxond is not a public multi-tenant notification service or a replacement for
 an enterprise incident-management platform with staffing schedules, compliance
 workflows and contractual support.
+
+### Why not Alertmanager, ntfy, or PagerDuty?
+
+- **Alertmanager** remains the right place to group, deduplicate and route alerts
+  produced by Prometheus. Klaxond adds downstream delivery
+  evidence, independent channel failover, source normalization and durable ACKs.
+- **ntfy** is an excellent notification endpoint. Klaxond uses it as a primary
+  channel while adding fallback to Telegram/SMTP, policy simulation and a
+  searchable delivery history.
+- **PagerDuty or Grafana IRM** cover staffed on-call schedules and full incident
+  response. Klaxond is the smaller self-hosted option when reliable personal or
+  small-team delivery matters more than a complete incident-management suite.
 
 ## How it works
 

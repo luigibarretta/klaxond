@@ -247,7 +247,7 @@ table {
 .emergency-profile { margin: 14px 0; padding: 18px; background: var(--panel-light); }
 .emergency-profile-header { padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .emergency-profile-header > div:first-child { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.profile-order { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: white; font-size: 12px; font-weight: 700; }
+.profile-order { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-fill); color: white; font-size: 12px; font-weight: 700; }
 .profile-enabled { align-self: end; min-height: 40px; }
 .matcher-grid { margin: 12px 0; }
 .field-label { display: block; margin-bottom: 6px; font-size: 13px; }
@@ -266,7 +266,7 @@ table {
 .timeline-summary { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
 .profile-timeline ol { display: flex; list-style: none; margin: 0 0 8px; padding: 0; overflow-x: auto; }
 .profile-timeline li { position: relative; display: grid; flex: 1 0 126px; gap: 2px; padding: 22px 8px 6px 0; border-top: 2px solid var(--border); }
-.profile-timeline li::before { content: ""; position: absolute; top: -6px; left: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.profile-timeline li::before { content: ""; position: absolute; top: -6px; left: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--accent-fill); }
 .profile-timeline li > span,
 .profile-timeline li > small { color: var(--muted); font-size: 11px; }
 .danger-zone { border-left-color: var(--red); }
@@ -339,13 +339,13 @@ button,
 button:hover,
 .btn:hover { background: var(--hover-bg); text-decoration: none; }
 button.primary,
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #fff; }
 button.primary:hover,
 .btn.primary:hover { background: var(--accent-hover); }
 button:disabled { opacity: 0.48; cursor: not-allowed; }
-button.primary:disabled:hover { background: var(--accent); }
+button.primary:disabled:hover { background: var(--accent-fill); }
 button.danger,
-.btn.danger { background: var(--red); border-color: var(--red); color: white; }
+.btn.danger { background: var(--danger-fill); border-color: var(--danger-fill); color: white; }
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,

@@ -52,7 +52,7 @@ test("footer legal pages are routeable, localized and bottom-aligned", async ({ 
   ]);
 
   await page.goto("/legal/privacy");
-  await expect(page.locator(".app-footer")).toContainText("klaxond");
+  await expect(page.locator(".app-footer")).toContainText("Klaxond");
   await expect(page.locator(".app-footer")).toContainText(`by ${AUTHOR_NAME}`);
   await expect(page.locator(".footer-meta a", { hasText: AUTHOR_NAME })).toHaveAttribute("href", AUTHOR_URL);
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);

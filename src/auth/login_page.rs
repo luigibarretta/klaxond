@@ -51,14 +51,14 @@ pub(super) fn login_page(
     let html = format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>klaxond login</title><link rel="stylesheet" href="/ui/style.css"></head>
+<title>Sign in to Klaxond</title><link rel="stylesheet" href="/ui/style.css"></head>
 <body><main class="auth-login"><section class="card auth-login-card">
 <div class="login-brand">
 <img class="login-logo" src="/ui/favicon.svg" alt="" aria-hidden="true">
-<div class="login-brand-text"><h1>klaxond</h1><span>notification daemon</span></div>
+<div class="login-brand-text"><h1>Klaxond</h1><span>Reliable alerts. Less noise.</span></div>
 <span class="login-version">v{version}</span>
 </div>
-<h2>Sign in</h2>
+<h2>Sign in to Klaxond</h2>
 <p class="login-note">You are signed out locally. If your SSO session is still active, continuing may sign you back in without asking for credentials.</p>
 <div class="login-actions">{primary}{passkey}{magic_link}</div>
 <nav class="login-legal" aria-label="Legal links">

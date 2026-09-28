@@ -1,24 +1,16 @@
 import { IT_AUTH_MESSAGES } from "./i18n-it-auth.js";
 import { IT_DASHBOARD_MESSAGES } from "./i18n-it-dashboard.js";
+import { buildItalianLegalMessages } from "./i18n-it-legal.js";
 import { buildItalianOperationalMessages } from "./i18n-it-operational.js";
 const IT_STATIC_MESSAGES = {
-  "app.title": "klaxond — demone notifiche",
-  "app.tagline": "klaxond — cascata • inibizioni • rendering",
+  "app.title": "Klaxond — Consegna affidabile degli alert",
+  "app.tagline": "Alert affidabili. Meno rumore.",
   "footer.legal_links": "Link legali",
   "footer.privacy": "Privacy",
   "footer.accessibility": "Accessibilita'",
   "footer.terms": "Termini",
   "footer.cookies": "Cookie",
   "footer.legal": "Note legali",
-  "legal.privacy.title": "Informativa privacy",
-  "legal.privacy.body": `<p><strong>Titolare:</strong> il soggetto che gestisce questa installazione self-hosted di klaxond.</p><p>klaxond tratta solo i dati necessari a gestire la console di alerting: identificativi di autenticazione, stato sessione, log audit/backend, record di configurazione, metadati dei payload di alert e storico consegne.</p><h3>Finalita' e base giuridica</h3><ul><li>Gestire il servizio, instradare gli alert e proteggere l'accesso amministrativo.</li><li>Mantenere evidenze di sicurezza e audit per troubleshooting e prevenzione abusi.</li><li>Salvare preferenze utente come lingua, tema e stato della sidebar.</li></ul><p>Le basi giuridiche normalmente applicabili sono il legittimo interesse a esercire e proteggere il servizio, il contratto o misure precontrattuali quando il servizio e' fornito a un utente, e l'obbligo legale quando alcuni record devono essere conservati.</p><h3>Conservazione e condivisione</h3><p>Log runtime e consegne recenti sono conservati per la finestra operativa configurata. I backup di configurazione seguono la policy del server. I dati non vengono venduti e sono condivisi solo con provider infrastrutturali, identity, notifiche o hosting necessari al funzionamento del servizio.</p><h3>Diritti</h3><p>Quando si applica il GDPR, puoi richiedere accesso, rettifica, cancellazione, limitazione, portabilita' o opposizione. Usa i contatti indicati nelle note legali. Puoi anche rivolgerti all'autorita' garante competente. Riferimento: <a href="https://commission.europa.eu/law/law-topic/data-protection_en" target="_blank" rel="noopener">guida data protection della Commissione Europea</a>.</p>`,
-  "legal.accessibility.title": "Dichiarazione di accessibilita'",
-  "legal.accessibility.body": `<p>klaxond punta a rispettare i principi <a href="https://www.w3.org/TR/WCAG22/" target="_blank" rel="noopener">WCAG 2.2</a> AA: percepibile, utilizzabile, comprensibile e robusto. L'interfaccia supporta navigazione da tastiera, focus visibile, testo accanto agli stati colore, temi dark/light/system e layout responsive.</p><h3>Stato attuale</h3><p>Questa console admin e' testata continuamente con controlli UI automatici, ma non e' ancora certificata da un auditor esterno di accessibilita'. L'<a href="https://commission.europa.eu/strategy-and-policy/policies/justice-and-fundamental-rights/disability/european-accessibility-act-eaa_en" target="_blank" rel="noopener">European Accessibility Act</a> va verificato per eventuali offerte pubbliche coperte.</p><h3>Limiti noti</h3><ul><li>Il diagramma di flusso e' visual-first; testo circostante e tabelle espongono i dati operativi in HTML standard.</li><li>Le tabelle amministrative grandi possono richiedere scroll orizzontale su schermi piccoli.</li></ul><h3>Feedback</h3><p>Se trovi una barriera di accessibilita', usa i contatti nelle note legali e includi URL pagina, browser, tecnologia assistiva e una breve descrizione del problema.</p>`,
-  "legal.terms.title": "Termini d'uso",
-  "legal.terms.body": `<p>klaxond e' uno strumento operativo per notifiche e gestione alert. L'accesso e' limitato a utenti e integrazioni autorizzati.</p><h3>Uso consentito</h3><ul><li>Non tentare di aggirare autenticazione, autorizzazione, rate limit o controlli audit.</li><li>Non inviare payload illegali, abusivi, malevoli o non pertinenti.</li><li>Proteggi API key, PAT, passkey e credenziali SSO.</li></ul><h3>Funzionamento del servizio</h3><p>Il servizio puo' cambiare, riavviarsi o non essere disponibile durante la manutenzione. La consegna degli alert dipende dai provider downstream configurati, come ntfy, Telegram e SMTP.</p><h3>Responsabilita'</h3><p>Nei limiti massimi consentiti dalla legge, klaxond e' fornito per uso operativo senza garanzie ulteriori rispetto a quelle espressamente concordate per iscritto.</p>`,
-  "legal.cookies.title": "Informativa cookie",
-  "legal.cookies.body": `<p>klaxond usa solo storage locale e stato di autenticazione strettamente necessari. Non usa cookie pubblicitari, di profilazione o tracking cross-site.</p><h3>Cosa viene salvato</h3><ul><li><code>klaxond_session</code>: cookie di sessione sicuro usato per mantenere autenticati gli utenti autorizzati.</li><li><code>klaxond.lang</code>, <code>klaxond.themeMode</code> e valori di stato UI: preferenze locali del browser per lingua, tema e layout.</li></ul><p>Poiche' questi elementi sono necessari per sicurezza o preferenze UI richieste esplicitamente, non viene mostrato un banner per cookie marketing.</p>`,
-  "legal.notice.title": "Note legali e contatti",
   "prefs.language": "Lingua",
   "prefs.theme": "Tema",
   "theme.system": "Sistema",
@@ -29,23 +21,29 @@ const IT_STATIC_MESSAGES = {
   "nav.operations": "Operazioni",
   "nav.settings": "Impostazioni",
   "nav.tools": "Strumenti",
+  "nav.overview": "Panoramica",
+  "nav.activity": "Attivita'",
+  "nav.configure": "Configura",
+  "nav.inspect": "Test e analisi",
+  "nav.system": "Sistema",
+  "nav.main": "Navigazione principale",
   "nav.toggle_sidebar": "Comprimi/espandi sidebar",
   "nav.skip_to_content": "Vai al contenuto principale",
-  "tab.status": "Stato",
+  "tab.status": "Panoramica",
   "tab.flow": "Flusso",
-  "tab.inhibitions": "Inibizioni",
-  "tab.deliveries": "Consegne recenti",
+  "tab.inhibitions": "Regole inibizione",
+  "tab.deliveries": "Consegne",
   "tab.emergencies": "Emergenze",
   "tab.logs": "Log",
   "tab.audit": "Audit",
   "tab.setup": "Setup",
-  "tab.render": "Config rendering",
-  "tab.routing": "Instradamento",
-  "tab.cascade": "Cascata",
-  "tab.delivery": "Regole consegna",
+  "tab.render": "Contenuto notifica",
+  "tab.routing": "Sorgenti e canali",
+  "tab.cascade": "Catena di fallback",
+  "tab.delivery": "Policy di consegna",
   "tab.grouping": "Controllo rumore",
-  "tab.auth": "Autenticazione",
-  "tab.preview": "Anteprima rendering",
+  "tab.auth": "Sicurezza",
+  "tab.preview": "Anteprima notifica",
   "tab.simulator": "Simulatore policy",
   "tab.test": "Invia test",
   "tab.badge_count": "{count} indicatori attivi",
@@ -352,7 +350,7 @@ const IT_STATIC_MESSAGES = {
   "channel.bot_configured": "bot configurato",
   "channel.not_configured": "(non configurato)",
 
-  "flow.title": "Flusso — come klaxond instrada gli eventi in ingresso",
+  "flow.title": "Flusso — come Klaxond instrada gli eventi in ingresso",
   "flow.desc": "Mappa live generata dalla configurazione attiva. Seleziona uno stadio per aprirne le impostazioni.",
   "flow.animate": "Anima",
   "flow.animate_title": "Tratteggi animati sulle frecce e pulse sui nodi attivi di recente",
@@ -496,17 +494,10 @@ const IT_STATIC_MESSAGES = {
   "deliveries.page_payload_size": "{count} caricati · payload pagina {size}",
 };
 
-function italianAuthorMessages(authorLink) {
-  return {
-    "footer.byline": `by ${authorLink()}`,
-    "legal.notice.body": `<p><strong>Applicazione:</strong> klaxond</p><p><strong>Autore:</strong> ${authorLink()}</p><p><strong>Operatore istanza:</strong> il soggetto che gestisce questo deployment self-hosted.</p><p>klaxond e' una console amministrativa self-hosted per routing alert e consegna notifiche. Non e' pensato come sito pubblico, marketplace, social network, piattaforma pubblicitaria o servizio di hosting per contenuti generati dagli utenti.</p><p>Per richieste privacy, accessibilita', sicurezza o legali, usa il contatto operativo configurato dall'operatore dell'istanza e includi dettagli sufficienti a identificare account, URL, request ID o timestamp interessati.</p>`,
-  };
-}
-
 export function buildItalianMessages({ authorLink }) {
   return {
     ...IT_STATIC_MESSAGES,
-    ...italianAuthorMessages(authorLink),
+    ...buildItalianLegalMessages(authorLink),
     ...buildItalianOperationalMessages(),
     ...IT_DASHBOARD_MESSAGES,
     ...IT_AUTH_MESSAGES,

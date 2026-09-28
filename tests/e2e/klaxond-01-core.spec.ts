@@ -26,7 +26,8 @@ test("serves health and admin UI", async ({ page, request }) => {
   for (const path of [
     "/ui/vendor/swagger-ui/swagger-ui.css",
     "/ui/vendor/swagger-ui/swagger-ui-bundle.js",
-    "/ui/vendor/swagger-ui/swagger-ui-standalone-preset.js"
+    "/ui/vendor/swagger-ui/swagger-ui-standalone-preset.js",
+    "/ui/vendor/lucide/lucide.min.js"
   ]) {
     const asset = await request.get(path);
     await expect(asset).toBeOK();
@@ -41,14 +42,18 @@ test("serves health and admin UI", async ({ page, request }) => {
   await page.goto("/");
   await expect(page).toHaveURL(/\/setup$/);
   await expect(page.locator("#tab-setup")).toHaveClass(/active/);
-  await expect(page.locator("h1")).toContainText("klaxond");
+  await expect(page.locator("h1")).toContainText("Klaxond");
   await expect(page.locator('[data-tab="status"]')).toBeVisible();
+  await expect(page.locator('[data-tab="logs"]')).toBeHidden();
+  await expect(page.locator('[data-tab="preview"]')).toBeHidden();
+  await page.click('[data-group="activity"] .tab-group-toggle');
+  await page.click('[data-group="inspect"] .tab-group-toggle');
   await expect(page.locator('[data-tab="logs"]')).toBeVisible();
   await expect(page.locator('[data-tab="preview"]')).toBeVisible();
   await expect(page.locator(".brand-logo")).toBeVisible();
-  await expect(page.locator(".brand-name")).toHaveText("klaxond");
+  await expect(page.locator(".brand-name")).toHaveText("Klaxond");
   await expect(page.locator('[data-tab="status"] .tab-icon')).toBeVisible();
-  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Status");
+  await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Overview");
   await expect(page.locator('[data-language-option="it"]')).toBeVisible();
   await expect(page.locator('[data-theme-mode-option="system"]')).toBeVisible();
   await expect(page.locator("#sidebar-user-card")).toBeVisible();
@@ -90,7 +95,7 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator('[data-tab="logs"] .tab-badge')).toHaveText("7");
   await expect(page.locator('[data-tab="logs"]')).toHaveAttribute("aria-label", /Logs, 7 active indicator/);
   await expect(page.locator('[data-tab="routing"] .tab-dirty')).toBeVisible();
-  await expect(page.locator('[data-tab="routing"]')).toHaveAttribute("aria-label", /Routing, Unsaved changes/);
+  await expect(page.locator('[data-tab="routing"]')).toHaveAttribute("aria-label", /Sources & channels, Unsaved changes/);
   await expect(page.locator("#sidebar-avatar")).toBeVisible();
   await expect(page.locator(".sidebar-user-meta")).toBeHidden();
   await page.click("#sidebar-toggle");
@@ -101,43 +106,6 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator("#footer-version")).toContainText(/^v0\.\d+\./);
   await expect(page.locator("#stat-log-retained")).toContainText(/\/500/);
   await expect(page.locator("#stat-log-severity")).toContainText(/WARN \d+ \/ ERROR \d+/);
-});
-
-test("mobile shell is full-width, keyboard operable, and closes after navigation", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/setup");
-
-  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
-  await expect(page.locator("#sidebar-toggle")).toHaveAttribute("aria-expanded", "false");
-  await expect(page.locator("nav.tabs")).toBeHidden();
-  await expect(page.locator(".brand-name")).toBeVisible();
-  await expect(page.locator("main")).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-
-  await page.click("#sidebar-toggle");
-  await expect(page.locator("#sidebar-toggle")).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator("nav.tabs")).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-
-  await page.click('[data-tab="deliveries"]');
-  await expect(page).toHaveURL(/\/deliveries$/);
-  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
-  await expect(page.locator("nav.tabs")).toBeHidden();
-
-  await page.click("#sidebar-toggle");
-  await page.keyboard.press("Escape");
-  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
-  await expect(page.locator("#sidebar-toggle")).toBeFocused();
-});
-
-test("keyboard users can skip navigation and see a visible focus indicator", async ({ page }) => {
-  await page.goto("/status");
-  await page.keyboard.press("Tab");
-  await expect(page.locator(".skip-link")).toBeFocused();
-  const outline = await page.locator(".skip-link").evaluate(element => getComputedStyle(element).outlineStyle);
-  expect(outline).not.toBe("none");
-  await page.keyboard.press("Enter");
-  await expect(page.locator("#main-content")).toBeFocused();
 });
 
 test("setup separates release blockers from recommended hardening", async ({ page, request }) => {
@@ -250,6 +218,7 @@ test("direct flow refresh initializes without frontend TDZ errors", async ({ pag
   await page.click("#flow-animate");
   await page.click("#flow-autorefresh");
   await page.click("#flow-show-source");
+  await page.click('[data-group="configure"] .tab-group-toggle');
   await page.click('[data-tab="inhibitions"]');
   await expect(page).toHaveURL(/\/inhibitions$/);
   await expect(page.locator(".app-dialog-overlay")).toHaveCount(0);

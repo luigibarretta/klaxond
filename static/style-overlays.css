@@ -48,7 +48,7 @@
 .ntfy-mock-prio { font-weight: 600; padding: 1px 8px; border-radius: 3px; }
 .ntfy-mock-prio.default  { background: #475569; color: #e2e8f0; }
 .ntfy-mock-prio.high     { background: #eab308; color: #1a212b; }
-.ntfy-mock-prio.urgent   { background: var(--red); color: #fff; }
+.ntfy-mock-prio.urgent   { background: var(--danger-fill); color: #fff; }
 .ntfy-mock-prio.low      { background: #334155; color: var(--muted); }
 .ntfy-mock-actions {
   display: flex;
@@ -58,7 +58,7 @@
   padding-top: 10px;
 }
 .ntfy-mock-actions a {
-  background: var(--accent);
+  background: var(--accent-fill);
   color: #fff;
   padding: 6px 12px;
   border-radius: 6px;
