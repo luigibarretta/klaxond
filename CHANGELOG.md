@@ -1,5 +1,23 @@
 # Klaxond — CHANGELOG
 
+## 0.20.7 — 2026-09-28
+
+- Unify delivery policy management on `/delivery`: expose the built-in cascade
+  path and diagram beside custom cascade/broadcast policies and ordered label
+  rules, while retaining `/cascade` as a compatibility alias.
+- Reject malformed policy references, channel tiers, timeouts and regular
+  expressions consistently in the browser, admin API and startup preflight so
+  invalid routing cannot be saved or silently ignored.
+- Preserve unsaved edits made during delivery and cascade requests, improve
+  focus recovery and validation on paginated rows, and keep expected form
+  validation out of operational error logs.
+- Split Rust, JavaScript, CSS and test hotspots along domain boundaries, remove
+  all LOC baselines and reach zero NASA/JPL-inspired warnings without changing
+  public APIs or configuration formats.
+- Add deterministic English/Italian translation parity checks and exercise the
+  full portable browser suite on Chromium, Firefox, desktop WebKit and a
+  WebKit-based iPhone profile.
+
 ## 0.20.6 — 2026-09-28
 
 - Clarify Klaxond's public positioning as a self-hosted alert-delivery gateway,

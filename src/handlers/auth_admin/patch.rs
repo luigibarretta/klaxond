@@ -1,8 +1,14 @@
 use crate::auth;
 use crate::config::AuthConfig;
 use serde::Deserialize;
-use serde::de::{self, DeserializeOwned};
-use serde_json::Value;
+
+mod deserialize;
+mod ldap;
+
+use deserialize::{
+    optional_bool, optional_object_patch, optional_string, optional_string_vec, optional_u64,
+};
+use ldap::LdapPatch;
 
 #[derive(Debug)]
 pub(super) enum AuthConfigPatchError {
@@ -166,58 +172,6 @@ impl OidcPatch {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct LdapPatch {
-    #[serde(default, deserialize_with = "optional_string")]
-    url: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    bind_dn_template: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    service_bind_dn: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    service_bind_password: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    base_dn: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    user_filter: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    scope: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    username_attr: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    email_attr: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    name_attr: Option<String>,
-    #[serde(default, deserialize_with = "optional_string")]
-    groups_attr: Option<String>,
-    #[serde(default, deserialize_with = "optional_u64")]
-    timeout_secs: Option<u64>,
-}
-
-impl LdapPatch {
-    fn apply_to(self, auth: &mut AuthConfig) {
-        apply_trimmed_string(self.url, &mut auth.ldap.url);
-        apply_trimmed_string(self.bind_dn_template, &mut auth.ldap.bind_dn_template);
-        apply_trimmed_string(self.service_bind_dn, &mut auth.ldap.service_bind_dn);
-        apply_trimmed_string(self.base_dn, &mut auth.ldap.base_dn);
-        apply_trimmed_string(self.user_filter, &mut auth.ldap.user_filter);
-        apply_trimmed_string(self.scope, &mut auth.ldap.scope);
-        apply_trimmed_string(self.username_attr, &mut auth.ldap.username_attr);
-        apply_trimmed_string(self.email_attr, &mut auth.ldap.email_attr);
-        apply_trimmed_string(self.name_attr, &mut auth.ldap.name_attr);
-        apply_trimmed_string(self.groups_attr, &mut auth.ldap.groups_attr);
-        if let Some(password) = self
-            .service_bind_password
-            .filter(|password| !password.is_empty() && password != "***SET***")
-        {
-            auth.ldap.service_bind_password = password;
-        }
-        if let Some(timeout_secs) = self.timeout_secs {
-            auth.ldap.timeout_secs = timeout_secs.clamp(1, 60);
-        }
-    }
-}
-
-#[derive(Debug, Default, Deserialize)]
 struct TrustedProxyPatch {
     #[serde(default, deserialize_with = "optional_string")]
     user_header: Option<String>,
@@ -292,72 +246,5 @@ impl StepUpPatch {
 fn apply_string(value: Option<String>, slot: &mut String) {
     if let Some(value) = value {
         *slot = value;
-    }
-}
-
-fn apply_trimmed_string(value: Option<String>, slot: &mut String) {
-    if let Some(value) = value {
-        *slot = value.trim().to_string();
-    }
-}
-
-fn optional_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        Some(Value::String(value)) => Some(value),
-        _ => None,
-    })
-}
-
-fn optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        Some(Value::Number(value)) => value.as_u64(),
-        _ => None,
-    })
-}
-
-fn optional_bool<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        Some(Value::Bool(value)) => Some(value),
-        _ => None,
-    })
-}
-
-fn optional_string_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(match Option::<Value>::deserialize(deserializer)? {
-        Some(Value::Array(values)) => Some(
-            values
-                .into_iter()
-                .filter_map(|value| match value {
-                    Value::String(value) => Some(value),
-                    _ => None,
-                })
-                .collect(),
-        ),
-        _ => None,
-    })
-}
-
-fn optional_object_patch<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: DeserializeOwned,
-{
-    match Option::<Value>::deserialize(deserializer)? {
-        Some(value @ Value::Object(_)) => serde_json::from_value(value)
-            .map(Some)
-            .map_err(de::Error::custom),
-        _ => Ok(None),
     }
 }

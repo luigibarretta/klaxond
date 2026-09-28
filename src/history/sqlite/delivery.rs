@@ -1,11 +1,11 @@
 use super::sqlite_column_exists;
-use crate::history::{
-    APPROXIMATE_DELIVERY_ROW_OVERHEAD, DeliveryActivity, DeliveryEntry, DeliveryQuery, dedupe_hash,
-    delivery_search_values,
-};
+use crate::history::{DeliveryEntry, DeliveryQuery, dedupe_hash, delivery_search_values};
 use anyhow::Result;
 use rusqlite::{Connection, params};
-use std::collections::BTreeMap;
+
+mod activity;
+
+pub(in crate::history) use activity::load as activity;
 
 pub(in crate::history) fn insert(conn: &Connection, entry: &DeliveryEntry) -> Result<()> {
     let hash = dedupe_hash(entry);
@@ -119,112 +119,6 @@ LIMIT ?8 OFFSET ?9
         },
     )?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-pub(in crate::history) fn activity(
-    conn: &Connection,
-    hours: u16,
-    since: f64,
-    until: f64,
-) -> Result<DeliveryActivity> {
-    let metadata_sql = format!(
-        r#"
-SELECT
-  COUNT(*),
-  MAX(ts),
-  COALESCE(SUM(
-    {APPROXIMATE_DELIVERY_ROW_OVERHEAD}
-    + length(CAST(source AS BLOB))
-    + length(CAST(severity AS BLOB))
-    + length(CAST(title AS BLOB))
-    + length(CAST(channel AS BLOB))
-    + length(CAST(suppressed_by AS BLOB))
-    + length(CAST(COALESCE(emergency_receipt_id, '') AS BLOB))
-    + length(CAST(search_source AS BLOB))
-    + length(CAST(search_severity AS BLOB))
-    + length(CAST(search_title AS BLOB))
-    + length(CAST(search_channel AS BLOB))
-    + length(CAST(search_suppressed_by AS BLOB))
-    + length(CAST(dedupe_hash AS BLOB))
-  ), 0)
-FROM klaxond_deliveries
-"#
-    );
-    let (total_history, latest_ts, approximate_history_bytes) =
-        conn.query_row(&metadata_sql, [], |row| {
-            Ok((
-                row.get::<_, i64>(0)? as usize,
-                row.get::<_, Option<f64>>(1)?,
-                row.get::<_, i64>(2)? as usize,
-            ))
-        })?;
-
-    let mut by_source = BTreeMap::new();
-    let mut by_severity = BTreeMap::new();
-    let mut by_channel = BTreeMap::new();
-    let mut latest_by_source = BTreeMap::new();
-    let mut latest_by_channel = BTreeMap::new();
-    let mut suppressed = 0;
-    let mut stmt = conn.prepare(
-        r#"
-SELECT dimension, value, count, latest_ts FROM (
-  SELECT 'source' AS dimension, source AS value, COUNT(*) AS count, MAX(ts) AS latest_ts
-  FROM klaxond_deliveries WHERE ts >= ?1 AND ts <= ?2 GROUP BY source
-  UNION ALL
-  SELECT 'severity', severity, COUNT(*), MAX(ts)
-  FROM klaxond_deliveries WHERE ts >= ?1 AND ts <= ?2 GROUP BY severity
-  UNION ALL
-  SELECT 'channel', channel, COUNT(*), MAX(ts)
-  FROM klaxond_deliveries WHERE ts >= ?1 AND ts <= ?2 GROUP BY channel
-  UNION ALL
-  SELECT 'suppressed', 'all', COUNT(*), COALESCE(MAX(ts), 0)
-  FROM klaxond_deliveries
-  WHERE ts >= ?1 AND ts <= ?2 AND suppressed_by <> ''
-)
-ORDER BY dimension, value
-"#,
-    )?;
-    let rows = stmt.query_map(params![since, until], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2)? as usize,
-            row.get::<_, f64>(3)?,
-        ))
-    })?;
-    for row in rows {
-        let (dimension, value, count, latest_ts) = row?;
-        match dimension.as_str() {
-            "source" => {
-                latest_by_source.insert(value.clone(), latest_ts);
-                by_source.insert(value, count)
-            }
-            "severity" => by_severity.insert(value, count),
-            "channel" => {
-                latest_by_channel.insert(value.clone(), latest_ts);
-                by_channel.insert(value, count)
-            }
-            "suppressed" => {
-                suppressed = count;
-                None
-            }
-            _ => None,
-        };
-    }
-    let total = by_source.values().sum();
-    Ok(DeliveryActivity {
-        hours,
-        total,
-        total_history,
-        suppressed,
-        by_source,
-        by_severity,
-        by_channel,
-        latest_by_source,
-        latest_by_channel,
-        latest_ts,
-        approximate_history_bytes,
-    })
 }
 
 pub(in crate::history) fn export_all(conn: &mut Connection) -> Result<Vec<DeliveryEntry>> {

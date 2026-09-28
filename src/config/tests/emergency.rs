@@ -113,18 +113,7 @@ after_attempts = 5
     assert!(!cfg.profiles[0].smtp.enabled);
 }
 
-#[test]
-fn legacy_environment_only_overrides_the_fallback_profile() {
-    let _guard = TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    clear_runtime_env();
-    // SAFETY: this test holds TEST_ENV_LOCK for the full mutation window.
-    unsafe {
-        std::env::set_var("KLAXOND_EMERGENCY_RETRY_SECONDS", "90");
-    }
-    let value: toml::Value = toml::from_str(
-        r#"
+const LEGACY_PROFILE_CONFIG: &str = r#"
 [emergency]
 fallback_profile = "critical"
 
@@ -167,9 +156,19 @@ after_attempts = 3
 [emergency.profiles.smtp]
 enabled = false
 after_attempts = 5
-"#,
-    )
-    .unwrap();
+"#;
+
+#[test]
+fn legacy_environment_only_overrides_the_fallback_profile() {
+    let _guard = TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    clear_runtime_env();
+    // SAFETY: this test holds TEST_ENV_LOCK for the full mutation window.
+    unsafe {
+        std::env::set_var("KLAXOND_EMERGENCY_RETRY_SECONDS", "90");
+    }
+    let value: toml::Value = toml::from_str(LEGACY_PROFILE_CONFIG).unwrap();
     let cfg = super::super::readers::read_emergency(&value).unwrap();
     clear_runtime_env();
     assert_eq!(cfg.profiles[0].retry_seconds, 90);

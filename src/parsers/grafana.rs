@@ -1,4 +1,4 @@
-use super::{Action, EmptyStrExt, Parts, action, first_non_empty, scalar_to_string};
+use super::{EmptyStrExt, Parts, first_non_empty, scalar_to_string};
 use crate::config::RuntimeConfig;
 use crate::util::json_get_str;
 use regex::Regex;
@@ -6,9 +6,11 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
+mod actions;
 mod beszel;
 mod enrich;
 
+use self::actions::{grafana_actions, grafana_render_target};
 use self::enrich::enrich_grafana_body;
 
 static SHORT_HOST_RE: LazyLock<Regex> =
@@ -264,53 +266,6 @@ fn grafana_tags(status: &str, severity: &str, component: &str, cfg: &RuntimeConf
         "grafana".into(),
         component.if_empty("homelab").to_string(),
     ]
-}
-
-fn grafana_actions(
-    payload: &Value,
-    common_annot: Option<&serde_json::Map<String, Value>>,
-    component: &str,
-    cfg: &RuntimeConfig,
-) -> Vec<Action> {
-    let mut actions = Vec::new();
-    let runbook = object_scalar_cow(common_annot, "runbook_url");
-    if !runbook.is_empty() {
-        actions.push(action("view", "📖 Runbook", &runbook));
-    }
-    if let Some([label, slug]) = cfg.component_dashboards.get(component) {
-        actions.push(action(
-            "view",
-            &format!("📊 {label}"),
-            &format!("{}{}", cfg.grafana_base, slug),
-        ));
-    }
-    let rule_url = grafana_rule_url(payload);
-    if !rule_url.is_empty() {
-        actions.push(action("view", "View rule", &rule_url));
-    }
-    actions
-}
-
-fn grafana_rule_url(payload: &Value) -> String {
-    payload
-        .get("alerts")
-        .and_then(|v| v.as_array())
-        .and_then(|a| a.first())
-        .and_then(|a| a.get("generatorURL"))
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| json_get_str(payload, "externalURL").to_string())
-}
-
-fn grafana_render_target(component: &str, cfg: &RuntimeConfig) -> (Option<String>, Option<u64>) {
-    if let Some((uid, panel)) = cfg.component_image.get(component) {
-        return (Some(format!("/d/{uid}")), *panel);
-    }
-    if let Some([_, slug]) = cfg.component_dashboards.get(component) {
-        return (Some(slug.clone()), None);
-    }
-    (None, None)
 }
 
 fn object_scalar_cow<'a>(

@@ -51,10 +51,8 @@ pub(super) async fn reserve(
         return RepeatGate::Deliver(None);
     };
 
-    let fingerprint = fingerprint(request.source, request.severity, request.parts);
-    let store = state.history_store();
-    let mut candidate = repeat_candidate(
-        fingerprint.clone(),
+    let candidate = repeat_candidate(
+        fingerprint(request.source, request.severity, request.parts),
         &request,
         window_s,
         reservation_ttl_s(
@@ -66,12 +64,23 @@ pub(super) async fn reserve(
         ),
         &matched_by,
     );
+    reserve_until_decided(state, cfg, request, candidate, &matched_by).await
+}
+
+async fn reserve_until_decided(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    request: RepeatRequest<'_>,
+    mut candidate: RepeatCandidate,
+    matched_by: &str,
+) -> RepeatGate {
+    let store = state.history_store();
     loop {
         candidate.now = now_epoch();
         match store.reserve_repeat(&candidate) {
             Ok(RepeatDecision::Deliver { reservation_token }) => {
                 return RepeatGate::Deliver(Some(RepeatReservation {
-                    fingerprint,
+                    fingerprint: candidate.fingerprint.clone(),
                     reservation_token,
                     store,
                 }));
@@ -87,7 +96,7 @@ pub(super) async fn reserve(
                     reason,
                     last_delivered_at,
                     suppressed_count,
-                    &matched_by,
+                    matched_by,
                 );
                 return RepeatGate::Suppress;
             }

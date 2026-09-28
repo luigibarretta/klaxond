@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { openSidebar } from "./klaxond-helpers";
 
 test("mobile shell is modal, stable, keyboard operable, and closes after navigation", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -39,6 +40,7 @@ test("mobile shell is modal, stable, keyboard operable, and closes after navigat
 
 test("navigation groups preserve state and expose hidden operational counts", async ({ page }) => {
   await page.goto("/status");
+  await openSidebar(page);
   const activityGroup = page.locator('[data-group="activity"]');
   const activityToggle = activityGroup.locator(".tab-group-toggle");
 
@@ -75,6 +77,7 @@ test("navigation groups preserve state and expose hidden operational counts", as
   await expect(activityToggle).toHaveAttribute("aria-expanded", "true");
   await expect(activityGroup.locator('[data-tab="deliveries"]')).toBeVisible();
   await page.reload();
+  await openSidebar(page);
   await expect(activityToggle).toHaveAttribute("aria-expanded", "true");
   await expect(page.locator('[data-group="configure"] .tab-group-toggle')).toHaveAttribute("aria-expanded", "false");
   await activityToggle.click();
@@ -82,6 +85,7 @@ test("navigation groups preserve state and expose hidden operational counts", as
   await expect(activityGroup.locator('[data-tab="deliveries"]')).toBeHidden();
 
   await page.goto("/deliveries");
+  await openSidebar(page);
   await expect(activityToggle).toHaveAttribute("aria-expanded", "true");
   await expect(activityGroup.locator('[data-tab="deliveries"]')).toBeVisible();
 });

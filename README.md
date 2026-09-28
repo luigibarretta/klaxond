@@ -154,8 +154,9 @@ the [ACK/emergency profile guide](docs/emergency-profiles.md) and
 [`docs/production-deployment.md`](docs/production-deployment.md) for reverse
 proxy, authentication, backup, upgrade, rollback and image-verification steps.
 
-The supported browser policy covers current Chrome/Edge, Firefox and Safari;
-see the [browser support and release matrix](docs/browser-support.md).
+The supported browser policy covers current Chrome/Edge, Firefox and Safari.
+CI exercises desktop engines and a WebKit-based iPhone device profile; see the
+[browser support and release matrix](docs/browser-support.md).
 
 ### Public legal and accessibility pages
 
@@ -435,7 +436,12 @@ sequence-update support still stop receiving new retries after ACK.
 
 ### Routing + policy — `klaxond.toml`
 
-Bootstrapped on first run from the bundled default. Editable on disk or from the admin UI (Routing / Cascade / Render config tabs).
+Bootstrapped on first run from the bundled default. Editable on disk or from
+the admin UI (Routing / Delivery policy / Render config tabs). The Delivery
+policy page contains the built-in cascade chain, its live path diagram, custom
+policies, and label-based selection rules. `broadcast` is a policy mode, not a
+separate page; the former `/cascade` URL remains a compatibility alias for
+`/delivery`.
 
 ```toml
 [ntfy]
@@ -532,7 +538,7 @@ Every UI-managed setting has a compose-managed path:
 | Routing: ntfy URL, Telegram, SMTP | env vars or `/data/klaxond.toml` |
 | Routing: ntfy topics and bearer tokens | env vars, `[ntfy.topics]`, or `/data/ntfy-topics.json` |
 | Routing: enabled inbound sources and webhook secrets | `KLAXOND_INGEST_SECRET_<SOURCE>`, `KLAXOND_CUSTOM_INGEST_SOURCES` + `KLAXOND_CUSTOM_INGEST_SECRETS`, or `[ingest.custom_sources]` + `[ingest.secrets]`; unset sources reject delivery |
-| Cascade, delivery policies, inhibitions, schedules | `/data/klaxond.toml` |
+| Delivery policy (built-in cascade and broadcast/cascade policies), inhibitions, schedules | `/data/klaxond.toml` |
 | Render runtime settings and dashboard mappings | `/data/klaxond.toml` and `/data/render-config.json` |
 | Noise control: burst grouping and repeat suppression | `[dedup]` bootstrap or `/data/dedup-config.json` |
 | Auth, API keys/PATs, TOTP, passkeys, LDAP, magic links | `[auth]` bootstrap or `/data/auth-config.json` |

@@ -20,56 +20,61 @@ pub async fn reconcile_inhibited(state: &AppState) -> usize {
     };
     let mut transitioned = 0;
     for incident in active {
-        if !snapshot_for_incident(&cfg, &incident).auto_resolve {
-            continue;
-        }
-        let payload = match incident.payload() {
-            Ok(payload) => payload,
-            Err(err) => {
-                tracing::error!(
-                    receipt_id = %incident.receipt_id,
-                    "invalid durable emergency payload during inhibition reconciliation: {err}"
-                );
-                continue;
-            }
-        };
-        let Some(suppressed_by) =
-            crate::inhibition::is_suppressed(state, &payload.labels, &incident.source)
-        else {
-            continue;
-        };
-        let actor = format!("inhibition-source:{suppressed_by}");
-        match state.history_store().emergency_terminalize(
-            &incident.receipt_id,
-            "inhibited",
-            &actor,
-            now_epoch(),
-        ) {
-            Ok(Some(terminal)) if terminal.state == "inhibited" => {
-                transition_audit(state, &terminal, "inhibited", &actor);
-                publish_terminal(
-                    state,
-                    &cfg,
-                    &terminal,
-                    "Emergency inhibited",
-                    &format!(
-                        "Suppressed by the authoritative {suppressed_by} condition; emergency retries have stopped."
-                    ),
-                )
-                .await;
-                state.metric_inc(
-                    "klaxond_emergency_incidents_total",
-                    &[
-                        ("outcome", "inhibited"),
-                        ("profile_id", &terminal.policy_id),
-                    ],
-                    1,
-                );
-                transitioned += 1;
-            }
-            Ok(_) => {}
-            Err(err) => storage_error(state, "inhibition-reconcile-terminalize", &err),
-        }
+        transitioned += reconcile_incident(state, &cfg, incident).await as usize;
     }
     transitioned
+}
+
+async fn reconcile_incident(
+    state: &AppState,
+    cfg: &crate::config::RuntimeConfig,
+    incident: crate::history::EmergencyIncident,
+) -> bool {
+    if !snapshot_for_incident(cfg, &incident).auto_resolve {
+        return false;
+    }
+    let payload = match incident.payload() {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::error!(receipt_id = %incident.receipt_id, "invalid durable emergency payload during inhibition reconciliation: {error}");
+            return false;
+        }
+    };
+    let Some(suppressed_by) =
+        crate::inhibition::is_suppressed(state, &payload.labels, &incident.source)
+    else {
+        return false;
+    };
+    let actor = format!("inhibition-source:{suppressed_by}");
+    match state.history_store().emergency_terminalize(
+        &incident.receipt_id,
+        "inhibited",
+        &actor,
+        now_epoch(),
+    ) {
+        Ok(Some(terminal)) if terminal.state == "inhibited" => {
+            transition_audit(state, &terminal, "inhibited", &actor);
+            publish_terminal(
+                state,
+                cfg,
+                &terminal,
+                "Emergency inhibited",
+                &format!("Suppressed by the authoritative {suppressed_by} condition; emergency retries have stopped."),
+            ).await;
+            state.metric_inc(
+                "klaxond_emergency_incidents_total",
+                &[
+                    ("outcome", "inhibited"),
+                    ("profile_id", &terminal.policy_id),
+                ],
+                1,
+            );
+            true
+        }
+        Ok(_) => false,
+        Err(error) => {
+            storage_error(state, "inhibition-reconcile-terminalize", &error);
+            false
+        }
+    }
 }

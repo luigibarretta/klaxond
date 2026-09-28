@@ -33,23 +33,7 @@ pub fn parse_generic_payload(
     } else {
         alert
     };
-    let body = first_non_empty(&[
-        json_get_str(payload, "message"),
-        json_get_str(payload, "body"),
-        json_get_str(payload, "description"),
-        json_get_str(payload, "summary"),
-    ])
-    .trim()
-    .to_string();
-    let body = if body.is_empty() {
-        payload
-            .as_object()
-            .filter(|object| !object.is_empty())
-            .and_then(|_| serde_json::to_string_pretty(payload).ok())
-            .unwrap_or_else(|| alert.clone())
-    } else {
-        body
-    };
+    let body = generic_body(payload, &alert);
     let url = payload.get("url").map(scalar_to_string).unwrap_or_default();
     let actions = (!url.trim().is_empty())
         .then(|| action("view", "Open source", url.trim()))
@@ -71,6 +55,26 @@ pub fn parse_generic_payload(
         ntfy_sequence_id: None,
         emergency_ack_url: None,
         emergency_ack_token: None,
+    }
+}
+
+fn generic_body(payload: &Value, fallback: &str) -> String {
+    let body = first_non_empty(&[
+        json_get_str(payload, "message"),
+        json_get_str(payload, "body"),
+        json_get_str(payload, "description"),
+        json_get_str(payload, "summary"),
+    ])
+    .trim()
+    .to_string();
+    if body.is_empty() {
+        payload
+            .as_object()
+            .filter(|object| !object.is_empty())
+            .and_then(|_| serde_json::to_string_pretty(payload).ok())
+            .unwrap_or_else(|| fallback.to_string())
+    } else {
+        body
     }
 }
 

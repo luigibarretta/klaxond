@@ -62,6 +62,16 @@ pub(super) async fn authenticate_ldap_basic(
     if let Err(err) = clear_auth_failures_on_worker(state, &rate_keys).await {
         return AuthOutcome::Rejected(rate_store_error("LDAP clear", err));
     }
+    complete_ldap_login(state, cfg, headers, return_to, identity).await
+}
+
+async fn complete_ldap_login(
+    state: &AppState,
+    cfg: &AuthConfig,
+    headers: &HeaderMap,
+    return_to: &str,
+    identity: auth_modules::ldap::LdapIdentity,
+) -> AuthOutcome {
     let mut user = ldap_user(identity);
     user.sudo_until = now_epoch_i64() + sudo_window_seconds();
     if let Some(resp) = primary_step_up_response(

@@ -38,38 +38,7 @@ fn sqlite_history_paginates_and_prunes_by_retention() {
 fn sqlite_delivery_query_filters_count_and_entries_identically() {
     let tmp = TempDir::new().unwrap();
     let store = HistoryStore::open(&sqlite_cfg(tmp.path().join("history.db"), 0)).unwrap();
-    let deliveries = [
-        DeliveryEntry {
-            ts: 1_000.0,
-            source: "grafana".into(),
-            severity: "warning".into(),
-            title: "Disk FULL".into(),
-            channel: "ntfy".into(),
-            suppressed_by: String::new(),
-            emergency_receipt_id: None,
-        },
-        DeliveryEntry {
-            ts: 1_001.0,
-            source: "authentik".into(),
-            severity: "critical".into(),
-            title: "Login failure".into(),
-            channel: "telegram".into(),
-            suppressed_by: "repeat-rule".into(),
-            emergency_receipt_id: None,
-        },
-        DeliveryEntry {
-            ts: 1_002.0,
-            source: "grafana".into(),
-            severity: "info".into(),
-            title: "Recovered".into(),
-            channel: "smtp".into(),
-            suppressed_by: String::new(),
-            emergency_receipt_id: None,
-        },
-    ];
-    for delivery in &deliveries {
-        store.record_delivery(delivery).unwrap();
-    }
+    record_filter_fixture(&store);
 
     let mut query = DeliveryQuery::page(10, 0);
     for (search, expected_title) in [
@@ -107,6 +76,41 @@ fn sqlite_delivery_query_filters_count_and_entries_identically() {
     let page = store.query_deliveries(&query).unwrap();
     assert_eq!(page.total, 1);
     assert_eq!(page.entries[0].suppressed_by, "repeat-rule");
+}
+
+fn record_filter_fixture(store: &HistoryStore) {
+    let deliveries = [
+        DeliveryEntry {
+            ts: 1_000.0,
+            source: "grafana".into(),
+            severity: "warning".into(),
+            title: "Disk FULL".into(),
+            channel: "ntfy".into(),
+            suppressed_by: String::new(),
+            emergency_receipt_id: None,
+        },
+        DeliveryEntry {
+            ts: 1_001.0,
+            source: "authentik".into(),
+            severity: "critical".into(),
+            title: "Login failure".into(),
+            channel: "telegram".into(),
+            suppressed_by: "repeat-rule".into(),
+            emergency_receipt_id: None,
+        },
+        DeliveryEntry {
+            ts: 1_002.0,
+            source: "grafana".into(),
+            severity: "info".into(),
+            title: "Recovered".into(),
+            channel: "smtp".into(),
+            suppressed_by: String::new(),
+            emergency_receipt_id: None,
+        },
+    ];
+    for delivery in &deliveries {
+        store.record_delivery(delivery).unwrap();
+    }
 }
 
 #[test]

@@ -71,6 +71,9 @@ pub fn parse_source(
     severity: &str,
     cfg: &RuntimeConfig,
 ) -> (String, Parts) {
+    if let Some(parsed) = parse_derived_severity_source(source, payload, severity, cfg) {
+        return parsed;
+    }
     match source {
         "grafana" | "blackstart" => {
             let delivery_severity = grafana_delivery_severity(payload, severity);
@@ -95,28 +98,6 @@ pub fn parse_source(
             severity.to_string(),
             parse_wud_payload(payload, severity, cfg),
         ),
-        "authentik" => {
-            let sev = payload
-                .get("data")
-                .and_then(|d| d.get("severity"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.trim().to_ascii_lowercase())
-                .filter(|s| cfg.known_severities().contains(s))
-                .unwrap_or_else(|| severity.to_string());
-            (sev.clone(), parse_authentik_payload(payload, &sev, cfg))
-        }
-        "shelfmark" => {
-            let sev = shelfmark_severity(payload, severity, cfg);
-            (sev.clone(), parse_shelfmark_payload(payload, &sev, cfg))
-        }
-        "prowlarr" => {
-            let sev = prowlarr_severity(payload, severity);
-            (sev.clone(), parse_prowlarr_payload(payload, &sev, cfg))
-        }
-        "decypharr" => {
-            let sev = decypharr_severity(payload, severity, cfg);
-            (sev.clone(), parse_decypharr_payload(payload, &sev, cfg))
-        }
         "pve" => (
             severity.to_string(),
             parse_pve_payload(payload, severity, cfg),
@@ -137,6 +118,35 @@ pub fn parse_source(
             )
         }
     }
+}
+
+fn parse_derived_severity_source(
+    source: &str,
+    payload: &Value,
+    fallback: &str,
+    cfg: &RuntimeConfig,
+) -> Option<(String, Parts)> {
+    let severity = match source {
+        "authentik" => payload
+            .get("data")
+            .and_then(|data| data.get("severity"))
+            .and_then(Value::as_str)
+            .map(|severity| severity.trim().to_ascii_lowercase())
+            .filter(|severity| cfg.known_severities().contains(severity))
+            .unwrap_or_else(|| fallback.to_string()),
+        "shelfmark" => shelfmark_severity(payload, fallback, cfg),
+        "prowlarr" => prowlarr_severity(payload, fallback),
+        "decypharr" => decypharr_severity(payload, fallback, cfg),
+        _ => return None,
+    };
+    let parts = match source {
+        "authentik" => parse_authentik_payload(payload, &severity, cfg),
+        "shelfmark" => parse_shelfmark_payload(payload, &severity, cfg),
+        "prowlarr" => parse_prowlarr_payload(payload, &severity, cfg),
+        "decypharr" => parse_decypharr_payload(payload, &severity, cfg),
+        _ => unreachable!("source was matched above"),
+    };
+    Some((severity, parts))
 }
 
 fn grafana_delivery_severity(payload: &Value, fallback: &str) -> String {

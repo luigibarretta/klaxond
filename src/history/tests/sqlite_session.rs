@@ -58,18 +58,8 @@ fn sqlite_rotation_requires_active_family_and_family_logout_uses_revoked_row() {
     let tmp = TempDir::new().unwrap();
     let cfg = sqlite_cfg(tmp.path().join("history.db"), 0);
     let store = HistoryStore::open(&cfg).unwrap();
-    let mut original = auth_session("rotation-original", "basic", 1_000);
-    original.family_hash = "shared-rotation-family".to_string();
-    store
-        .create_auth_session(&original, None, 3, 1_000)
-        .unwrap();
+    let (original, replacement) = create_rotated_session_family(&store);
 
-    let mut replacement = auth_session("rotation-replacement", "basic", 1_100);
-    replacement.family_hash = original.family_hash.clone();
-    replacement.created_at = original.created_at;
-    store
-        .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_100)
-        .unwrap();
     store
         .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_101)
         .expect("the same rotation must be idempotent inside the concurrency grace window");
@@ -103,14 +93,7 @@ fn sqlite_rotation_requires_active_family_and_family_logout_uses_revoked_row() {
         "an idempotent rotation retry must expire with the grace window"
     );
 
-    let invalid = auth_session("rotation-invalid", "basic", 1_200);
-    assert!(
-        store
-            .create_auth_session(&invalid, Some(&replacement.id_hash), 3, 1_200)
-            .unwrap_err()
-            .to_string()
-            .contains("same family")
-    );
+    assert_invalid_rotation_family(&store, &replacement);
 
     let mut conn = rusqlite::Connection::open(&cfg.sqlite_path).unwrap();
     assert_eq!(
@@ -125,6 +108,33 @@ fn sqlite_rotation_requires_active_family_and_family_logout_uses_revoked_row() {
             .unwrap()
             .is_none()
     );
+}
+
+fn assert_invalid_rotation_family(store: &HistoryStore, replacement: &AuthSessionRecord) {
+    let invalid = auth_session("rotation-invalid", "basic", 1_200);
+    assert!(
+        store
+            .create_auth_session(&invalid, Some(&replacement.id_hash), 3, 1_200)
+            .unwrap_err()
+            .to_string()
+            .contains("same family")
+    );
+}
+
+fn create_rotated_session_family(store: &HistoryStore) -> (AuthSessionRecord, AuthSessionRecord) {
+    let mut original = auth_session("rotation-original", "basic", 1_000);
+    original.family_hash = "shared-rotation-family".to_string();
+    store
+        .create_auth_session(&original, None, 3, 1_000)
+        .unwrap();
+
+    let mut replacement = auth_session("rotation-replacement", "basic", 1_100);
+    replacement.family_hash = original.family_hash.clone();
+    replacement.created_at = original.created_at;
+    store
+        .create_auth_session(&replacement, Some(&original.id_hash), 3, 1_100)
+        .unwrap();
+    (original, replacement)
 }
 
 #[test]
@@ -250,11 +260,7 @@ fn sqlite_auth_state_imports_are_monotonic_and_idempotent() {
         .iter()
         .find(|record| record.id_hash == incoming.id_hash)
         .unwrap();
-    assert_eq!(merged.created_at, 900);
-    assert_eq!(merged.last_seen_at, 1_400);
-    assert_eq!(merged.last_rotated_at, 1_350);
-    assert_eq!(merged.expires_at, 5_000);
-    assert_eq!(merged.revoked_at, Some(1_300));
+    assert_monotonic_session_merge(merged);
 
     let tokens = crate::history::sqlite::session::export_logout_tokens(&conn).unwrap();
     let merged = tokens
@@ -263,4 +269,12 @@ fn sqlite_auth_state_imports_are_monotonic_and_idempotent() {
         .unwrap();
     assert_eq!(merged.consumed_at, 1_000);
     assert_eq!(merged.expires_at, 5_000);
+}
+
+fn assert_monotonic_session_merge(merged: &AuthSessionRecord) {
+    assert_eq!(merged.created_at, 900);
+    assert_eq!(merged.last_seen_at, 1_400);
+    assert_eq!(merged.last_rotated_at, 1_350);
+    assert_eq!(merged.expires_at, 5_000);
+    assert_eq!(merged.revoked_at, Some(1_300));
 }

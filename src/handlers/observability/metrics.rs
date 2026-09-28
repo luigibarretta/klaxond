@@ -6,6 +6,25 @@ use std::collections::HashMap;
 
 pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> {
     let uptime = state.started.elapsed().as_secs();
+    initialize_emergency_metrics(state);
+    refresh_runtime_gauges(state);
+    let mut lines = metric_preamble(uptime);
+    let counters = lock_mutex(&state.metrics.counters, "metrics counters");
+    emit_metrics(&mut lines, "counter", &counters, &counter_help());
+    let gauges = lock_mutex(&state.metrics.gauges, "metrics gauges");
+    let gauge_values = gauges
+        .iter()
+        .map(|(key, value)| (key.clone(), *value as i64))
+        .collect::<HashMap<_, _>>();
+    emit_metrics(&mut lines, "gauge", &gauge_values, &gauge_help());
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")
+        .body(Body::from(lines.join("\n") + "\n"))
+        .expect("static metrics response headers are valid")
+}
+
+fn initialize_emergency_metrics(state: &AppState) {
     for operation in [
         "register",
         "initial-attempt",
@@ -29,6 +48,9 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
             0,
         );
     }
+}
+
+fn refresh_runtime_gauges(state: &AppState) {
     state.metric_set(
         "klaxond_suppressions_active",
         &[],
@@ -51,6 +73,10 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
             oldest_age,
         );
     }
+    refresh_profile_gauges(state);
+}
+
+fn refresh_profile_gauges(state: &AppState) {
     let mut profile_ids = state.with_cfg(|cfg| {
         cfg.emergency
             .profiles
@@ -89,116 +115,103 @@ pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> 
             count as f64,
         );
     }
-    let mut lines = vec![
+}
+
+fn metric_preamble(uptime: u64) -> Vec<String> {
+    vec![
         "# HELP klaxond_info Static info (version, etc).".to_string(),
         "# TYPE klaxond_info gauge".to_string(),
         format!("klaxond_info{{version=\"{}\"}} 1", crate::config::VERSION),
         "# HELP klaxond_uptime_seconds Seconds since klaxond started.".to_string(),
         "# TYPE klaxond_uptime_seconds counter".to_string(),
         format!("klaxond_uptime_seconds {uptime}"),
-    ];
-    let counters = lock_mutex(&state.metrics.counters, "metrics counters");
-    emit_metrics(
-        &mut lines,
-        "counter",
-        &counters,
-        &HashMap::from([
-            (
-                "klaxond_deliveries_total",
-                "Cumulative deliveries (or attempts) per source/severity/channel/ok.",
-            ),
-            (
-                "klaxond_delivery_tier_attempts_total",
-                "Cumulative delivery tier attempts per source/severity/tier/component/ok.",
-            ),
-            (
-                "klaxond_suppressions_armed_total",
-                "Inhibition source-alerts that armed a suppression.",
-            ),
-            (
-                "klaxond_render_errors_total",
-                "Render-time exceptions per source.",
-            ),
-            (
-                "klaxond_dedup_buffered_total",
-                "Events queued in the dedup buffer per source.",
-            ),
-            (
-                "klaxond_dedup_flushed_total",
-                "Events flushed from the dedup buffer per source.",
-            ),
-            (
-                "klaxond_repeat_suppressed_total",
-                "Repeated notifications suppressed after a successful delivery.",
-            ),
-            (
-                "klaxond_repeat_suppression_errors_total",
-                "Repeat-suppression persistence errors; delivery fails open.",
-            ),
-            (
-                "klaxond_emergency_incidents_total",
-                "Emergency receipts created or coalesced.",
-            ),
-            (
-                "klaxond_emergency_transitions_total",
-                "Durable emergency state transitions.",
-            ),
-            (
-                "klaxond_emergency_attempts_total",
-                "Emergency delivery attempts by channel and outcome.",
-            ),
-            (
-                "klaxond_emergency_storage_errors_total",
-                "Emergency persistence operation failures.",
-            ),
-            (
-                "klaxond_emergency_profile_matches_total",
-                "Emergency profile selections by stable profile ID and explicit-force flag.",
-            ),
-        ]),
-    );
-    let gauges = lock_mutex(&state.metrics.gauges, "metrics gauges");
-    let gauge_i = gauges
-        .iter()
-        .map(|(k, v)| (k.clone(), *v as i64))
-        .collect::<HashMap<_, _>>();
-    emit_metrics(
-        &mut lines,
-        "gauge",
-        &gauge_i,
-        &HashMap::from([
-            (
-                "klaxond_suppressions_active",
-                "Currently-armed in-memory suppressions.",
-            ),
-            (
-                "klaxond_dedup_pending",
-                "Events pending in the dedup buffer per source.",
-            ),
-            (
-                "klaxond_emergencies_active",
-                "Emergency receipts currently awaiting acknowledgement.",
-            ),
-            (
-                "klaxond_emergency_oldest_active_age_seconds",
-                "Age of the oldest active emergency receipt.",
-            ),
-            (
-                "klaxond_emergency_last_ack_latency_seconds",
-                "Acknowledgement latency of the last acknowledged emergency.",
-            ),
-            (
-                "klaxond_emergency_profile_active",
-                "Active emergency receipts by stable policy profile ID.",
-            ),
-        ]),
-    );
-    let body = lines.join("\n") + "\n";
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")
-        .body(Body::from(body))
-        .unwrap()
+    ]
+}
+
+fn counter_help() -> HashMap<&'static str, &'static str> {
+    HashMap::from([
+        (
+            "klaxond_deliveries_total",
+            "Cumulative deliveries (or attempts) per source/severity/channel/ok.",
+        ),
+        (
+            "klaxond_delivery_tier_attempts_total",
+            "Cumulative delivery tier attempts per source/severity/tier/component/ok.",
+        ),
+        (
+            "klaxond_suppressions_armed_total",
+            "Inhibition source-alerts that armed a suppression.",
+        ),
+        (
+            "klaxond_render_errors_total",
+            "Render-time exceptions per source.",
+        ),
+        (
+            "klaxond_dedup_buffered_total",
+            "Events queued in the dedup buffer per source.",
+        ),
+        (
+            "klaxond_dedup_flushed_total",
+            "Events flushed from the dedup buffer per source.",
+        ),
+        (
+            "klaxond_repeat_suppressed_total",
+            "Repeated notifications suppressed after a successful delivery.",
+        ),
+        (
+            "klaxond_repeat_suppression_errors_total",
+            "Repeat-suppression persistence errors; delivery fails open.",
+        ),
+        (
+            "klaxond_emergency_incidents_total",
+            "Emergency receipts created or coalesced.",
+        ),
+        (
+            "klaxond_emergency_transitions_total",
+            "Durable emergency state transitions.",
+        ),
+        (
+            "klaxond_emergency_attempts_total",
+            "Emergency delivery attempts by channel and outcome.",
+        ),
+        (
+            "klaxond_emergency_storage_errors_total",
+            "Emergency persistence operation failures.",
+        ),
+        (
+            "klaxond_emergency_profile_matches_total",
+            "Emergency profile selections by stable profile ID and explicit-force flag.",
+        ),
+    ])
+}
+
+fn gauge_help() -> HashMap<&'static str, &'static str> {
+    HashMap::from([
+        (
+            "klaxond_suppressions_active",
+            "Currently-armed in-memory suppressions.",
+        ),
+        (
+            "klaxond_dedup_pending",
+            "Events pending in the dedup buffer per source.",
+        ),
+        (
+            "klaxond_emergencies_active",
+            "Emergency receipts currently awaiting acknowledgement.",
+        ),
+        (
+            "klaxond_emergency_oldest_active_age_seconds",
+            "Age of the oldest active emergency receipt.",
+        ),
+        (
+            "klaxond_emergency_last_ack_latency_seconds",
+            "Acknowledgement latency of the last acknowledged emergency.",
+        ),
+        (
+            "klaxond_emergency_profile_active",
+            "Active emergency receipts by stable policy profile ID.",
+        ),
+    ])
 }
 
 fn emit_metrics(

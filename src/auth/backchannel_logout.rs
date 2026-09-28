@@ -4,6 +4,7 @@ use super::oidc_client::cached_client_for;
 use crate::history::OidcLogoutTokenRecord;
 use crate::state::AppState;
 use crate::util::now_epoch_i64;
+use auth_modules::oidc::OidcBackchannelLogout;
 use auth_modules::one_time_token::hash_token;
 use axum::body::{Body, Bytes};
 use axum::http::{Response, StatusCode};
@@ -42,6 +43,13 @@ pub async fn backchannel_logout(state: &AppState, body: Bytes) -> Response<Body>
             return StatusCode::BAD_REQUEST.into_response();
         }
     };
+    persist_backchannel_logout(state, logout).await
+}
+
+async fn persist_backchannel_logout(
+    state: &AppState,
+    logout: OidcBackchannelLogout,
+) -> Response<Body> {
     let now = now_epoch_i64();
     let token_id_hash = hash_token(&format!("{}\0{}", logout.issuer, logout.token_id));
     let record = OidcLogoutTokenRecord {

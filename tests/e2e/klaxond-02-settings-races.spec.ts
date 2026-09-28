@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickSidebarTab } from "./klaxond-helpers";
 
 function deferred() {
   let resolve = () => {};
@@ -63,6 +64,7 @@ test("late settings reloads preserve edits made after the request started", asyn
     topicsCompleted.resolve();
   });
 
+  await page.evaluate(() => (window as any).activateTab("status"));
   await page.evaluate(() => (window as any).activateTab("routing"));
   await Promise.all([channelsStarted.promise, topicsStarted.promise]);
   const ntfyUrl = page.locator("#r-ntfy-url");
@@ -176,7 +178,7 @@ test("discarding navigation invalidates unsent Save All steps", async ({ page })
   await page.waitForTimeout(100);
   expect(topicsSaveCount).toBe(0);
 
-  await page.locator('.tab[data-tab="status"]').click();
+  await clickSidebarTab(page, "status");
   await page.locator(".app-dialog .danger").click();
   await expect(page).toHaveURL(/\/status$/);
   releaseChannels.resolve();
@@ -230,6 +232,7 @@ test("a pre-mutation GET cannot repopulate routing cache with stale data", async
     });
   });
 
+  await page.evaluate(() => (window as any).activateTab("status"));
   await page.evaluate(() => (window as any).activateTab("routing"));
   await staleCaptured.promise;
   const savedUrl = "https://ntfy.example.test/cache-generation";

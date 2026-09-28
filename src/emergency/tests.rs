@@ -1,4 +1,7 @@
+use super::identity::{fingerprint, legacy_fingerprint};
 use super::*;
+use crate::config::select_emergency_profile;
+use std::collections::HashMap;
 
 #[test]
 fn explicit_label_overrides_severity_policy() {

@@ -1,8 +1,5 @@
 use super::RuntimeAuthState;
-use super::{
-    DeliveryActivity, DeliveryEntry, DeliveryPage, DeliveryQuery, RepeatCandidate, RepeatDecision,
-    RepeatState,
-};
+use super::{DeliveryActivity, DeliveryEntry, DeliveryPage, DeliveryQuery};
 use anyhow::{Context, Result};
 use postgres::{Client, NoTls};
 use std::sync::mpsc;

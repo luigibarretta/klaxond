@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: klaxond API
-  version: 0.20.6
+  version: 0.20.7
   summary: Notification bridge backend API
   description: |
     klaxond receives monitoring webhooks, renders notification payloads, manages
@@ -1879,7 +1879,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                $ref: "#/components/schemas/DeliveryConfigResponse"
         "4XX":
           $ref: "#/components/responses/ClientError"
     post:
@@ -1895,10 +1895,12 @@ paths:
         content:
           application/json:
             schema:
-              type: object
+              $ref: "#/components/schemas/DeliveryConfigUpdate"
       responses:
         "200":
           $ref: "#/components/responses/OkJson"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "428":
           $ref: "#/components/responses/ReauthRequired"
   /api/cascade-config:
@@ -2837,6 +2839,80 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CascadeWarning"
+    DeliveryPolicy:
+      type: object
+      required: [name, mode, tiers]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Unique policy name used by the default selector and delivery rules.
+        mode:
+          type: string
+          enum: [cascade, broadcast]
+          description: Cascade stops after the first successful tier; broadcast attempts every tier.
+        tiers:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CascadeTier"
+    DeliveryRule:
+      type: object
+      required: [match, policy]
+      properties:
+        match:
+          type: object
+          additionalProperties:
+            type: string
+          description: Exact or `re:`-prefixed regular-expression matches against normalized alert labels.
+        policy:
+          type: string
+          minLength: 1
+          description: Name of the custom policy or the built-in `cascade` policy.
+    DeliveryConfigUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        default_policy:
+          type: string
+          minLength: 1
+        policies:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryPolicy"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryRule"
+      description: |
+        Partial replacement of delivery policy fields. Policy names and
+        references must resolve, tiers must use supported channels and
+        `re:` match values must compile with the backend regex engine.
+    DeliveryConfigResponse:
+      type: object
+      required: [default_policy, policies, rules, available_tiers, legacy_cascade_tiers]
+      properties:
+        default_policy:
+          type: string
+        policies:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryPolicy"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryRule"
+        available_tiers:
+          type: array
+          items:
+            type: string
+            enum: [ntfy, telegram, smtp]
+        legacy_cascade_tiers:
+          type: array
+          minItems: 1
+          description: Effective tiers of the built-in, locked `cascade` policy.
+          items:
+            $ref: "#/components/schemas/CascadeTier"
     EmergencyFallback:
       type: object
       additionalProperties: false

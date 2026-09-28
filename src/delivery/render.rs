@@ -10,60 +10,64 @@ pub(super) async fn render_alert_image(
     instance: &str,
     panel: Option<u64>,
 ) -> Option<Vec<u8>> {
-    if cfg.grafana_render_base.is_empty()
-        || cfg.grafana_render_token.is_empty()
-        || slug.is_empty()
-        || !slug.starts_with("/d/")
-    {
-        return None;
-    }
-    let uid = slug
-        .trim_start_matches("/d/")
-        .split(['/', '?'])
-        .next()
-        .unwrap_or("");
+    let uid = render_uid(cfg, slug)?;
     let pid = match panel {
         Some(pid) => Some(pid),
         None => first_render_panel(state, cfg, uid).await,
     };
-    let url = if let Some(pid) = pid {
-        let mut params = vec![
-            ("orgId", "1".to_string()),
-            ("theme", "dark".into()),
-            ("width", "1000".into()),
-            ("height", "500".into()),
-            ("panelId", pid.to_string()),
-            ("from", "now-3h".into()),
-            ("to", "now".into()),
-        ];
-        if !instance.is_empty() {
-            params.push(("var-instance", instance.to_string()));
-        }
-        format!(
-            "{}/render/d-solo/{}/x?{}",
-            cfg.grafana_render_base,
-            uid,
-            serde_urlencoded(params)
-        )
-    } else {
-        let mut params = vec![
-            ("orgId", "1".to_string()),
-            ("theme", "dark".into()),
-            ("width", "1000".into()),
-            ("height", "800".into()),
-            ("from", "now-3h".into()),
-            ("to", "now".into()),
-        ];
-        if !instance.is_empty() {
-            params.push(("var-instance", instance.to_string()));
-        }
-        format!(
-            "{}/render{}?{}",
-            cfg.grafana_render_base,
-            slug,
-            serde_urlencoded(params)
-        )
+    let url = render_url(cfg, slug, uid, instance, pid);
+    fetch_rendered_image(state, cfg, url).await
+}
+
+fn render_uid<'a>(cfg: &RuntimeConfig, slug: &'a str) -> Option<&'a str> {
+    if cfg.grafana_render_base.is_empty()
+        || cfg.grafana_render_token.is_empty()
+        || !slug.starts_with("/d/")
+    {
+        return None;
+    }
+    slug.trim_start_matches("/d/").split(['/', '?']).next()
+}
+
+fn render_url(
+    cfg: &RuntimeConfig,
+    slug: &str,
+    uid: &str,
+    instance: &str,
+    panel: Option<u64>,
+) -> String {
+    let (path, height, panel_param) = match panel {
+        Some(panel_id) => (
+            format!("/render/d-solo/{uid}/x"),
+            "500",
+            Some(("panelId", panel_id.to_string())),
+        ),
+        None => (format!("/render{slug}"), "800", None),
     };
+    let mut params = vec![
+        ("orgId", "1".to_string()),
+        ("theme", "dark".into()),
+        ("width", "1000".into()),
+        ("height", height.into()),
+        ("from", "now-3h".into()),
+        ("to", "now".into()),
+    ];
+    params.extend(panel_param);
+    if !instance.is_empty() {
+        params.push(("var-instance", instance.to_string()));
+    }
+    format!(
+        "{}{path}?{}",
+        cfg.grafana_render_base,
+        serde_urlencoded(params)
+    )
+}
+
+async fn fetch_rendered_image(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    url: String,
+) -> Option<Vec<u8>> {
     match state
         .http
         .get(url)

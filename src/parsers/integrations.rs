@@ -45,11 +45,7 @@ pub fn parse_github_payload(payload: &Value, severity: &str, cfg: &RuntimeConfig
         (false, true) => repository.to_string(),
         _ => "issue".into(),
     };
-    let actor_text = if actor.is_empty() {
-        "new reply".into()
-    } else {
-        format!("reply from {actor}")
-    };
+    let actor_text = github_actor_text(actor);
     let body = match (issue_title.is_empty(), comment_body.is_empty()) {
         (false, false) => format!("{issue_title}\n\n{comment_body}"),
         (false, true) => issue_title,
@@ -83,6 +79,14 @@ pub fn parse_github_payload(payload: &Value, severity: &str, cfg: &RuntimeConfig
         ntfy_sequence_id: None,
         emergency_ack_url: None,
         emergency_ack_token: None,
+    }
+}
+
+fn github_actor_text(actor: &str) -> String {
+    if actor.is_empty() {
+        "new reply".into()
+    } else {
+        format!("reply from {actor}")
     }
 }
 

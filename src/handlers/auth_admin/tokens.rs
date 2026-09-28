@@ -17,28 +17,10 @@ pub(in crate::handlers) fn create_auth_token(
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
     let payload = CreateTokenRequest::from_value(payload);
-    let name = payload.name();
-    if name.is_empty() {
-        return text(StatusCode::BAD_REQUEST, "token name is required");
-    }
-    let kind = payload.kind();
-    if !matches!(kind, "api-key" | "pat") {
-        return text(StatusCode::BAD_REQUEST, "kind must be api-key or pat");
-    }
-    if payload.scopes.is_empty() {
-        return text(StatusCode::BAD_REQUEST, "at least one scope is required");
-    }
-    for scope in &payload.scopes {
-        if !auth::TOKEN_SCOPES.contains(&scope.as_str()) {
-            return text(StatusCode::BAD_REQUEST, &format!("invalid scope '{scope}'"));
-        }
-    }
-    if !token_scopes_allowed_for_actor(current_user, &payload.scopes) {
-        return text(
-            StatusCode::FORBIDDEN,
-            "requested token scopes exceed the authenticated token scope",
-        );
-    }
+    let (name, kind) = match validate_token_request(&payload, current_user) {
+        Ok(details) => details,
+        Err(error) => return text(error.status, &error.message),
+    };
     let now = crate::util::now_epoch_i64();
     let expires_at = payload.expires_at(now);
     let token = format!(
@@ -73,6 +55,59 @@ pub(in crate::handlers) fn create_auth_token(
             }))
         })
         .unwrap_or_else(|err| text(StatusCode::INTERNAL_SERVER_ERROR, &err))
+}
+
+fn validate_token_request<'a>(
+    payload: &'a CreateTokenRequest,
+    current_user: Option<&User>,
+) -> Result<(&'a str, &'a str), TokenRequestError> {
+    let name = payload.name();
+    if name.is_empty() {
+        return Err(token_request_error(
+            StatusCode::BAD_REQUEST,
+            "token name is required",
+        ));
+    }
+    let kind = payload.kind();
+    if !matches!(kind, "api-key" | "pat") {
+        return Err(token_request_error(
+            StatusCode::BAD_REQUEST,
+            "kind must be api-key or pat",
+        ));
+    }
+    if payload.scopes.is_empty() {
+        return Err(token_request_error(
+            StatusCode::BAD_REQUEST,
+            "at least one scope is required",
+        ));
+    }
+    for scope in &payload.scopes {
+        if !auth::TOKEN_SCOPES.contains(&scope.as_str()) {
+            return Err(token_request_error(
+                StatusCode::BAD_REQUEST,
+                format!("invalid scope '{scope}'"),
+            ));
+        }
+    }
+    if !token_scopes_allowed_for_actor(current_user, &payload.scopes) {
+        return Err(token_request_error(
+            StatusCode::FORBIDDEN,
+            "requested token scopes exceed the authenticated token scope",
+        ));
+    }
+    Ok((name, kind))
+}
+
+struct TokenRequestError {
+    status: StatusCode,
+    message: String,
+}
+
+fn token_request_error(status: StatusCode, message: impl Into<String>) -> TokenRequestError {
+    TokenRequestError {
+        status,
+        message: message.into(),
+    }
 }
 
 fn token_scopes_allowed_for_actor(current_user: Option<&User>, requested: &[String]) -> bool {

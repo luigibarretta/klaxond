@@ -1,148 +1,134 @@
 import {
-  $, $$, APP_META, J, SEARCH_DEBOUNCE_MS, apiFetch, applyTablePager, debounce, errorText,
-  escapeHtml, fetchError, fetchOk, getAuthPasswordPolicy, getCurrentUser, isAbortError, isPublicInfoPage,
-  markTabDirty, notifyError, notifyResponseError, notifySuccess, notifyValidationError, onReady,
-  queryGet, refreshTablePagers, setAuthPasswordPolicy, setInlineStatus, setLocalTotpEnabled,
-  showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
+  $, $$, J, dirtyTabs, fetchError, notifyError, notifySuccess, notifyValidationError, queryGet,
+  showTableRowPage, tr,
 } from "./app.js";
+import {
+  addPolicyRow, collectPoliciesFromTable, renderDeliveryDefault as renderDefault,
+  renderPoliciesTable as renderPolicies, validatePolicyRows,
+} from "./app-delivery-policies.js";
+import {
+  addRuleRow, collectValidRules, refreshRuleRows, renderRulesTable as renderRules,
+  showDeliveryRuleServerError,
+} from "./app-delivery-rules.js";
+import { tierSummary } from "./app-delivery-editor.js";
+import { deliverySectionRevision, markDeliverySectionDirty } from "./app-delivery-state.js";
+
 export { loadCascade, renderCascadeTable } from "./app-cascade.js";
 export { loadDedup, renderDedupCards } from "./app-noise-control.js";
 
-// ---- Delivery (policies + rules) ----
-// The synthetic policy built from the global [cascade] block is exposed by
-// the backend with name="cascade" (see delivery::legacy_cascade_policy).
-// The UI matches that for consistency: no "legacy-cascade" string anywhere.
-let delivData = { default_policy: "cascade", policies: [], rules: [], available_tiers: [], legacy_cascade_tiers: [] };
+let deliveryData = {
+  default_policy: "cascade",
+  policies: [],
+  rules: [],
+  available_tiers: [],
+  legacy_cascade_tiers: [],
+};
+let deliverySaveInFlight = false;
 
-export async function loadDelivery() {
+export async function loadDelivery(opts = {}) {
+  const requestedRevision = deliverySectionRevision("policies");
   try {
-    delivData = await queryGet("delivery-config", "/api/delivery-config");
+    const nextData = await queryGet("delivery-config", "/api/delivery-config", { force: opts.force });
+    if (dirtyTabs.has("delivery") || deliverySectionRevision("policies") !== requestedRevision) return;
+    deliveryData = nextData;
     renderDeliveryDefault();
     renderPoliciesTable();
     renderRulesTable();
-  } catch (e) { fetchError("delivery", e); }
-}
-
-function policyNames() {
-  return ["cascade", ...delivData.policies.map(p => p.name)];
+  } catch (error) {
+    fetchError("delivery", error);
+  }
 }
 
 export function renderDeliveryDefault() {
-  const sel = $("#d-default-policy");
-  if (!sel) return;
-  const cur = delivData.default_policy;
-  sel.innerHTML = policyNames().map(n => `<option ${n === cur ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
+  renderDefault(deliveryData);
 }
 
 export function renderPoliciesTable() {
-  const tb = $("#t-pol tbody"); tb.innerHTML = "";
-  delivData.policies.forEach((p, i) => addPolicyRow(p.name, p.mode, p.tiers, i, { deferPager: true }));
-  applyTablePager("t-pol", { reset: true });
-}
-
-function addPolicyRow(name = "new-policy", mode = "cascade", tiers = [], idx = null, opts = {}) {
-  const tb = $("#t-pol tbody");
-  const tr = document.createElement("tr");
-  const tierTxt = tiers.map(t => `${t.name}(${t.timeout_seconds}s)`).join(" → ");
-  const tiersAvail = delivData.available_tiers || ["ntfy", "telegram", "smtp"];
-  tr.innerHTML = `
-    <td><input type="text" value="${escapeHtml(name)}" data-f="name"></td>
-    <td><select data-f="mode">
-      <option value="cascade" ${mode === "cascade" ? "selected" : ""}>cascade</option>
-      <option value="broadcast" ${mode === "broadcast" ? "selected" : ""}>broadcast</option>
-    </select></td>
-    <td><input type="text" value="${escapeHtml(JSON.stringify(tiers))}" data-f="tiers" placeholder='[{"name":"ntfy","timeout_seconds":5}]' style="font-family:monospace;font-size:11px"></td>
-    <td><button class="danger" data-del>×</button></td>`;
-  tr.querySelector("[data-del]").addEventListener("click", () => {
-    tr.remove();
-    renderDeliveryDefault();
-    applyTablePager("t-pol");
-  });
-  // Re-populate the default-policy dropdown when name changes
-  tr.querySelector('[data-f="name"]').addEventListener("input", () => { collectPoliciesFromTable(); renderDeliveryDefault(); });
-  tb.appendChild(tr);
-  renderDeliveryDefault();
-  if (!opts.deferPager) applyTablePager("t-pol", { page: "last" });
-}
-
-function collectPoliciesFromTable() {
-  const policies = [];
-  $$("#t-pol tbody tr").forEach(tr => {
-    const name = tr.querySelector('[data-f="name"]').value.trim();
-    const mode = tr.querySelector('[data-f="mode"]').value;
-    let tiers = [];
-    try { tiers = JSON.parse(tr.querySelector('[data-f="tiers"]').value); } catch (e) {}
-    if (name && Array.isArray(tiers)) policies.push({ name, mode, tiers });
-  });
-  delivData.policies = policies;
-  return policies;
+  renderPolicies(deliveryData);
 }
 
 export function renderRulesTable() {
-  const tb = $("#t-rules tbody"); tb.innerHTML = "";
-  delivData.rules.forEach((r, i) => addRuleRow(r.match || {}, r.policy, i, { deferPager: true }));
-  applyTablePager("t-rules", { reset: true });
+  renderRules(deliveryData);
 }
 
-function addRuleRow(match = {}, policy = "cascade", idx = -1, rowOpts = {}) {
-  const tb = $("#t-rules tbody");
-  const i = idx === -1 ? tb.children.length : idx;
-  const tr = document.createElement("tr");
-  const matchTxt = Object.entries(match).map(([k, v]) => `${k}=${v}`).join("\n");
-  const policyOpts = policyNames().map(n => `<option ${n === policy ? "selected" : ""}>${escapeHtml(n)}</option>`).join("");
-  tr.innerHTML = `
-    <td><span class="muted">${i + 1}</span></td>
-    <td><textarea data-f="match" rows="3" style="font-family:monospace;font-size:11px" placeholder="severity=critical\ncomponent=host\nhost=re:^prod-.*">${escapeHtml(matchTxt)}</textarea></td>
-    <td><select data-f="policy">${policyOpts}</select></td>
-    <td><button class="danger" data-del>×</button></td>`;
-  tr.querySelector("[data-del]").addEventListener("click", () => {
-    tr.remove();
-    renumberRules();
-    applyTablePager("t-rules");
-  });
-  tb.appendChild(tr);
-  renumberRules();
-  if (!rowOpts.deferPager) applyTablePager("t-rules", { page: "last" });
-}
+$("#d-default-policy").addEventListener("change", event => {
+  deliveryData.default_policy = event.target.value;
+  refreshRuleRows();
+  markDeliverySectionDirty("policies");
+});
 
-function renumberRules() {
-  $$("#t-rules tbody tr").forEach((tr, i) => {
-    const num = tr.querySelector(".muted");
-    if (num) num.textContent = i + 1;
+$("#btn-pol-add").addEventListener("click", () => {
+  addPolicyRow(deliveryData);
+  markDeliverySectionDirty("policies");
+});
+
+$("#btn-rule-add").addEventListener("click", () => {
+  addRuleRow(deliveryData);
+  markDeliverySectionDirty("policies");
+});
+
+function invalidPolicyTimeout() {
+  return Array.from($$("#t-pol [data-tier-timeout]")).find(input => {
+    const value = Number(input.value);
+    return !Number.isInteger(value) || value < 1 || value > 60;
   });
 }
 
-$("#btn-pol-add").addEventListener("click", () => addPolicyRow());
-$("#btn-rule-add").addEventListener("click", () => addRuleRow());
-$("#btn-delivery-save").addEventListener("click", async () => {
-  const policies = collectPoliciesFromTable();
-  const rules = [];
-  $$("#t-rules tbody tr").forEach(tr => {
-    const txt = tr.querySelector('[data-f="match"]').value.trim();
-    const match = {};
-    txt.split(/\n/).forEach(line => {
-      const eq = line.indexOf("=");
-      if (eq > 0) match[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
-    });
-    const pol = tr.querySelector('[data-f="policy"]').value;
-    if (pol && Object.keys(match).length) rules.push({ match, policy: pol });
-  });
+async function saveDeliveryPolicies() {
+  if (deliverySaveInFlight) return;
+  const invalidTimeout = invalidPolicyTimeout();
+  if (invalidTimeout) {
+    notifyValidationError("delivery-policy-timeout", tr("cascade.timeout_invalid", {
+      min: 1, max: 60,
+    }), $("#delivery-status"));
+    showTableRowPage("t-pol", invalidTimeout.closest("tr"));
+    invalidTimeout.focus();
+    return;
+  }
+  if (!validatePolicyRows()) return;
+  const policies = collectPoliciesFromTable(deliveryData);
+  const rules = collectValidRules();
+  if (!rules) return;
   const payload = {
     default_policy: $("#d-default-policy").value,
     policies,
-    rules
+    rules,
   };
+  const savedRevision = deliverySectionRevision("policies");
+  const saveButtons = $$('[data-delivery-save]');
+  deliverySaveInFlight = true;
+  saveButtons.forEach(button => { button.disabled = true; });
   try {
     await J("/api/delivery-config", {
       method: "POST",
       body: JSON.stringify(payload),
-      headers: { "Content-Type": "application/json" }
+      headers: { "Content-Type": "application/json" },
     });
-    notifySuccess(tr("delivery.saved", { policies: policies.length, rules: rules.length }), {
-      status: "#delivery-status",
-      clearMs: 4000,
+    deliveryData.rules = rules;
+    const hasNewerChanges = deliverySectionRevision("policies") !== savedRevision;
+    const message = tr(hasNewerChanges ? "delivery.saved_newer_changes" : "delivery.saved", {
+      policies: policies.length, rules: rules.length,
     });
-    markTabDirty("delivery", false);
-  } catch (e) { notifyError("delivery-save", e, { status: "#delivery-status" }); }
-});
+    notifySuccess(message, {
+      status: "#delivery-status", clearMs: 4000,
+    });
+    if (!hasNewerChanges) markDeliverySectionDirty("policies", false);
+  } catch (error) {
+    if (!showDeliveryRuleServerError(error)) {
+      notifyError("delivery-save", error, { status: "#delivery-status" });
+    }
+  } finally {
+    deliverySaveInFlight = false;
+    saveButtons.forEach(button => { button.disabled = false; });
+  }
+}
 
+$$('[data-delivery-save]').forEach(button => button.addEventListener("click", saveDeliveryPolicies));
+
+document.addEventListener("klaxond:cascade-saved", event => {
+  const tiers = event.detail?.tiers;
+  if (!Array.isArray(tiers)) return;
+  deliveryData.legacy_cascade_tiers = tiers;
+  const cell = $("#t-pol .policy-built-in td:nth-child(3)");
+  if (cell) cell.innerHTML = tierSummary(tiers);
+});

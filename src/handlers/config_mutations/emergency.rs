@@ -1,8 +1,7 @@
 use super::super::config_admin::persist_reload;
 use super::super::{json_body, json_response, text};
 use crate::config::{
-    EmergencyConfig, EmergencyProfile, emergency_timeline, select_emergency_profile,
-    validate_emergency_config, validate_runtime_config,
+    EmergencyConfig, EmergencyProfile, validate_emergency_config, validate_runtime_config,
 };
 use crate::state::AppState;
 use crate::util::toml_table_mut;
@@ -10,7 +9,13 @@ use axum::body::{Body, Bytes};
 use axum::http::{Response, StatusCode};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
+
+mod diagnostics;
+#[cfg(test)]
+mod tests;
+
+use self::diagnostics::{configured_severities, profile_diagnostics};
 
 const GLOBAL_FIELD_ENV: &[(&str, &str)] = &[
     ("enabled", "KLAXOND_EMERGENCY_ENABLED"),
@@ -277,148 +282,8 @@ fn apply_config_to_toml(config: &EmergencyConfig, root: &mut toml::Value) {
     );
 }
 
-fn configured_severities(cfg: &crate::config::RuntimeConfig) -> Vec<String> {
-    let mut severities = cfg.known_severities();
-    for profile in &cfg.emergency.profiles {
-        severities.extend(
-            profile
-                .severities
-                .iter()
-                .filter(|value| !value.starts_with("re:"))
-                .cloned(),
-        );
-    }
-    severities.retain(|severity| severity != "resolved");
-    severities.sort();
-    severities.dedup();
-    severities
-}
-
-fn profile_diagnostics(
-    config: &EmergencyConfig,
-    severities: &[String],
-    sources: &[String],
-) -> Value {
-    let shadowed = config
-        .profiles
-        .iter()
-        .enumerate()
-        .filter_map(|(index, profile)| {
-            if !profile.enabled {
-                return None;
-            }
-            config
-                .profiles
-                .iter()
-                .enumerate()
-                .filter(|(candidate_index, candidate)| {
-                    *candidate_index != index
-                        && candidate.enabled
-                        && (candidate.priority > profile.priority
-                            || (candidate.priority == profile.priority && *candidate_index < index))
-                })
-                .find(|(_, candidate)| {
-                    candidate.severities == profile.severities
-                        && candidate.sources == profile.sources
-                        && candidate.label_match == profile.label_match
-                })
-                .map(|(_, winner)| json!({"profile": profile.id, "shadowed_by": winner.id}))
-        })
-        .collect::<Vec<_>>();
-    let mut routing_config = config.clone();
-    routing_config.enabled = true;
-    let unrouted_severities = severities
-        .iter()
-        .filter(|severity| {
-            sources.iter().all(|source| {
-                select_emergency_profile(&routing_config, severity, source, "", &HashMap::new())
-                    .selected
-                    .is_none()
-            })
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let timelines = config
-        .profiles
-        .iter()
-        .map(|profile| (profile.id.clone(), emergency_timeline(profile)))
-        .collect::<BTreeMap<_, _>>();
-    let priorities = config
-        .profiles
-        .iter()
-        .map(|profile| profile.priority)
-        .collect::<Vec<_>>();
-    let duplicate_priorities = priorities
-        .iter()
-        .filter(|priority| {
-            priorities
-                .iter()
-                .filter(|value| *value == *priority)
-                .count()
-                > 1
-        })
-        .copied()
-        .collect::<HashSet<_>>();
-    json!({
-        "shadowed_profiles": shadowed,
-        "unrouted_severities": unrouted_severities,
-        "equal_priorities": duplicate_priorities,
-        "timelines": timelines,
-    })
-}
-
 fn apply_option<T: Copy>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn patch_replaces_profiles_and_normalizes_values() {
-        let patch: EmergencyConfigPatch = serde_json::from_value(json!({
-            "enabled": true,
-            "fallback_profile": "page",
-            "profiles": [{
-                "id": "PAGE", "name": "Page", "enabled": true, "priority": 200,
-                "severities": [" Critical ", "PAGE"], "sources": [], "match": {},
-                "retry_seconds": 90, "expire_seconds": 3600, "max_attempts": 20,
-                "lease_seconds": 60,
-                "telegram": {"enabled": true, "after_attempts": 3},
-                "smtp": {"enabled": false, "after_attempts": 5},
-                "notify_on_expiry": true, "auto_resolve": true
-            }]
-        }))
-        .unwrap();
-        let mut config = EmergencyConfig::default();
-        patch.apply_to_config(&mut config);
-        validate_emergency_config(&mut config).unwrap();
-        assert!(config.enabled);
-        assert_eq!(config.profiles[0].id, "page");
-        assert_eq!(config.profiles[0].severities, ["critical", "page"]);
-    }
-
-    #[test]
-    fn managed_profile_fields_reject_a_profile_replacement() {
-        let patch: EmergencyConfigPatch = serde_json::from_value(json!({"profiles": []})).unwrap();
-        let managed = BTreeMap::from([(
-            "profiles.critical-default.retry_seconds".to_string(),
-            "KLAXOND_EMERGENCY_RETRY_SECONDS".to_string(),
-        )]);
-        let error = patch.reject_managed_fields(&managed).unwrap_err();
-        assert!(error.contains("KLAXOND_EMERGENCY_RETRY_SECONDS"));
-    }
-
-    #[test]
-    fn canonical_export_contains_profiles_without_secrets() {
-        let mut root = toml::Value::Table(toml::Table::new());
-        apply_config_to_toml(&EmergencyConfig::default(), &mut root);
-        let output = toml::to_string_pretty(&root).unwrap();
-        assert!(output.contains("critical-default"));
-        assert!(!output.contains("token"));
-        assert!(!output.contains("password"));
     }
 }

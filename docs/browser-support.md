@@ -7,13 +7,16 @@ Klaxond targets the current and previous stable releases of:
 - Safari on macOS and iOS.
 
 The automated release gate runs the portable UI suite against Playwright's
-Chromium, Firefox and WebKit engines. WebKit is the closest repeatable Linux CI
-proxy for Safari, but it is not a substitute for a final smoke test in the
-shipping macOS and iOS Safari versions.
+Chromium, Firefox and WebKit engines, plus the WebKit-based iPhone 15 device
+profile as `mobile-safari`. WebKit is the closest repeatable Linux CI proxy for
+Safari, and the device profile adds the iOS viewport, touch and user-agent
+contract. Neither is a substitute for a final smoke test in the shipping macOS
+and iOS Safari versions.
 
 ## Required release coverage
 
-The following flows must pass on all three automated browser engines:
+The following flows must pass on all three automated browser engines and the
+mobile Safari device profile:
 
 - first-run redirect and Setup checklist;
 - navigation, language and theme preferences;

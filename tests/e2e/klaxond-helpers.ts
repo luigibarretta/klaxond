@@ -10,6 +10,29 @@ export const APP_VERSION = fs.readFileSync("Cargo.toml", "utf8").match(/^version
 export const AUTHOR_NAME = "Luigi Barretta";
 export const AUTHOR_URL = "https://github.com/luigibarretta";
 
+export function isMobileViewport(page: Page) {
+  return (page.viewportSize()?.width || Number.POSITIVE_INFINITY) <= 760;
+}
+
+export async function openSidebar(page: Page) {
+  const nav = page.locator("nav.tabs");
+  if (await nav.isHidden()) {
+    await page.locator("#sidebar-toggle").click();
+    await expect(nav).toBeVisible();
+  }
+}
+
+export async function clickSidebarTab(page: Page, tabId: string) {
+  const tab = page.locator(`[data-tab="${tabId}"]`);
+  await openSidebar(page);
+  if (await tab.isHidden()) {
+    const group = tab.locator("xpath=../..");
+    const toggle = group.locator(".tab-group-toggle").first();
+    if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
+  }
+  await tab.click();
+}
+
 export async function revealVersionEgg(page: Page) {
   for (let i = 0; i < 7; i++) {
     await page.click("#footer-version");

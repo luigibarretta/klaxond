@@ -86,6 +86,44 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
     };
+    let Ok(input) = simulation_input(&payload) else {
+        return text(StatusCode::BAD_REQUEST, "invalid source");
+    };
+    let cfg = state.cfg();
+    let inhibition = simulated_inhibition(state, &cfg, &input);
+    let (policy, matched_by) = pick_policy(&cfg, &input.labels);
+    let emergency = select_emergency_profile(
+        &cfg.emergency,
+        &input.severity,
+        &input.source,
+        &input.event,
+        &input.labels,
+    );
+    json_response(json!({
+        "source": input.source,
+        "severity": input.severity,
+        "labels": input.labels,
+        "event": input.event,
+        "emergency": emergency_json(emergency),
+        "inhibition": inhibition,
+        "delivery": {
+            "policy": policy.name,
+            "mode": policy.mode,
+            "matched_by": matched_by,
+            "tiers": policy.tiers,
+        },
+        "dedup": dedup_json(&cfg, &input.source),
+    }))
+}
+
+struct SimulationInput {
+    source: String,
+    severity: String,
+    labels: HashMap<String, String>,
+    event: String,
+}
+
+fn simulation_input(payload: &Value) -> Result<SimulationInput, ()> {
     let source = payload
         .get("source")
         .and_then(Value::as_str)
@@ -98,7 +136,7 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
     {
-        return text(StatusCode::BAD_REQUEST, "invalid source");
+        return Err(());
     }
     let severity = payload
         .get("severity")
@@ -122,17 +160,35 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
     }
     labels.insert("severity".into(), severity.clone());
     labels.insert("source".into(), source.clone());
+    let event = payload
+        .get("event")
+        .and_then(Value::as_str)
+        .or_else(|| labels.get("alertname").map(String::as_str))
+        .unwrap_or("")
+        .to_string();
+    Ok(SimulationInput {
+        source,
+        severity,
+        labels,
+        event,
+    })
+}
 
-    let (would_send, reason) = inhibition::apply_inhibition(state, &source, &labels, true);
-    let cfg = state.cfg();
+fn simulated_inhibition(
+    state: &AppState,
+    cfg: &crate::config::RuntimeConfig,
+    input: &SimulationInput,
+) -> Value {
+    let (would_send, reason) =
+        inhibition::apply_inhibition(state, &input.source, &input.labels, true);
     let considered = cfg
         .inhibition_rules
         .iter()
-        .filter(|rule| rule.applies_to.is_empty() || rule.applies_to.contains(&source))
+        .filter(|rule| rule.applies_to.is_empty() || rule.applies_to.contains(&input.source))
         .map(|rule| rule.source.clone())
         .collect::<Vec<_>>();
-    let arm_idx = if source == "grafana" {
-        inhibition::alert_is_source(&labels, &cfg.inhibition_rules)
+    let arm_idx = if input.source == "grafana" {
+        inhibition::alert_is_source(&input.labels, &cfg.inhibition_rules)
     } else {
         None
     };
@@ -151,14 +207,17 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
             })
             .or_else(|| reason.strip_prefix("ack-snoozed-").map(ToOwned::to_owned))
     };
-    let (policy, matched_by) = pick_policy(&cfg, &labels);
-    let event = payload
-        .get("event")
-        .and_then(Value::as_str)
-        .or_else(|| labels.get("alertname").map(String::as_str))
-        .unwrap_or("");
-    let emergency = select_emergency_profile(&cfg.emergency, &severity, &source, event, &labels);
-    let emergency_json = emergency
+    json!({
+        "would_send": would_send,
+        "reason": reason,
+        "matched_rule": matched_rule,
+        "would_arm_suppression": arm_idx.is_some(),
+        "considered_rules": considered,
+    })
+}
+
+fn emergency_json(emergency: crate::config::EmergencyRoutingDecision) -> Value {
+    emergency
         .selected
         .as_ref()
         .map(|profile| {
@@ -186,52 +245,41 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
                 "channels": {},
                 "timeline": [],
             })
-        });
+        })
+}
+
+fn dedup_json(cfg: &crate::config::RuntimeConfig, source: &str) -> Value {
     let defaults = default_dedup();
     let dedup = cfg
         .dedup
-        .get(&source)
-        .or_else(|| defaults.get(&source))
+        .get(source)
+        .or_else(|| defaults.get(source))
         .cloned();
-    json_response(json!({
-        "source": source,
-        "severity": severity,
-        "labels": labels,
-        "event": event,
-        "emergency": emergency_json,
-        "inhibition": {
-            "would_send": would_send,
-            "reason": reason,
-            "matched_rule": matched_rule,
-            "would_arm_suppression": arm_idx.is_some(),
-            "considered_rules": considered,
-        },
-        "delivery": {
-            "policy": policy.name,
-            "mode": policy.mode,
-            "matched_by": matched_by,
-            "tiers": policy.tiers,
-        },
-        "dedup": dedup.map(|d| json!({
-            "enabled": d.enabled,
-            "window_s": d.window_s,
-            "strategy": d.strategy,
-            "override_critical": d.override_critical,
-            "repeat_suppression_enabled": d.repeat_suppression_enabled,
-            "repeat_window_s": d.repeat_window_s,
-            "repeat_override_critical": d.repeat_override_critical,
-            "rules": d.rules,
-        })).unwrap_or_else(|| json!({
-            "enabled": false,
-            "window_s": 0,
-            "strategy": "none",
-            "override_critical": false,
-            "repeat_suppression_enabled": false,
-            "repeat_window_s": 0,
-            "repeat_override_critical": false,
-            "rules": [],
-        })),
-    }))
+    dedup
+        .map(|d| {
+            json!({
+                "enabled": d.enabled,
+                "window_s": d.window_s,
+                "strategy": d.strategy,
+                "override_critical": d.override_critical,
+                "repeat_suppression_enabled": d.repeat_suppression_enabled,
+                "repeat_window_s": d.repeat_window_s,
+                "repeat_override_critical": d.repeat_override_critical,
+                "rules": d.rules,
+            })
+        })
+        .unwrap_or_else(|| {
+            json!({
+                "enabled": false,
+                "window_s": 0,
+                "strategy": "none",
+                "override_critical": false,
+                "repeat_suppression_enabled": false,
+                "repeat_window_s": 0,
+                "repeat_override_critical": false,
+                "rules": [],
+            })
+        })
 }
 
 #[cfg(test)]

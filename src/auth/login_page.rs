@@ -13,7 +13,21 @@ pub(super) fn login_page(
     );
     let start_url = html_attr(&start_url);
     let return_to = html_attr(return_to);
-    let primary = match mode {
+    let primary = primary_auth_html(mode, &start_url, &return_to);
+    let passkey = passkey_html(passkeys_enabled);
+    let magic_link = magic_link_html(magic_link_enabled, &return_to);
+    let author_link = author_link_html();
+    let html = login_document(&primary, passkey, &magic_link, &author_link);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header("Cache-Control", "no-store")
+        .header("Content-Type", "text/html; charset=utf-8")
+        .body(Body::from(html))
+        .expect("static login response headers are valid")
+}
+
+fn primary_auth_html(mode: &str, start_url: &str, return_to: &str) -> String {
+    match mode {
         "oidc" => format!(r#"<a class="btn primary" href="{start_url}">Continue with SSO</a>"#),
         "basic" => format!(
             r#"<form class="login-form" method="post" action="/api/auth/local/login">
@@ -30,13 +44,19 @@ pub(super) fn login_page(
             )
         }
         _ => format!(r#"<a class="btn primary" href="{return_to}">Continue</a>"#),
-    };
-    let passkey = if passkeys_enabled {
+    }
+}
+
+fn passkey_html(enabled: bool) -> &'static str {
+    if enabled {
         r#"<a class="btn" href="/api/auth/passkey/login">Use passkey</a>"#
     } else {
         ""
-    };
-    let magic_link = if magic_link_enabled {
+    }
+}
+
+fn magic_link_html(enabled: bool, return_to: &str) -> String {
+    if enabled {
         format!(
             r#"<form class="login-form" method="post" action="/api/auth/magic/request">
 <input type="hidden" name="return_to" value="{return_to}">
@@ -46,9 +66,11 @@ pub(super) fn login_page(
         )
     } else {
         String::new()
-    };
-    let author_link = author_link_html();
-    let html = format!(
+    }
+}
+
+fn login_document(primary: &str, passkey: &str, magic_link: &str, author_link: &str) -> String {
+    format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in to Klaxond</title><link rel="stylesheet" href="/ui/style.css"></head>
@@ -71,13 +93,7 @@ pub(super) fn login_page(
 <p class="muted login-byline">by {author_link}</p>
 </section></main></body></html>"#,
         version = crate::config::VERSION
-    );
-    Response::builder()
-        .status(StatusCode::OK)
-        .header("Cache-Control", "no-store")
-        .header("Content-Type", "text/html; charset=utf-8")
-        .body(Body::from(html))
-        .unwrap()
+    )
 }
 
 fn author_link_html() -> String {

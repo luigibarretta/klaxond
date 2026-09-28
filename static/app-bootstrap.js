@@ -33,8 +33,12 @@ document.addEventListener("klaxond:languagechange", () => {
   if (!dirtyTabs.has("inhibitions")) { loadInhib(); loadInhibRules(); loadSchedules(); loadAcks(); }
   if (!dirtyTabs.has("render")) { renderRCTable(); populateTestComponentSelect(); }
   if (!dirtyTabs.has("routing")) { renderNtfyTopicsEditor(); loadRouting(); loadIngestAuth(); }
-  if (!dirtyTabs.has("cascade")) renderCascadeTable();
-  if (!dirtyTabs.has("delivery")) { renderDeliveryDefault(); renderPoliciesTable(); renderRulesTable(); }
+  if (!dirtyTabs.has("delivery")) {
+    renderCascadeTable();
+    renderDeliveryDefault();
+    renderPoliciesTable();
+    renderRulesTable();
+  }
   if (!dirtyTabs.has("grouping")) renderDedupCards();
   if (!dirtyTabs.has("auth")) loadAuth();
   else renderTokens(authTokens, { preserveSource: true });
@@ -75,7 +79,7 @@ function _wireDirtyTracking() {
     const tabId = pane.id.replace(/^tab-/, "");
     if (!tabId) return;
     if (tabId === "logs") return;
-    if (tabId === "auth" || tabId === "routing") return;
+    if (tabId === "auth" || tabId === "routing" || tabId === "delivery") return;
     pane.addEventListener("input", e => {
       const t = e.target;
       if (!t || ["BUTTON"].includes(t.tagName)) return;
@@ -122,6 +126,7 @@ let _dirtyNavigationPending = false;
 function activateTabWithDirtyGuard(tabId) {
   const active = document.querySelector(".tabpane.active");
   const activeId = active ? active.id.replace(/^tab-/, "") : null;
+  if (activeId === tabId) return true;
   if (activeId && dirtyTabs.has(activeId) && activeId !== tabId) {
     if (!_dirtyNavigationPending) {
       _dirtyNavigationPending = true;

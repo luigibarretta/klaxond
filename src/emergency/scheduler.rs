@@ -12,102 +12,115 @@ use crate::util::{now_epoch, token_urlsafe};
 
 pub async fn scheduler_tick(state: &AppState) {
     let cfg = state.cfg();
-    let now = now_epoch();
-    match state.history_store().emergency_expire_due(now, 50) {
+    expire_due(state, &cfg).await;
+    for _ in 0..50 {
+        match reserve_due(state, &cfg) {
+            Reservation::Ready(incident) => process_retry(state, &cfg, *incident).await,
+            Reservation::Retry => continue,
+            Reservation::Empty => break,
+        }
+    }
+}
+
+async fn expire_due(state: &AppState, cfg: &RuntimeConfig) {
+    match state.history_store().emergency_expire_due(now_epoch(), 50) {
         Ok(expired) => {
             for incident in expired {
-                let snapshot = snapshot_for_incident(&cfg, &incident);
+                let snapshot = snapshot_for_incident(cfg, &incident);
                 super::transition_audit(state, &incident, "expired", "scheduler");
                 publish_terminal(
                     state,
-                    &cfg,
+                    cfg,
                     &incident,
                     "Emergency expired",
                     "The retry window ended without an acknowledgement.",
                 )
                 .await;
                 if snapshot.notify_on_expiry {
-                    let parts = terminal_parts(
-                        &incident,
-                        "Emergency expired",
-                        "The retry window ended without an acknowledgement.",
-                    );
-                    if snapshot.telegram.enabled {
-                        let telegram = post_to_telegram_with_config(
-                            state,
-                            &cfg,
-                            &incident.severity,
-                            &parts,
-                            timeout_for(&cfg, "telegram", 8),
-                        )
-                        .await;
-                        attempt_metric(state, "telegram-expiry", telegram);
-                    }
-                    if snapshot.smtp.enabled {
-                        let smtp = post_to_smtp_with_config(
-                            &cfg,
-                            &incident.severity,
-                            &parts,
-                            timeout_for(&cfg, "smtp", 10),
-                        )
-                        .await;
-                        attempt_metric(state, "smtp-expiry", smtp);
-                    }
+                    notify_expiry_channels(state, cfg, &incident).await;
                 }
             }
         }
         Err(err) => storage_error(state, "expire", &err),
     }
-    for _ in 0..50 {
-        let now = now_epoch();
-        let token = token_urlsafe(18);
-        let incident = match state
+}
+
+async fn notify_expiry_channels(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    incident: &EmergencyIncident,
+) {
+    let snapshot = snapshot_for_incident(cfg, incident);
+    let parts = terminal_parts(
+        incident,
+        "Emergency expired",
+        "The retry window ended without an acknowledgement.",
+    );
+    if snapshot.telegram.enabled {
+        let ok = post_to_telegram_with_config(
+            state,
+            cfg,
+            &incident.severity,
+            &parts,
+            timeout_for(cfg, "telegram", 8),
+        )
+        .await;
+        attempt_metric(state, "telegram-expiry", ok);
+    }
+    if snapshot.smtp.enabled {
+        let ok = post_to_smtp_with_config(
+            cfg,
+            &incident.severity,
+            &parts,
+            timeout_for(cfg, "smtp", 10),
+        )
+        .await;
+        attempt_metric(state, "smtp-expiry", ok);
+    }
+}
+
+enum Reservation {
+    Ready(Box<EmergencyIncident>),
+    Retry,
+    Empty,
+}
+
+fn reserve_due(state: &AppState, cfg: &RuntimeConfig) -> Reservation {
+    let now = now_epoch();
+    let incident =
+        match state
             .history_store()
-            .emergency_reserve_due(now, now + 300.0, &token)
+            .emergency_reserve_due(now, now + 300.0, &token_urlsafe(18))
         {
             Ok(Some(incident)) => incident,
-            Ok(None) => break,
-            Err(err) => {
-                storage_error(state, "reserve", &err);
-                break;
+            Ok(None) => return Reservation::Empty,
+            Err(error) => {
+                storage_error(state, "reserve", &error);
+                return Reservation::Empty;
             }
         };
-        let snapshot = snapshot_for_incident(&cfg, &incident);
-        match state.history_store().emergency_adjust_lease(
-            &incident.receipt_id,
-            &incident.reservation_token,
-            now + snapshot.lease_seconds as f64,
-        ) {
-            Ok(true) => {}
-            Ok(false) => {
-                tracing::info!(receipt_id=%incident.receipt_id, "emergency lease adjustment lost race");
-                continue;
-            }
-            Err(err) => {
-                storage_error(state, "adjust-lease", &err);
-                continue;
-            }
+    let snapshot = snapshot_for_incident(cfg, &incident);
+    match state.history_store().emergency_adjust_lease(
+        &incident.receipt_id,
+        &incident.reservation_token,
+        now + snapshot.lease_seconds as f64,
+    ) {
+        Ok(true) => Reservation::Ready(Box::new(incident)),
+        Ok(false) => {
+            tracing::info!(receipt_id=%incident.receipt_id, "emergency lease adjustment lost race");
+            Reservation::Retry
         }
-        process_retry(state, &cfg, incident).await;
+        Err(err) => {
+            storage_error(state, "adjust-lease", &err);
+            Reservation::Retry
+        }
     }
 }
 
 async fn process_retry(state: &AppState, cfg: &RuntimeConfig, incident: EmergencyIncident) {
     let snapshot = snapshot_for_incident(cfg, &incident);
-    let payload = match incident.payload() {
-        Ok(payload) => payload,
-        Err(err) => {
-            tracing::error!(receipt_id=%incident.receipt_id, "invalid durable emergency payload: {err}");
-            if let Err(storage_err) = state.history_store().emergency_terminalize(
-                &incident.receipt_id,
-                "cancelled",
-                "invalid-payload",
-                now_epoch(),
-            ) {
-                storage_error(state, "invalid-payload", &storage_err);
-            }
-            return;
-        }
+    let Some(payload) = retry_payload(state, &incident) else {
+        return;
     };
     let parts = decorate_parts(state, cfg, &incident, payload.parts);
     let ntfy_ok = post_to_ntfy_with_config(
@@ -120,39 +133,8 @@ async fn process_retry(state: &AppState, cfg: &RuntimeConfig, incident: Emergenc
     .await;
     attempt_metric(state, "ntfy", ntfy_ok);
     let attempt_number = incident.attempts.saturating_add(1);
-    let mut telegram_ok = None;
-    let mut smtp_ok = None;
-    if incident.telegram_escalated_at.is_none()
-        && snapshot.telegram.enabled
-        && attempt_number >= snapshot.telegram.after_attempts
-    {
-        telegram_ok = Some(
-            post_to_telegram_with_config(
-                state,
-                cfg,
-                &incident.severity,
-                &parts,
-                timeout_for(cfg, "telegram", 8),
-            )
-            .await,
-        );
-        attempt_metric(state, "telegram", telegram_ok.unwrap_or(false));
-    }
-    if incident.smtp_escalated_at.is_none()
-        && snapshot.smtp.enabled
-        && attempt_number >= snapshot.smtp.after_attempts
-    {
-        smtp_ok = Some(
-            post_to_smtp_with_config(
-                cfg,
-                &incident.severity,
-                &parts,
-                timeout_for(cfg, "smtp", 10),
-            )
-            .await,
-        );
-        attempt_metric(state, "smtp", smtp_ok.unwrap_or(false));
-    }
+    let (telegram_ok, smtp_ok) =
+        escalation_attempts(state, cfg, &incident, &parts, attempt_number).await;
     let now = now_epoch();
     let attempt = EmergencyAttempt {
         receipt_id: incident.receipt_id.clone(),
@@ -177,4 +159,66 @@ async fn process_retry(state: &AppState, cfg: &RuntimeConfig, incident: Emergenc
         }
         Err(err) => storage_error(state, "complete", &err),
     }
+}
+
+fn retry_payload(
+    state: &AppState,
+    incident: &EmergencyIncident,
+) -> Option<crate::history::EmergencyPayload> {
+    incident.payload().map_err(|error| {
+        tracing::error!(receipt_id=%incident.receipt_id, "invalid durable emergency payload: {error}");
+        if let Err(storage_error_value) = state.history_store().emergency_terminalize(
+            &incident.receipt_id,
+            "cancelled",
+            "invalid-payload",
+            now_epoch(),
+        ) {
+            storage_error(state, "invalid-payload", &storage_error_value);
+        }
+    }).ok()
+}
+
+async fn escalation_attempts(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    incident: &EmergencyIncident,
+    parts: &crate::parsers::Parts,
+    attempt_number: u32,
+) -> (Option<bool>, Option<bool>) {
+    let snapshot = snapshot_for_incident(cfg, incident);
+    let telegram_ok = if incident.telegram_escalated_at.is_none()
+        && snapshot.telegram.enabled
+        && attempt_number >= snapshot.telegram.after_attempts
+    {
+        Some(
+            post_to_telegram_with_config(
+                state,
+                cfg,
+                &incident.severity,
+                parts,
+                timeout_for(cfg, "telegram", 8),
+            )
+            .await,
+        )
+    } else {
+        None
+    };
+    let smtp_ok = if incident.smtp_escalated_at.is_none()
+        && snapshot.smtp.enabled
+        && attempt_number >= snapshot.smtp.after_attempts
+    {
+        Some(
+            post_to_smtp_with_config(cfg, &incident.severity, parts, timeout_for(cfg, "smtp", 10))
+                .await,
+        )
+    } else {
+        None
+    };
+    if let Some(ok) = telegram_ok {
+        attempt_metric(state, "telegram", ok);
+    }
+    if let Some(ok) = smtp_ok {
+        attempt_metric(state, "smtp", ok);
+    }
+    (telegram_ok, smtp_ok)
 }

@@ -67,5 +67,6 @@ test("inhibition presets add an editable unsaved rule", async ({ page }) => {
   await page.click("#inhib-preset-add");
   await expect(rows).toHaveCount(before + 1);
   await expect(rows.last().locator('[data-k="source"]')).toHaveValue("service-down");
-  await expect(page.locator('[data-tab="inhibitions"] .tab-dirty')).toBeVisible();
+  await expect(page.locator('[data-tab="inhibitions"] .tab-dirty')).toBeAttached();
+  await expect(page.locator('[data-tab="inhibitions"]')).toHaveAttribute("aria-label", /Unsaved changes/);
 });

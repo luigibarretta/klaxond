@@ -3,11 +3,16 @@ use anyhow::{Result, bail};
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
-use std::time::Duration;
+
+mod channels;
+mod online;
+
+use self::channels::channel_checks;
+use self::online::online_checks;
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum CheckStatus {
+pub(super) enum CheckStatus {
     Ok,
     Warn,
     Error,
@@ -15,7 +20,7 @@ enum CheckStatus {
 }
 
 #[derive(Serialize)]
-struct Check {
+pub(super) struct Check {
     name: String,
     status: CheckStatus,
     detail: String,
@@ -29,26 +34,15 @@ struct Report {
 }
 
 pub async fn run_cli(args: &[String]) -> Result<()> {
-    let mut offline = false;
-    let mut json = false;
-    for arg in args {
-        match arg.as_str() {
-            "--offline" => offline = true,
-            "--json" => json = true,
-            "-h" | "--help" => {
-                println!("Usage: klaxond doctor [--offline] [--json]");
-                return Ok(());
-            }
-            value => bail!("unknown doctor option: {value}"),
-        }
-    }
-
+    let Some(options) = parse_options(args)? else {
+        return Ok(());
+    };
     let paths = match Paths::from_env().resolve_from_config() {
         Ok(paths) => paths,
         Err(error) => {
             return finish(
                 vec![check("paths", CheckStatus::Error, error.to_string())],
-                json,
+                options.json,
             );
         }
     };
@@ -61,7 +55,7 @@ pub async fn run_cli(args: &[String]) -> Result<()> {
                     CheckStatus::Error,
                     error.to_string(),
                 )],
-                json,
+                options.json,
             );
         }
     };
@@ -78,7 +72,7 @@ pub async fn run_cli(args: &[String]) -> Result<()> {
     persistence_checks(&paths, &cfg, &mut checks);
     channel_checks(&cfg, &mut checks);
 
-    if offline {
+    if options.offline {
         checks.push(check(
             "network",
             CheckStatus::Skipped,
@@ -88,7 +82,31 @@ pub async fn run_cli(args: &[String]) -> Result<()> {
         online_checks(&cfg, &mut checks).await;
     }
 
-    finish(checks, json)
+    finish(checks, options.json)
+}
+
+struct DoctorOptions {
+    offline: bool,
+    json: bool,
+}
+
+fn parse_options(args: &[String]) -> Result<Option<DoctorOptions>> {
+    let mut options = DoctorOptions {
+        offline: false,
+        json: false,
+    };
+    for arg in args {
+        match arg.as_str() {
+            "--offline" => options.offline = true,
+            "--json" => options.json = true,
+            "-h" | "--help" => {
+                println!("Usage: klaxond doctor [--offline] [--json]");
+                return Ok(None);
+            }
+            value => bail!("unknown doctor option: {value}"),
+        }
+    }
+    Ok(Some(options))
 }
 
 fn persistence_checks(paths: &Paths, cfg: &RuntimeConfig, checks: &mut Vec<Check>) {
@@ -175,165 +193,6 @@ fn path_check(name: &str, path: &Path, must_exist: bool) -> Check {
     }
 }
 
-fn channel_checks(cfg: &RuntimeConfig, checks: &mut Vec<Check>) {
-    let public_is_local = url::Url::parse(&cfg.public_url)
-        .ok()
-        .and_then(|url| url.host_str().map(ToOwned::to_owned))
-        .is_some_and(|host| {
-            host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|address| address.is_loopback())
-        });
-    checks.push(check(
-        "admin authentication",
-        if cfg.auth.mode == "none" && !public_is_local {
-            CheckStatus::Error
-        } else if cfg.auth.mode == "none" {
-            CheckStatus::Warn
-        } else {
-            CheckStatus::Ok
-        },
-        if cfg.auth.mode == "none" {
-            "disabled; do not expose the admin UI beyond loopback"
-        } else {
-            "enabled"
-        },
-    ));
-    let ntfy_tokens = cfg
-        .ntfy_topics
-        .iter()
-        .filter(|topic| !topic.token.trim().is_empty())
-        .count();
-    checks.push(check(
-        "ntfy routing",
-        if ntfy_tokens > 0 {
-            CheckStatus::Ok
-        } else {
-            CheckStatus::Warn
-        },
-        format!("{ntfy_tokens} publish-token topic(s) configured"),
-    ));
-    checks.push(check(
-        "Telegram fallback",
-        if telegram_ready(cfg) {
-            CheckStatus::Ok
-        } else {
-            CheckStatus::Warn
-        },
-        if telegram_ready(cfg) {
-            "configured"
-        } else {
-            "not configured"
-        },
-    ));
-    checks.push(check(
-        "SMTP fallback",
-        if smtp_ready(cfg) {
-            CheckStatus::Ok
-        } else {
-            CheckStatus::Warn
-        },
-        if smtp_ready(cfg) {
-            "configured"
-        } else {
-            "not configured"
-        },
-    ));
-}
-
-async fn online_checks(cfg: &RuntimeConfig, checks: &mut Vec<Check>) {
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => {
-            checks.push(check("HTTP client", CheckStatus::Error, error.to_string()));
-            return;
-        }
-    };
-
-    checks.push(
-        http_probe(
-            &client,
-            "public health",
-            format!("{}/healthz", cfg.public_url),
-        )
-        .await,
-    );
-    checks.push(
-        http_probe(
-            &client,
-            "ntfy health",
-            format!("{}/v1/health", cfg.ntfy_url),
-        )
-        .await,
-    );
-
-    if telegram_ready(cfg) {
-        let url = format!(
-            "{}/bot{}/getMe",
-            cfg.telegram_api_base.trim_end_matches('/'),
-            cfg.tg_token
-        );
-        let result = client.get(url).send().await;
-        checks.push(response_check("Telegram credentials", result));
-    }
-
-    if smtp_ready(cfg) {
-        let result = tokio::time::timeout(
-            Duration::from_secs(10),
-            tokio::net::TcpStream::connect((cfg.smtp_host.as_str(), cfg.smtp_port)),
-        )
-        .await;
-        checks.push(match result {
-            Ok(Ok(_)) => check(
-                "SMTP connectivity",
-                CheckStatus::Ok,
-                "TCP connection accepted",
-            ),
-            Ok(Err(error)) => check("SMTP connectivity", CheckStatus::Error, error.to_string()),
-            Err(_) => check(
-                "SMTP connectivity",
-                CheckStatus::Error,
-                "TCP connection timed out",
-            ),
-        });
-    }
-}
-
-async fn http_probe(client: &reqwest::Client, name: &str, url: String) -> Check {
-    response_check(name, client.get(url).send().await)
-}
-
-fn response_check(name: &str, response: reqwest::Result<reqwest::Response>) -> Check {
-    match response {
-        Ok(response) if response.status().is_success() => {
-            check(name, CheckStatus::Ok, response.status().to_string())
-        }
-        Ok(response) => check(name, CheckStatus::Error, response.status().to_string()),
-        Err(error) => check(name, CheckStatus::Error, error.without_url().to_string()),
-    }
-}
-
-fn telegram_ready(cfg: &RuntimeConfig) -> bool {
-    !cfg.tg_token.trim().is_empty() && !cfg.tg_chat.trim().is_empty()
-}
-
-fn smtp_ready(cfg: &RuntimeConfig) -> bool {
-    [
-        cfg.smtp_host.trim(),
-        cfg.smtp_user.trim(),
-        cfg.smtp_pass.trim(),
-        cfg.smtp_from.trim(),
-        cfg.smtp_to.trim(),
-    ]
-    .iter()
-    .all(|value| !value.is_empty())
-}
-
 #[cfg(unix)]
 fn private_mode(metadata: &fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -345,7 +204,11 @@ fn private_mode(_metadata: &fs::Metadata) -> bool {
     true
 }
 
-fn check(name: impl Into<String>, status: CheckStatus, detail: impl Into<String>) -> Check {
+pub(super) fn check(
+    name: impl Into<String>,
+    status: CheckStatus,
+    detail: impl Into<String>,
+) -> Check {
     Check {
         name: name.into(),
         status,

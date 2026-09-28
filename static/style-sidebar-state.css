@@ -1,0 +1,83 @@
+body.sidebar-collapsed .app-shell { grid-template-columns: 72px minmax(0, 1fr); }
+body.sidebar-collapsed .sidebar { padding: 12px 10px; align-items: stretch; }
+body.sidebar-collapsed .sidebar-head {
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+body.sidebar-collapsed .brand-lockup {
+  flex: 0 0 auto;
+}
+body.sidebar-collapsed .brand-lockup h1 {
+  justify-content: center;
+}
+body.sidebar-collapsed .brand-logo {
+  width: 32px;
+  height: 32px;
+  flex-basis: 32px;
+}
+body.sidebar-collapsed .brand-lockup small,
+body.sidebar-collapsed .brand-name,
+body.sidebar-collapsed .tab-group-toggle,
+body.sidebar-collapsed .tab-label,
+body.sidebar-collapsed .pref-label,
+body.sidebar-collapsed .sidebar-user-meta,
+body.sidebar-collapsed .sidebar-user a {
+  display: none;
+}
+body.sidebar-collapsed .tab-group.is-collapsed .tab-group-items { display: flex; }
+body.sidebar-collapsed .tab {
+  min-height: 34px;
+  justify-content: center;
+  padding: 6px;
+}
+body.sidebar-collapsed .tab-icon {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+}
+body.sidebar-collapsed .tab .tab-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 1;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  line-height: 15px;
+  font-size: 9px;
+  border: 1px solid var(--panel);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+body.sidebar-collapsed .tab .tab-dirty {
+  position: absolute;
+  right: 8px;
+  bottom: 5px;
+  z-index: 1;
+  width: 7px;
+  height: 7px;
+  margin: 0;
+  border: 1px solid var(--panel);
+  box-shadow: 0 1px 2px var(--shadow);
+}
+body.sidebar-collapsed .pref-control {
+  justify-content: center;
+}
+body.sidebar-collapsed .segmented-control {
+  width: 100%;
+}
+body.sidebar-collapsed .seg-btn {
+  padding: 4px 0;
+  font-size: 10px;
+}
+body.sidebar-collapsed .sidebar-user {
+  justify-content: center;
+  padding: 8px;
+}
+body.public-info-route.sidebar-collapsed .app-shell,
+body.public-info-route .app-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.public-info-route .app-main {
+  grid-column: 1 / -1;
+}

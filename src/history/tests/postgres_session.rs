@@ -221,20 +221,19 @@ fn assert_logout_serializes_with_rotation(
     let logout = logout_thread.join().unwrap().unwrap();
     assert!(!logout.replayed);
     assert!(logout.revoked_sessions >= 1);
+    assert_session_missing(&setup, &new_id);
+    if rotation.is_err() {
+        assert_session_missing(&setup, &format!("postgres-rotation-old-{unique}"));
+    }
+}
+
+fn assert_session_missing(store: &HistoryStore, id_hash: &str) {
     assert!(
-        setup
-            .auth_session(&new_id, 1_101, 10_000)
+        store
+            .auth_session(id_hash, 1_101, 10_000)
             .unwrap()
             .is_none()
     );
-    if rotation.is_err() {
-        assert!(
-            setup
-                .auth_session(&format!("postgres-rotation-old-{unique}"), 1_101, 10_000)
-                .unwrap()
-                .is_none()
-        );
-    }
 }
 
 #[test]

@@ -17,9 +17,9 @@ mod pipeline;
 use self::auth::verify_ingest_auth;
 pub(super) use self::auth::{ingest_auth_payload, ingest_secret_for, update_ingest_auth};
 use self::pipeline::{
-    delivery_candidate, dry_run_delivery_response, dry_run_requested, ingest_route,
-    ingest_route_error_response, maybe_buffer_dedup, parse_ingest_payload,
-    suppressed_ingest_response,
+    DeliveryCandidate, IngestRoute, delivery_candidate, dry_run_delivery_response,
+    dry_run_requested, ingest_route, ingest_route_error_response, maybe_buffer_dedup,
+    parse_ingest_payload, suppressed_ingest_response,
 };
 
 pub(super) async fn ingest(
@@ -34,7 +34,46 @@ pub(super) async fn ingest(
         Ok(route) => route,
         Err(err) => return ingest_route_error_response(err),
     };
-    let mut source = route.source;
+    let source = match authenticated_source(state, &route, headers, peer) {
+        Ok(source) => source,
+        Err(error) => return text(error.status, error.message),
+    };
+    if !state.with_cfg(|cfg| cfg.handles_severity(&route.severity)) {
+        return ingest_route_error_response(pipeline::IngestRouteError::UnknownSeverity(
+            route.severity,
+        ));
+    }
+    let payload = match parse_ingest_payload(&body) {
+        Ok(payload) => payload,
+        Err(err) => {
+            tracing::error!("invalid JSON: {}", err);
+            return StatusCode::BAD_REQUEST.into_response();
+        }
+    };
+    let dry_run = dry_run_requested(&route.qs, &payload);
+    let norm = normalize_labels(&source, &payload);
+    let (should_send, reason) = inhibition::apply_inhibition(state, &source, &norm, dry_run);
+    if !should_send {
+        return suppressed_ingest_response(state, &source, &route.severity, &norm, reason, dry_run);
+    }
+    reconcile_inhibited_emergencies(state, dry_run, &reason).await;
+    let delivery = delivery_candidate(state, &source, &route.severity, &payload, &norm);
+    if dry_run {
+        return dry_run_delivery_response(state, &source, delivery, reason);
+    }
+    if maybe_buffer_dedup(state, &source, &payload, &delivery).await {
+        return text(StatusCode::ACCEPTED, "buffered (dedup window)");
+    }
+    deliver_candidate(state, &source, delivery).await
+}
+
+fn authenticated_source(
+    state: &AppState,
+    route: &IngestRoute,
+    headers: &HeaderMap,
+    peer: SocketAddr,
+) -> Result<String, IngestAuthError> {
+    let mut source = route.source.clone();
     let (mut auth_ok, mut auth_reason) = verify_ingest_auth(state, &source, headers, &route.qs);
     if !auth_ok && source == "grafana" {
         let (blackstart_ok, blackstart_reason) =
@@ -59,35 +98,27 @@ pub(super) async fn ingest(
             auth_reason,
             peer.ip()
         );
-        return if auth_reason == "source-disabled-no-secret" {
-            text(StatusCode::NOT_FOUND, "ingest source disabled")
+        return Err(if auth_reason == "source-disabled-no-secret" {
+            IngestAuthError {
+                status: StatusCode::NOT_FOUND,
+                message: "ingest source disabled",
+            }
         } else {
-            text(
-                StatusCode::UNAUTHORIZED,
-                "unauthorized (per-source secret required)",
-            )
-        };
+            IngestAuthError {
+                status: StatusCode::UNAUTHORIZED,
+                message: "unauthorized (per-source secret required)",
+            }
+        });
     }
-    if !state.with_cfg(|cfg| cfg.handles_severity(&route.severity)) {
-        return ingest_route_error_response(pipeline::IngestRouteError::UnknownSeverity(
-            route.severity,
-        ));
-    }
-    let payload = match parse_ingest_payload(&body) {
-        Ok(payload) => payload,
-        Err(err) => {
-            tracing::error!("invalid JSON: {}", err);
-            return StatusCode::BAD_REQUEST.into_response();
-        }
-    };
-    let dry_run = dry_run_requested(&route.qs, &payload);
+    Ok(source)
+}
 
-    let norm = normalize_labels(&source, &payload);
-    let (should_send, reason) = inhibition::apply_inhibition(state, &source, &norm, dry_run);
-    if !should_send {
-        return suppressed_ingest_response(state, &source, &route.severity, &norm, reason, dry_run);
-    }
+struct IngestAuthError {
+    status: StatusCode,
+    message: &'static str,
+}
 
+async fn reconcile_inhibited_emergencies(state: &AppState, dry_run: bool, reason: &str) {
     // A newly firing inhibition source may arrive after dependent emergencies
     // have already been delivered. Reconcile them immediately: Alertmanager
     // suppresses future target webhooks but does not send a synthetic resolved
@@ -101,23 +132,20 @@ pub(super) async fn ingest(
             );
         }
     }
+}
 
-    let delivery = delivery_candidate(state, &source, &route.severity, &payload, &norm);
-
-    if dry_run {
-        return dry_run_delivery_response(state, &source, delivery, reason);
-    }
-
-    if maybe_buffer_dedup(state, &source, &payload, &delivery).await {
-        return text(StatusCode::ACCEPTED, "buffered (dedup window)");
-    }
+async fn deliver_candidate(
+    state: &AppState,
+    source: &str,
+    delivery: DeliveryCandidate,
+) -> Response<Body> {
     let (ok, channel) = deliver(
         state,
         &delivery.severity,
         delivery.parts,
         delivery.with_cascade,
         delivery.common_labels,
-        &source,
+        source,
     )
     .await;
     if channel == "repeat-suppressed" {
@@ -134,72 +162,50 @@ pub(super) async fn ingest(
     }
 }
 
+struct ApiTestInput {
+    title: String,
+    body: String,
+    component: String,
+    host: String,
+}
+
+impl ApiTestInput {
+    fn from_body(body: &Bytes, severity: &str) -> Self {
+        let payload = json_body(body).unwrap_or_else(|_| json!({}));
+        let string_field = |name: &str| {
+            payload
+                .get(name)
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        };
+        let title = string_field("title");
+        Self {
+            title: if title.is_empty() {
+                format!("klaxond test [{severity}]")
+            } else {
+                title
+            },
+            body: payload
+                .get("body")
+                .and_then(|value| value.as_str())
+                .unwrap_or("Synthetic alert from /api/test endpoint")
+                .to_string(),
+            component: string_field("component"),
+            host: string_field("host"),
+        }
+    }
+}
+
 pub(super) async fn api_test(state: &AppState, path: &str, body: Bytes) -> Response<Body> {
     let severity = path.rsplit('/').next().unwrap_or("").to_ascii_lowercase();
     if !state.with_cfg(|cfg| cfg.handles_severity(&severity)) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let payload = json_body(&body).unwrap_or_else(|_| json!({}));
-    let title = payload
-        .get("title")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let title = if title.is_empty() {
-        format!("klaxond test [{severity}]")
-    } else {
-        title
-    };
-    let body_txt = payload
-        .get("body")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Synthetic alert from /api/test endpoint")
-        .to_string();
-    let component = payload
-        .get("component")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let host = payload
-        .get("host")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
+    let input = ApiTestInput::from_body(&body, &severity);
     let cfg = state.cfg();
-    let (parts, labels) = if !component.is_empty() || !host.is_empty() {
-        let fake = json!({
-            "status": "firing",
-            "commonLabels": {"alertname": title, "severity": severity, "component": component, "host": host},
-            "commonAnnotations": {"summary": body_txt},
-            "alerts": [{"labels": {"alertname": title, "host": host, "component": component}, "annotations": {"summary": body_txt}, "generatorURL": ""}],
-        });
-        (
-            parse_grafana_payload(&fake, &severity, &cfg),
-            HashMap::from([("component".into(), component), ("host".into(), host)]),
-        )
-    } else {
-        (
-            Parts {
-                title,
-                body: body_txt,
-                tags: vec![severity.clone(), "test".into()],
-                actions: vec![],
-                priority: cfg.priority(&severity),
-                alertname: String::new(),
-                skip_snooze: false,
-                render_slug: None,
-                render_panel: None,
-                render_instance: String::new(),
-                attach_url: None,
-                ntfy_sequence_id: None,
-                emergency_ack_url: None,
-                emergency_ack_token: None,
-            },
-            HashMap::new(),
-        )
-    };
+    let (parts, labels) = api_test_delivery(input, &severity, &cfg);
     let with_cascade = state.cascade_runtime_enabled.load(Ordering::Relaxed);
     let (ok, channel) = deliver(
         state,
@@ -211,6 +217,47 @@ pub(super) async fn api_test(state: &AppState, path: &str, body: Bytes) -> Respo
     )
     .await;
     json_response(json!({"ok": ok, "channel": channel, "title": parts.title}))
+}
+
+fn api_test_delivery(
+    input: ApiTestInput,
+    severity: &str,
+    cfg: &crate::config::RuntimeConfig,
+) -> (Parts, HashMap<String, String>) {
+    if input.component.is_empty() && input.host.is_empty() {
+        return (
+            Parts {
+                title: input.title,
+                body: input.body,
+                tags: vec![severity.to_string(), "test".into()],
+                actions: vec![],
+                priority: cfg.priority(severity),
+                alertname: String::new(),
+                skip_snooze: false,
+                render_slug: None,
+                render_panel: None,
+                render_instance: String::new(),
+                attach_url: None,
+                ntfy_sequence_id: None,
+                emergency_ack_url: None,
+                emergency_ack_token: None,
+            },
+            HashMap::new(),
+        );
+    }
+    let fake = json!({
+        "status": "firing",
+        "commonLabels": {"alertname": input.title, "severity": severity, "component": input.component, "host": input.host},
+        "commonAnnotations": {"summary": input.body},
+        "alerts": [{"labels": {"alertname": input.title, "host": input.host, "component": input.component}, "annotations": {"summary": input.body}, "generatorURL": ""}],
+    });
+    (
+        parse_grafana_payload(&fake, severity, cfg),
+        HashMap::from([
+            ("component".into(), input.component),
+            ("host".into(), input.host),
+        ]),
+    )
 }
 
 pub(super) fn ack_response(state: &AppState, path: &str) -> Response<Body> {

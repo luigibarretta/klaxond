@@ -20,10 +20,14 @@ npm run release:check
 npm run test:e2e
 ```
 
-The matrix deliberately starts a clean local server for Chromium, Firefox, and WebKit in sequence. This prevents configuration mutations in one browser run from leaking into the next one.
+The matrix deliberately starts a clean local server for Chromium, Firefox,
+desktop WebKit, and the WebKit-based Mobile Safari device profile in sequence.
+This prevents configuration mutations in one browser run from leaking into the
+next one.
 
 `npm run test:e2e` runs the portable UI suite, including the full virtual
-passkey lifecycle, in Chromium, Firefox and WebKit. Public numbered releases
+passkey lifecycle, in Chromium, Firefox, desktop WebKit and an iPhone device
+profile. Public numbered releases
 additionally require the physical Safari/macOS and iOS smoke tests documented
 in `docs/browser-support.md`; private maintainer tags do not satisfy or waive
 that public-platform gate.

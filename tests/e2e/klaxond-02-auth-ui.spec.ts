@@ -6,6 +6,7 @@ import {
   createAdminBearer,
   enableBasicAuth,
   exportConfigBundle,
+  openSidebar,
   restoreConfigBundle,
 } from "./klaxond-helpers";
 
@@ -32,7 +33,6 @@ test("MFA step-up policy can be configured from authentication UI", async ({ pag
 
   try {
     await page.goto("/authentication");
-    await page.click('[data-tab="auth"]');
     await expect(page.locator("#tab-auth")).toBeVisible();
     await expect(page.locator('[data-i18n="auth.mfa_step_up_title"]')).toHaveText("MFA / step-up");
     await page.check("#auth-step-up-required");
@@ -192,6 +192,7 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
   });
 
   await page.goto("/");
+  await openSidebar(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "light");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator("#gbase")).toHaveText("https://grafana.example.com");
@@ -224,6 +225,7 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
   await expect(page.locator('[data-theme-mode-option="dark"]')).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
+  await openSidebar(page);
   await page.click('[data-theme-mode-option="system"]');
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "system");
   await expect(page.locator("html")).toHaveAttribute("data-theme", /^(light|dark)$/);

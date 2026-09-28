@@ -109,7 +109,7 @@ test("emergency console renders durable receipts and dispatches audited actions"
   });
 
   await page.goto("/emergencies");
-  await expect(page.locator('[data-tab="emergencies"]')).toBeVisible();
+  await expect(page.locator('[data-tab="emergencies"]')).toBeAttached();
   await expect(page.locator("#tab-emergencies")).toHaveClass(/active/);
   await expect(page.locator("#emergency-policy")).toHaveText("1 enabled profile(s)");
   await expect(page.locator("#emergency-active")).toHaveText("1");

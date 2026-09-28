@@ -5,16 +5,29 @@ use url::Url;
 const EMERGENCY_LEASE_MARGIN_SECONDS: u64 = 5;
 
 pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
+    cfg.delivery.validate().map_err(anyhow::Error::msg)?;
+    validate_render_urls(cfg)?;
+    if !cfg.emergency.enabled {
+        return Ok(());
+    }
+    validate_emergency_urls(cfg)?;
+    let max_ntfy_targets = validate_ntfy_targets(cfg)?;
+    let (telegram_ready, smtp_ready) = validate_fallbacks(cfg)?;
+    validate_profile_fallbacks(cfg, telegram_ready, smtp_ready)?;
+    validate_leases(cfg, max_ntfy_targets, telegram_ready, smtp_ready)
+}
+
+fn validate_render_urls(cfg: &RuntimeConfig) -> Result<()> {
     validate_http_url("render.grafana_base", &cfg.grafana_base, true, true)?;
     for (source, value) in &cfg.source_urls {
         if !value.trim().is_empty() {
             validate_http_url(&format!("render.source_urls.{source}"), value, true, false)?;
         }
     }
-    if !cfg.emergency.enabled {
-        return Ok(());
-    }
+    Ok(())
+}
 
+fn validate_emergency_urls(cfg: &RuntimeConfig) -> Result<()> {
     validate_http_url(
         "server.public_url",
         &cfg.public_url,
@@ -26,48 +39,26 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
         &cfg.ntfy_url,
         cfg.emergency.allow_insecure_public_url,
         false,
-    )?;
+    )
+}
 
-    let mut max_ntfy_targets = 0_u64;
-    let known_severities = cfg
+fn validate_ntfy_targets(cfg: &RuntimeConfig) -> Result<u64> {
+    let known = cfg
         .known_severities()
         .into_iter()
         .filter(|severity| severity != "resolved")
         .collect::<Vec<_>>();
-    let routed_severities = cfg
+    let routed = cfg
         .emergency
         .profiles
         .iter()
         .filter(|profile| profile.enabled)
-        .flat_map(|profile| {
-            if profile.severities.is_empty() {
-                known_severities.clone()
-            } else {
-                profile
-                    .severities
-                    .iter()
-                    .flat_map(|matcher| {
-                        if let Some(pattern) = matcher.strip_prefix("re:") {
-                            regex::Regex::new(pattern)
-                                .map(|regex| {
-                                    known_severities
-                                        .iter()
-                                        .filter(|severity| regex.is_match(severity))
-                                        .cloned()
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default()
-                        } else {
-                            vec![matcher.clone()]
-                        }
-                    })
-                    .collect()
-            }
-        })
+        .flat_map(|profile| routed_profile_severities(profile, &known))
         .collect::<std::collections::HashSet<_>>();
-    for severity in &routed_severities {
+    let mut maximum = 0;
+    for severity in routed {
         let targets = cfg
-            .topics_for(severity)
+            .topics_for(&severity)
             .into_iter()
             .filter(|topic| !topic.name.trim().is_empty() && !topic.token.trim().is_empty())
             .count() as u64;
@@ -75,9 +66,34 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
             targets > 0,
             "emergency severity '{severity}' requires an ntfy topic with a publish token"
         );
-        max_ntfy_targets = max_ntfy_targets.max(targets);
+        maximum = maximum.max(targets);
     }
+    Ok(maximum)
+}
 
+fn routed_profile_severities(profile: &super::EmergencyProfile, known: &[String]) -> Vec<String> {
+    if profile.severities.is_empty() {
+        return known.to_vec();
+    }
+    profile
+        .severities
+        .iter()
+        .flat_map(|matcher| match matcher.strip_prefix("re:") {
+            Some(pattern) => regex::Regex::new(pattern)
+                .map(|regex| {
+                    known
+                        .iter()
+                        .filter(|value| regex.is_match(value))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            None => vec![matcher.clone()],
+        })
+        .collect()
+}
+
+fn validate_fallbacks(cfg: &RuntimeConfig) -> Result<(bool, bool)> {
     let telegram_any = !cfg.tg_token.trim().is_empty() || !cfg.tg_chat.trim().is_empty();
     let telegram_ready = !cfg.tg_token.trim().is_empty() && !cfg.tg_chat.trim().is_empty();
     ensure!(
@@ -92,7 +108,6 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
             false,
         )?;
     }
-
     let smtp_values = [
         cfg.smtp_host.trim(),
         cfg.smtp_user.trim(),
@@ -106,6 +121,24 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
         !smtp_any || smtp_ready,
         "emergency SMTP fallback is incomplete: configure host, user, password, from and to"
     );
+    Ok((telegram_ready, smtp_ready))
+}
+
+fn validate_profile_fallbacks(
+    cfg: &RuntimeConfig,
+    telegram_ready: bool,
+    smtp_ready: bool,
+) -> Result<()> {
+    let telegram_any = !cfg.tg_token.trim().is_empty() || !cfg.tg_chat.trim().is_empty();
+    let smtp_any = [
+        cfg.smtp_host.trim(),
+        cfg.smtp_user.trim(),
+        cfg.smtp_pass.trim(),
+        cfg.smtp_from.trim(),
+        cfg.smtp_to.trim(),
+    ]
+    .iter()
+    .any(|value| !value.is_empty());
     for profile in cfg
         .emergency
         .profiles
@@ -130,7 +163,15 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
             profile.id
         );
     }
+    Ok(())
+}
 
+fn validate_leases(
+    cfg: &RuntimeConfig,
+    max_ntfy_targets: u64,
+    telegram_ready: bool,
+    smtp_ready: bool,
+) -> Result<()> {
     let ntfy_budget = tier_timeout(cfg, "ntfy", 15).saturating_mul(max_ntfy_targets);
     for profile in cfg
         .emergency
@@ -138,7 +179,7 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
         .iter()
         .filter(|profile| profile.enabled)
     {
-        let required_lease = ntfy_budget
+        let required = ntfy_budget
             .saturating_add(if profile.telegram.enabled && telegram_ready {
                 tier_timeout(cfg, "telegram", 8)
             } else {
@@ -151,12 +192,11 @@ pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
             })
             .saturating_add(EMERGENCY_LEASE_MARGIN_SECONDS);
         ensure!(
-            profile.lease_seconds >= required_lease,
-            "emergency profile '{}' lease_seconds must be at least {required_lease} for the configured sequential channel timeouts",
+            profile.lease_seconds >= required,
+            "emergency profile '{}' lease_seconds must be at least {required} for the configured sequential channel timeouts",
             profile.id
         );
     }
-
     Ok(())
 }
 

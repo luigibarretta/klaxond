@@ -1,34 +1,4 @@
-use super::auth_sidecar::load_auth;
-use super::dedup_config::load_dedup;
-use super::ntfy_topics::load_ntfy_topics;
-use super::preflight::validate_runtime_config;
-use super::readers::{
-    read_delivery, read_emergency, read_history, read_inhibition_rules, read_schedules, read_tiers,
-};
-use super::render::{load_render_config, read_component_dashboards, read_component_image};
-use super::{
-    AuthConfig, DedupSetting, DeliveryConfig, EmergencyConfig, HistoryConfig, InhibitionRule,
-    NtfyTopic, Paths, RuntimeConfig, Schedule, Tier, bootstrap_config, custom_ingest_sources,
-    default_icons, default_priorities, default_tag_prefixes, default_tiers,
-};
-use crate::util::{env_bool, env_string, toml_bool, toml_get, toml_string};
-use anyhow::Result;
-use std::collections::HashMap;
-use std::fs;
-
-struct RenderRuntime {
-    priorities: HashMap<String, String>,
-    icons: HashMap<String, String>,
-    tag_prefixes: HashMap<String, String>,
-    fallback_runbooks: HashMap<String, String>,
-    source_urls: HashMap<String, String>,
-    component_dashboards: HashMap<String, [String; 2]>,
-    component_image: HashMap<String, (String, Option<u64>)>,
-    grafana_base: String,
-    grafana_render_base: String,
-    grafana_render_token: String,
-    render_image_ttl: u64,
-}
+mod render;
 
 struct RoutingRuntime {
     custom_ingest_sources: HashMap<String, String>,
@@ -76,78 +46,23 @@ fn read_toml(paths: &Paths) -> toml::Value {
     let text = fs::read_to_string(&paths.config).unwrap_or_default();
     toml::from_str(&text).unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
 }
-
-fn load_render(paths: &Paths, toml: &toml::Value) -> Result<RenderRuntime> {
-    let mut priorities = default_priorities();
-    merge_string_map(
-        &mut priorities,
-        toml_get(toml, &["render", "severity_priority"]),
-    );
-    let mut icons = default_icons();
-    merge_string_map(&mut icons, toml_get(toml, &["render", "severity_emoji"]));
-    let mut tag_prefixes = default_tag_prefixes();
-    merge_string_map(
-        &mut tag_prefixes,
-        toml_get(toml, &["render", "severity_tag_prefix"]),
-    );
-    let mut fallback_runbooks = HashMap::from([
-        ("beszel".to_string(), String::new()),
-        ("healthchecks".to_string(), String::new()),
-    ]);
-    merge_string_map(
-        &mut fallback_runbooks,
-        toml_get(toml, &["render", "fallback_runbooks"]),
-    );
-    let mut source_urls = HashMap::new();
-    merge_string_map(&mut source_urls, toml_get(toml, &["render", "source_urls"]));
-    for (source, env) in [
-        ("uptime-kuma", "KLAXOND_SOURCE_URL_UPTIME_KUMA"),
-        ("healthchecks", "KLAXOND_SOURCE_URL_HEALTHCHECKS"),
-        ("wud", "KLAXOND_SOURCE_URL_WUD"),
-        ("pve", "KLAXOND_SOURCE_URL_PVE"),
-        ("shelfmark", "KLAXOND_SOURCE_URL_SHELFMARK"),
-        ("prowlarr", "KLAXOND_SOURCE_URL_PROWLARR"),
-        ("decypharr", "KLAXOND_SOURCE_URL_DECYPHARR"),
-        ("revaulter", "KLAXOND_SOURCE_URL_REVAULTER"),
-    ] {
-        let value = env_string(env);
-        if !value.trim().is_empty() {
-            source_urls.insert(source.to_string(), value);
-        }
-    }
-    let seed = read_component_dashboards(toml_get(toml, &["render", "component_dashboards"]));
-    Ok(RenderRuntime {
-        priorities,
-        icons,
-        tag_prefixes,
-        fallback_runbooks,
-        source_urls,
-        component_dashboards: load_render_config(paths, &seed)?,
-        component_image: read_component_image(toml_get(toml, &["render", "component_image"])),
-        grafana_base: nonempty_env_or_toml("GRAFANA_BASE", toml, &["render", "grafana_base"])
-            .if_empty_else(|| "https://grafana.example.com".to_string())
-            .trim_end_matches('/')
-            .to_string(),
-        grafana_render_base: nonempty_env_or_toml(
-            "GRAFANA_RENDER_BASE",
-            toml,
-            &["render", "grafana_render_base"],
-        )
-        .trim_end_matches('/')
-        .to_string(),
-        grafana_render_token: nonempty_env_or_toml(
-            "GRAFANA_RENDER_TOKEN",
-            toml,
-            &["render", "grafana_render_token"],
-        ),
-        render_image_ttl: env_or_positive_toml_u64(
-            "RENDER_IMAGE_TTL",
-            toml,
-            &["render", "render_image_ttl"],
-            900,
-        ),
-    })
-}
+use self::render::{RenderRuntime, load_render};
+use super::auth_sidecar::load_auth;
+use super::dedup_config::load_dedup;
+use super::ntfy_topics::load_ntfy_topics;
+use super::preflight::validate_runtime_config;
+use super::readers::{
+    read_delivery, read_emergency, read_history, read_inhibition_rules, read_schedules, read_tiers,
+};
+use super::{
+    AuthConfig, DedupSetting, DeliveryConfig, EmergencyConfig, HistoryConfig, InhibitionRule,
+    NtfyTopic, Paths, RuntimeConfig, Schedule, Tier, bootstrap_config, custom_ingest_sources,
+    default_tiers,
+};
+use crate::util::{env_bool, env_string, toml_bool, toml_get, toml_string};
+use anyhow::Result;
+use std::collections::HashMap;
+use std::fs;
 
 fn load_routing(paths: &Paths, toml: &toml::Value) -> Result<RoutingRuntime> {
     let cascade_default = env_bool(

@@ -96,62 +96,40 @@ impl Paths {
         let toml_text = fs::read_to_string(&self.config).unwrap_or_default();
         let toml: toml::Value = toml::from_str(&toml_text)
             .unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()));
-        let config_dir = self.config.parent().unwrap_or_else(|| Path::new("."));
-        apply_toml_path(
-            &mut self.render_config,
-            "RENDER_CONFIG_PATH",
-            toml_get(&toml, &["paths", "render_config"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.ntfy_topics,
-            "NTFY_TOPICS_PATH",
-            toml_get(&toml, &["paths", "ntfy_topics"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.dedup_config,
-            "DEDUP_CONFIG_PATH",
-            toml_get(&toml, &["paths", "dedup_config"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.auth_config,
-            "AUTH_CONFIG_PATH",
-            toml_get(&toml, &["paths", "auth_config"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.auth_session_key,
-            "AUTH_SESSION_KEY_PATH",
-            toml_get(&toml, &["paths", "auth_session_key"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.backup_dir,
-            "KLAXOND_BACKUP_DIR",
-            toml_get(&toml, &["paths", "backup_dir"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.dedup_pending_dir,
-            "DEDUP_PENDING_DIR",
-            toml_get(&toml, &["paths", "dedup_pending_dir"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.beszel_db,
-            "BESZEL_DB_PATH",
-            toml_get(&toml, &["paths", "beszel_db"]),
-            config_dir,
-        );
-        apply_toml_path(
-            &mut self.history_db,
-            "KLAXOND_SQLITE_PATH",
-            toml_get(&toml, &["paths", "history_db"]),
-            config_dir,
-        );
+        let config_dir = self
+            .config
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+        apply_config_paths(&mut self, &toml, &config_dir);
         Ok(self)
+    }
+}
+fn apply_config_paths(paths: &mut Paths, toml: &toml::Value, config_dir: &Path) {
+    for (target, env_key, key) in [
+        (
+            &mut paths.render_config,
+            "RENDER_CONFIG_PATH",
+            "render_config",
+        ),
+        (&mut paths.ntfy_topics, "NTFY_TOPICS_PATH", "ntfy_topics"),
+        (&mut paths.dedup_config, "DEDUP_CONFIG_PATH", "dedup_config"),
+        (&mut paths.auth_config, "AUTH_CONFIG_PATH", "auth_config"),
+        (
+            &mut paths.auth_session_key,
+            "AUTH_SESSION_KEY_PATH",
+            "auth_session_key",
+        ),
+        (&mut paths.backup_dir, "KLAXOND_BACKUP_DIR", "backup_dir"),
+        (
+            &mut paths.dedup_pending_dir,
+            "DEDUP_PENDING_DIR",
+            "dedup_pending_dir",
+        ),
+        (&mut paths.beszel_db, "BESZEL_DB_PATH", "beszel_db"),
+        (&mut paths.history_db, "KLAXOND_SQLITE_PATH", "history_db"),
+    ] {
+        apply_toml_path(target, env_key, toml_get(toml, &["paths", key]), config_dir);
     }
 }
 

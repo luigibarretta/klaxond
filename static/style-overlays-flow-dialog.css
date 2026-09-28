@@ -1,0 +1,92 @@
+/* Keyboard shortcut help overlay (toggled by '?') */
+#shortcut-help {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+#shortcut-help .shortcut-help-inner {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 28px;
+  min-width: 320px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+/* ============================================================================
+ * Flow tab — animated arrows + pulse on recent activity (Mermaid v11)
+ * ============================================================================
+ * Mermaid v11 puts edges under <g class="edges"> with each edge as
+ * <g class="edge ..."><path class="flowchart-link ..."/></g>. Older
+ * versions used .edgePath which no longer exists. We target both for
+ * safety, plus the marker-end attribute (always present on arrows). */
+#flow-diagram.animate svg .edges path,
+#flow-diagram.animate svg .edge path,
+#flow-diagram.animate svg path.flowchart-link,
+#flow-diagram.animate svg path[marker-end] {
+  stroke-dasharray: 8 4;
+  animation: flow-dash 1.5s linear infinite;
+}
+/* Cascade-fallback edges are emitted by Mermaid with -.- syntax → end up
+ * with class containing 'dotted' or attribute stroke-dasharray pre-set.
+ * Distinguish them with a slower, reversed animation. */
+#flow-diagram.animate svg .edges .edge.edge-pattern-dashed path,
+#flow-diagram.animate svg .edges .edge.edge-pattern-dotted path,
+#flow-diagram.animate svg path.flowchart-link[stroke-dasharray] {
+  stroke-dasharray: 5 5;
+  animation: flow-dash 3s linear infinite reverse;
+}
+@keyframes flow-dash {
+  to { stroke-dashoffset: -24; }
+}
+/* Pulse node when recently active. v11 nodes are <g class="node ..."> with
+ * inner <rect> (regular) or <polygon> (rhombus/diamond shapes). */
+#flow-diagram .node.recent-activity rect,
+#flow-diagram .node.recent-activity polygon,
+#flow-diagram .node.recent-activity ellipse,
+#flow-diagram .node.recent-activity circle {
+  animation: flow-pulse 1.5s ease-in-out infinite;
+}
+@keyframes flow-pulse {
+  0%, 100% { filter: drop-shadow(0 0 0 transparent); }
+  50%      { filter: drop-shadow(0 0 8px #48bb78); }
+}
+/* Cursor pointer on clickable nodes (mermaid sets cursor:pointer in click; reinforce) */
+#flow-diagram .node[data-clickable] { cursor: pointer; }
+
+.app-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10020;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, #000 66%, transparent);
+}
+.app-dialog {
+  width: min(520px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 24px 72px var(--shadow);
+}
+.app-dialog h2 { margin: 0 0 10px; font-size: 18px; }
+.app-dialog-message { margin: 0 0 16px; white-space: pre-line; }
+.app-dialog-field { display: grid; gap: 5px; margin: 12px 0; }
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.app-dialog-secret { display: grid; gap: 8px; margin-top: 12px; }
+.app-dialog-secret textarea { min-height: 86px; font-family: ui-monospace, monospace; }
+.app-dialog-error { color: var(--red); margin: 10px 0 0; }
+.app-dialog-danger { border-top: 4px solid var(--red); }

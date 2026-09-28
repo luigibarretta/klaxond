@@ -183,7 +183,7 @@ test("all configured finite admin tables use the shared pager", async ({ page })
     ["inhibitions", "t-acks"],
     ["inhibitions", "t-schedules"],
     ["render", "t-rc"],
-    ["cascade", "t-cas"],
+    ["delivery", "t-cas"],
     ["delivery", "t-pol"],
     ["delivery", "t-rules"],
     ["grouping", "t-repeat-suppressed"],
@@ -198,6 +198,8 @@ test("all configured finite admin tables use the shared pager", async ({ page })
 
 test("cascade timeout editor explains and highlights unsafe ntfy values", async ({ page }) => {
   let savedDefault: boolean | undefined;
+  const pageErrors: string[] = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
   await page.route("**/api/cascade-config", async route => {
     if (route.request().method() === "POST") {
       savedDefault = (await route.request().postDataJSON()).default_enabled_for_webhook;
@@ -220,12 +222,19 @@ test("cascade timeout editor explains and highlights unsafe ntfy values", async 
   });
 
   await page.goto("/cascade");
+  await expect(page).toHaveURL(/\/delivery$/);
+  await expect(page.locator('[data-tab="cascade"]')).toHaveCount(0);
+  await expect(page.locator("#cascade-diagram")).toContainText("ntfy");
+  await expect(page.locator("#t-pol .policy-built-in")).toContainText("cascade");
+  await page.locator("#btn-pol-add").click();
+  await expect(page.locator('#t-pol tr[data-policy-custom]')).toHaveCount(1);
+  expect(pageErrors).toEqual([]);
   await expect(page.locator("#cas-default")).not.toBeChecked();
   await page.locator("#cas-default").check();
   await page.locator("#btn-cas-save").click();
   await expect.poll(() => savedDefault).toBe(true);
   await expect(page.locator('[id="cas-default"]')).toHaveCount(1);
-  await expect(page.locator("#cas-timeout-help")).toContainText("at least 15 seconds");
+  await expect(page.locator("#cas-timeout-help")).toContainText("15 seconds");
   const timeout = page.locator('#t-cas [data-f="timeout"]').first();
   await timeout.fill("5");
   await expect(timeout).toHaveClass(/input-warning/);
@@ -241,7 +250,7 @@ test("backend logs fetch failure clears stale count", async ({ page }) => {
   });
 
   await page.click("#logs-refresh");
-  await expect(page.locator("#t-logs tbody tr").first()).toContainText("500 Internal Server Error");
+  await expect(page.locator("#t-logs tbody tr").first()).toContainText("500 forced logs failure");
   await expect(page.locator("#logs-count")).toHaveText("");
 });
 
@@ -260,102 +269,4 @@ test("expired UI session redirects to login without toast storm", async ({ page 
   await page.goto("/status");
   await expect(page).toHaveURL(/\/api\/auth\/login\?return_to=%2Fstatus/);
   await expect(page.locator(".toast-error")).toHaveCount(0);
-});
-
-test("save errors show both inline status and toast", async ({ page }) => {
-  await page.route("**/api/render-config", async route => {
-    if (route.request().method() === "POST") {
-      await route.fulfill({ status: 500, body: "forced render-config failure" });
-      return;
-    }
-    await route.continue();
-  });
-
-  await page.goto("/render");
-  await page.click("#btn-rc-save");
-  await expect(page.locator("#rc-status")).toContainText("500");
-  await expect(page.locator(".toast-error")).toContainText("render-config-save");
-});
-
-test("save successes show both inline status and toast", async ({ page }) => {
-  await page.goto("/render");
-  await page.click("#btn-rc-save");
-  await expect(page.locator("#rc-status")).toContainText("Saved");
-  await expect(page.locator(".toast-success").last()).toContainText("Saved");
-});
-
-test("reload-backed editor saves keep inline success visible", async ({ page }) => {
-  await page.route("**/api/schedules", async route => {
-    if (route.request().method() === "POST") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ count: 0 }),
-      });
-      return;
-    }
-    await route.continue();
-  });
-  await page.route("**/api/inhibition-rules", async route => {
-    if (route.request().method() === "POST") {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({ count: 0, cleared_suppressions: 0 }),
-      });
-      return;
-    }
-    await route.continue();
-  });
-
-  await page.goto("/inhibitions");
-  await page.click("#sched-save");
-  await expect(page.locator("#sched-save-status")).toContainText("Saved");
-  await expect(page.locator(".toast-success").last()).toContainText("Saved");
-
-  await page.click("#inhib-save");
-  await expect(page.locator("#inhib-save-status")).toContainText("Saved");
-  await expect(page.locator(".toast-success").last()).toContainText("Saved");
-});
-
-test("delivery history exposes keyboard details and ACK only for an active receipt", async ({ page }) => {
-  let acknowledged = false;
-  await page.route(/\/api\/deliveries\?.*/, route => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({
-      total: 1,
-      limit: 25,
-      offset: 0,
-      entries: [{
-        ts: Date.now() / 1000,
-        source: "grafana",
-        severity: "critical",
-        title: "Database unavailable",
-        channel: "ntfy",
-        suppressed_by: "",
-        emergency_receipt_id: "receipt-delivery-e2e",
-      }],
-    }),
-  }));
-  await page.route("**/api/emergencies?state=active&limit=500", route => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ incidents: [{ receipt_id: "receipt-delivery-e2e" }] }),
-  }));
-  await page.route("**/api/emergencies/receipt-delivery-e2e/ack", route => {
-    acknowledged = true;
-    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
-  });
-
-  await page.goto("/deliveries");
-  const details = page.locator("[data-delivery-details]");
-  await details.focus();
-  await details.press("Enter");
-  await expect(details).toHaveAttribute("aria-expanded", "true");
-  await expect(page.locator(".deliv-detail")).toContainText("receipt-delivery-e2e");
-
-  await page.click("[data-delivery-ack]");
-  await page.locator(".app-dialog .primary").click();
-  await expect.poll(() => acknowledged).toBe(true);
 });

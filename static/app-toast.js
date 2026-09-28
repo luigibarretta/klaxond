@@ -113,8 +113,9 @@ export function notifyResponseError(key, res, bodyText = "", statusTarget = null
   notifyError(key, new Error(msg), { status: statusTarget });
 }
 
-export function notifyValidationError(key, message, statusTarget = null) {
-  notifyError(key, new Error(message), { status: statusTarget, inlineText: "❌ " + message });
+export function notifyValidationError(_key, message, statusTarget = null) {
+  if (statusTarget) setInlineStatus(statusTarget, "❌ " + message, "error");
+  showToast(message, "error");
 }
 
 export function fetchError(key, e) {

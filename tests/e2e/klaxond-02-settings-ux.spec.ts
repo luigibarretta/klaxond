@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { clickSidebarTab } from "./klaxond-helpers";
 
 test("authentication separates configuration drafts from operational actions", async ({ page }) => {
   await page.goto("/authentication");
@@ -59,7 +60,7 @@ test("routing tracks channel and topic drafts independently", async ({ page }) =
   await expect(saveChannels).toBeEnabled();
   await expect(saveTopics).toBeDisabled();
 
-  await page.locator('.tab[data-tab="routing"]').click();
+  await clickSidebarTab(page, "routing");
   await expect(ntfyUrl).toHaveValue(draftUrl);
   await expect(saveChannels).toBeEnabled();
 
@@ -85,10 +86,10 @@ test("routing tracks channel and topic drafts independently", async ({ page }) =
   await expect(page.locator("#routing-ingest-section")).toBeFocused();
 
   await ntfyUrl.fill(draftUrl);
-  await page.locator('.tab[data-tab="status"]').click();
+  await clickSidebarTab(page, "status");
   await page.locator(".app-dialog .danger").click();
   await expect(page).toHaveURL(/\/status$/);
-  await page.locator('.tab[data-tab="routing"]').click();
+  await clickSidebarTab(page, "routing");
   await expect(ntfyUrl).toHaveValue(originalUrl);
   await expect(saveChannels).toBeDisabled();
 });

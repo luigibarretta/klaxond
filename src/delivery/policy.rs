@@ -1,0 +1,186 @@
+use super::channels::{
+    post_to_ntfy_with_config, post_to_smtp_with_config, post_to_telegram_with_config,
+};
+use crate::config::{DeliveryPolicy, RuntimeConfig, Tier, default_tiers};
+use crate::parsers::Parts;
+use crate::state::AppState;
+use regex::Regex;
+use std::collections::HashMap;
+
+pub(super) struct DeliveryOutcome {
+    pub(super) ok: bool,
+    pub(super) channel: String,
+    pub(super) attempted: Vec<String>,
+    pub(super) tier_results: Vec<(String, bool)>,
+}
+
+impl DeliveryOutcome {
+    fn success(
+        channel: impl Into<String>,
+        attempted: Vec<String>,
+        tier_results: Vec<(String, bool)>,
+    ) -> Self {
+        Self {
+            ok: true,
+            channel: channel.into(),
+            attempted,
+            tier_results,
+        }
+    }
+
+    fn failed(
+        channel: impl Into<String>,
+        attempted: Vec<String>,
+        tier_results: Vec<(String, bool)>,
+    ) -> Self {
+        Self {
+            ok: false,
+            channel: channel.into(),
+            attempted,
+            tier_results,
+        }
+    }
+}
+
+pub(super) async fn dispatch(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    policy: DeliveryPolicy,
+    with_cascade: bool,
+) -> DeliveryOutcome {
+    if policy.mode == "broadcast" {
+        return deliver_broadcast(state, cfg, severity, parts, &policy).await;
+    }
+    deliver_cascade(state, cfg, severity, parts, policy, with_cascade).await
+}
+
+async fn deliver_broadcast(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    policy: &DeliveryPolicy,
+) -> DeliveryOutcome {
+    let mut attempted = Vec::new();
+    let mut succeeded = Vec::new();
+    let mut tier_results = Vec::new();
+    for tier in &policy.tiers {
+        let ok = post_tier(state, cfg, severity, parts, tier).await;
+        tier_results.push((tier.name.clone(), ok));
+        if ok {
+            succeeded.push(tier.name.clone());
+        }
+        attempted.push(tier.name.clone());
+    }
+    if succeeded.is_empty() {
+        DeliveryOutcome::failed("broadcast-all-failed", attempted, tier_results)
+    } else {
+        DeliveryOutcome::success(succeeded.join("+"), attempted, tier_results)
+    }
+}
+
+async fn deliver_cascade(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    policy: DeliveryPolicy,
+    with_cascade: bool,
+) -> DeliveryOutcome {
+    let tiers = if policy.tiers.is_empty() {
+        default_tiers()
+    } else {
+        policy.tiers
+    };
+    let mut attempted = Vec::new();
+    let mut tier_results = Vec::new();
+    for (index, tier) in tiers.iter().enumerate() {
+        attempted.push(tier.name.clone());
+        let ok = post_tier(state, cfg, severity, parts, tier).await;
+        tier_results.push((tier.name.clone(), ok));
+        if ok {
+            return DeliveryOutcome::success(tier.name.clone(), attempted, tier_results);
+        }
+        if index == 0 && !with_cascade {
+            return DeliveryOutcome::failed(
+                format!("{}-failed", tier.name),
+                attempted,
+                tier_results,
+            );
+        }
+    }
+    DeliveryOutcome::failed("all-failed", attempted, tier_results)
+}
+
+async fn post_tier(
+    state: &AppState,
+    cfg: &RuntimeConfig,
+    severity: &str,
+    parts: &Parts,
+    tier: &Tier,
+) -> bool {
+    match tier.name.as_str() {
+        "ntfy" => post_to_ntfy_with_config(state, cfg, severity, parts, tier.timeout_seconds).await,
+        "telegram" => {
+            post_to_telegram_with_config(state, cfg, severity, parts, tier.timeout_seconds).await
+        }
+        "smtp" => post_to_smtp_with_config(cfg, severity, parts, tier.timeout_seconds).await,
+        _ => false,
+    }
+}
+
+pub fn pick_policy(
+    cfg: &RuntimeConfig,
+    labels: &HashMap<String, String>,
+) -> (DeliveryPolicy, String) {
+    for (idx, rule) in cfg.delivery.rules.iter().enumerate() {
+        if matcher_matches(&rule.r#match, labels)
+            && let Some(policy) = resolve_policy(cfg, &rule.policy)
+        {
+            return (policy, format!("rule#{}→{}", idx + 1, rule.policy));
+        }
+    }
+    if let Some(policy) = resolve_policy(cfg, &cfg.delivery.default_policy) {
+        return (policy, format!("default→{}", cfg.delivery.default_policy));
+    }
+    (legacy_cascade_policy(cfg), "fallback→legacy".into())
+}
+
+fn resolve_policy(cfg: &RuntimeConfig, name: &str) -> Option<DeliveryPolicy> {
+    if name == "cascade" {
+        return Some(legacy_cascade_policy(cfg));
+    }
+    cfg.delivery
+        .policies
+        .iter()
+        .find(|policy| policy.name == name)
+        .cloned()
+}
+
+fn legacy_cascade_policy(cfg: &RuntimeConfig) -> DeliveryPolicy {
+    DeliveryPolicy {
+        name: "cascade".into(),
+        mode: "cascade".into(),
+        tiers: if cfg.tiers.is_empty() {
+            default_tiers()
+        } else {
+            cfg.tiers.clone()
+        },
+    }
+}
+
+fn matcher_matches(matcher: &HashMap<String, String>, labels: &HashMap<String, String>) -> bool {
+    matcher.iter().all(|(key, expected)| {
+        let actual = labels.get(key).map(String::as_str).unwrap_or("");
+        expected.strip_prefix("re:").map_or_else(
+            || actual == expected,
+            |pattern| {
+                Regex::new(pattern)
+                    .map(|regex| regex.is_match(actual))
+                    .unwrap_or(false)
+            },
+        )
+    })
+}

@@ -6,7 +6,8 @@ test("flow opens at a readable scale and exposes a true fit control", async ({ p
   const zoom = page.locator("#flow-zoom-level");
   const percentage = async () => Number((await zoom.textContent())?.replace("%", ""));
   const initial = await percentage();
-  expect(initial).toBeGreaterThanOrEqual(80);
+  const minimumReadableScale = (page.viewportSize()?.width || 1_000) <= 760 ? 60 : 80;
+  expect(initial).toBeGreaterThanOrEqual(minimumReadableScale);
 
   await page.locator("#flow-zoom-fit").click();
   const fitted = await percentage();

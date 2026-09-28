@@ -25,7 +25,7 @@ const UI_ROUTE_TO_TAB = new Map([
   ["setup", "setup"],
   ["render", "render"],
   ["routing", "routing"],
-  ["cascade", "cascade"],
+  ["cascade", "delivery"],
   ["delivery", "delivery"],
   ["grouping", "grouping"],
   ["authentication", "auth"],
@@ -34,6 +34,7 @@ const UI_ROUTE_TO_TAB = new Map([
   ["test", "test"],
 ]);
 const UI_TAB_TO_ROUTE = new Map(Array.from(UI_ROUTE_TO_TAB, ([route, tab]) => [tab, route]));
+const LEGACY_UI_ALIASES = new Map([["cascade", "delivery"]]);
 const DEFAULT_TAB = "status";
 const _tabActivationHandlers = new Map();
 
@@ -167,7 +168,8 @@ export function updateAllTabAccessibleLabels() {
 
 export function tabFromLocation() {
   const legacyHash = (location.hash || "").replace(/^#/, "");
-  if (isKnownTab(legacyHash)) return { tabId: legacyHash, canonicalize: true };
+  const hashTab = LEGACY_UI_ALIASES.get(legacyHash) || legacyHash;
+  if (isKnownTab(hashTab)) return { tabId: hashTab, canonicalize: true };
 
   const pathname = location.pathname.replace(/\/+$/, "") || "/";
   if (pathname === "/" || pathname === "/ui" || pathname === "/ui/index.html") {
@@ -184,8 +186,9 @@ export function tabFromLocation() {
   }
 
   const match = pathname.match(/^\/ui\/([^/]+)$/);
-  if (match && isKnownTab(match[1])) {
-    return { tabId: match[1], canonicalize: pathname !== canonicalPath(match[1]) || !!location.hash };
+  const legacyTab = match ? LEGACY_UI_ALIASES.get(match[1]) || match[1] : "";
+  if (match && isKnownTab(legacyTab)) {
+    return { tabId: legacyTab, canonicalize: pathname !== canonicalPath(legacyTab) || !!location.hash };
   }
 
   const rootMatch = pathname.match(/^\/([^/]+)$/);

@@ -1,89 +1,83 @@
-import { $, J, debounce, errorText, escapeHtml, fetchError, navigateToTab, notifyError, queryGet, tr } from "./app.js";
+import {
+  $,
+  J,
+  debounce,
+  errorText,
+  escapeHtml,
+  fetchError,
+  navigateToTab,
+  notifyError,
+  queryGet,
+  tr,
+} from "./app.js";
 import { buildMermaidDiagram, sourceNodeId } from "./app-flow-diagram.js";
 import { renderFlowStructure } from "./app-flow-structure.js";
 import { buildFlowSteps } from "./app-flow-steps.js";
 import { fetchDeliveryActivity } from "./app-status.js";
-
-// Make tab-switcher callable from outside (mermaid click handlers).
-// Use the SPA router so the path stays in sync with the active pane.
+import { renderFlowSummary } from "./app-flow-summary.js";
 function switchToTab(name) {
   if (!navigateToTab(name)) {
-    // Fallback: direct DOM update if the button doesn't exist (defensive)
-    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
-    document.querySelectorAll(".tabpane").forEach(s => s.classList.toggle("active", s.id === `tab-${name}`));
+    document
+      .querySelectorAll(".tab")
+      .forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+    document
+      .querySelectorAll(".tabpane")
+      .forEach((s) => s.classList.toggle("active", s.id === `tab-${name}`));
   }
 }
-window.flowGotoTab = switchToTab;  // expose to mermaid click callbacks
-
+window.flowGotoTab = switchToTab;
 let _flowMermaidInitialized = false;
 let _flowZoom = 1;
 let _flowNaturalSize = null;
-
-// Wait for mermaid.min.js to finish loading (3.3MB async script).
-// Returns true if library is available within timeoutMs, false otherwise.
-async function _waitForMermaid(timeoutMs = 15000) {
+async function _waitForMermaid(timeoutMs = 15e3) {
   if (window.mermaid) return true;
   const t0 = Date.now();
   $("#flow-status").textContent = tr("flow.loading_mermaid");
   while (!window.mermaid) {
     if (Date.now() - t0 > timeoutMs) return false;
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
   }
   return true;
 }
 
-export async function loadFlow(options = {}) {
-  if (!await _waitForMermaid()) {
-    $("#flow-status").textContent = tr("flow.mermaid_timeout");
-    return;
-  }
-  if (!_flowMermaidInitialized) {
-    mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "loose" });
-    _flowMermaidInitialized = true;
-  }
-  $("#flow-status").textContent = tr("flow.fetching_config");
-  let cfgs = {}, stats = null;
-  try {
-    const [channel, cascade, delivery, ntfy, dedup, auth, render, ingest, inhibition, emergency, activity] = await Promise.all([
-      queryGet("flow-channel-config", "/api/channel-config", { cancelPrevious: false }),
-      queryGet("flow-cascade-config", "/api/cascade-config", { cancelPrevious: false }),
-      queryGet("flow-delivery-config", "/api/delivery-config", { cancelPrevious: false }),
-      queryGet("flow-ntfy-topics", "/api/ntfy-topics", { cancelPrevious: false }),
-      queryGet("flow-dedup-config", "/api/dedup-config", { cancelPrevious: false }),
-      J("/api/auth/config"),
-      queryGet("flow-render-config", "/api/render-config", { cancelPrevious: false }),
-      queryGet("flow-ingest-auth", "/api/ingest-auth", { cancelPrevious: false }),
-      queryGet("flow-inhibition-rules", "/api/inhibition-rules", { cancelPrevious: false }),
-      queryGet("flow-emergency-config", "/api/emergency-config", { cancelPrevious: false }),
-      fetchDeliveryActivity(24, { scope: "flow-delivery-activity" }).catch(error => {
-        fetchError("flow-delivery-activity", error);
-        return null;
-      }),
-    ]);
-    cfgs = { channel, cascade, delivery, ntfy, dedup, auth, render, ingest, inhibition, emergency };
-    stats = activity ? {
-      bySource: activity.by_source || {},
-      bySeverity: activity.by_severity || {},
-      byChannel: activity.by_channel || {},
-      lastBySource: activity.latest_by_source || {},
-      lastByChannel: activity.latest_by_channel || {},
-    } : null;
-    _renderFlowSummary(cfgs);
-    renderFlowStructure(buildFlowSteps(cfgs, stats));
-  } catch (e) {
-    notifyError("flow-config", e, { status: "#flow-status", inlineText: tr("flow.config_fetch_failed", { message: errorText(e) }) });
-    return;
-  }
-  const src = buildMermaidDiagram(cfgs, stats);
-  $("#flow-source").textContent = src;
+async function fetchFlowConfiguration() {
+  const [channel, cascade, delivery, ntfy, dedup, auth, render, ingest, inhibition, emergency, activity] = await Promise.all([
+    queryGet("flow-channel-config", "/api/channel-config", { cancelPrevious: false }),
+    queryGet("flow-cascade-config", "/api/cascade-config", { cancelPrevious: false }),
+    queryGet("flow-delivery-config", "/api/delivery-config", { cancelPrevious: false }),
+    queryGet("flow-ntfy-topics", "/api/ntfy-topics", { cancelPrevious: false }),
+    queryGet("flow-dedup-config", "/api/dedup-config", { cancelPrevious: false }),
+    J("/api/auth/config"),
+    queryGet("flow-render-config", "/api/render-config", { cancelPrevious: false }),
+    queryGet("flow-ingest-auth", "/api/ingest-auth", { cancelPrevious: false }),
+    queryGet("flow-inhibition-rules", "/api/inhibition-rules", { cancelPrevious: false }),
+    queryGet("flow-emergency-config", "/api/emergency-config", { cancelPrevious: false }),
+    fetchDeliveryActivity(24, { scope: "flow-delivery-activity" }).catch((error) => {
+      fetchError("flow-delivery-activity", error);
+      return null;
+    }),
+  ]);
+  return {
+    cfgs: { channel, cascade, delivery, ntfy, dedup, auth, render, ingest, inhibition, emergency },
+    stats: activity
+      ? {
+          bySource: activity.by_source || {},
+          bySeverity: activity.by_severity || {},
+          byChannel: activity.by_channel || {},
+          lastBySource: activity.latest_by_source || {},
+          lastByChannel: activity.latest_by_channel || {},
+        }
+      : null,
+  };
+}
+
+async function renderFlowDiagram(src, stats, options) {
   try {
     const viewport = $("#flow-diagram");
-    const previous = options.preserveViewport ? {
-      zoom: _flowZoom,
-      left: viewport?.scrollLeft || 0,
-      top: viewport?.scrollTop || 0,
-    } : null;
-    const { svg, bindFunctions } = await mermaid.render("flow-svg-" + Date.now(), src);
+    const previous = options.preserveViewport
+      ? { zoom: _flowZoom, left: viewport?.scrollLeft || 0, top: viewport?.scrollTop || 0 }
+      : null;
+    const { svg, bindFunctions } = await mermaid.render(`flow-svg-${Date.now()}`, src);
     viewport.innerHTML = '<div class="flow-canvas"></div>';
     const canvas = viewport.querySelector(".flow-canvas");
     canvas.innerHTML = svg;
@@ -93,61 +87,79 @@ export async function loadFlow(options = {}) {
       viewport.scrollLeft = previous.left;
       viewport.scrollTop = previous.top;
     }
-    // Apply animation class based on toolbar toggle
     $("#flow-diagram")?.classList.toggle("animate", !!$("#flow-animate")?.checked);
-    // Pulse nodes that had any activity in the last 60s
     _pulseRecentActivityNodes(stats);
-    $("#flow-status").textContent = tr("flow.rendered_at", { time: new Date().toLocaleTimeString() });
+    $("#flow-status").textContent = tr("flow.rendered_at", {
+      time: new Date().toLocaleTimeString(),
+    });
   } catch (e) {
-    notifyError("flow-render", e, { status: "#flow-status", inlineText: tr("flow.render_failed") });
-    $("#flow-diagram").innerHTML = `<pre style="color:#c44">Mermaid render error: ${escapeHtml(errorText(e))}</pre>`;
+    notifyError("flow-render", e, {
+      status: "#flow-status",
+      inlineText: tr("flow.render_failed"),
+    });
+    $("#flow-diagram").innerHTML =
+      `<pre style="color:#c44">Mermaid render error: ${escapeHtml(errorText(e))}</pre>`;
     $("#flow-status").textContent = tr("flow.render_failed");
   }
 }
 
-function _renderFlowSummary(cfgs) {
-  const target = $("#flow-config-summary");
-  if (!target) return;
-  const sourceCount = Object.values(cfgs.ingest?.sources || {}).filter(source => source?.configured).length;
-  const inhibitionCount = (cfgs.inhibition?.rules || []).length;
-  const policyCount = (cfgs.delivery?.policies || []).length + 1;
-  const profileCount = (cfgs.emergency?.settings?.profiles || []).filter(profile => profile.enabled).length;
-  const items = [
-    ["/routing", tr("flow.summary_sources", { count: sourceCount })],
-    ["/inhibitions", tr("flow.summary_inhibitions", { count: inhibitionCount })],
-    ["/delivery", tr("flow.summary_policies", { count: policyCount })],
-    ["/emergencies", tr("flow.summary_emergencies", { count: profileCount })],
-  ];
-  target.innerHTML = items.map(([href, label]) => `<a class="flow-summary-chip" href="${href}">${escapeHtml(label)}</a>`).join("");
+export async function loadFlow(options = {}) {
+  if (!(await _waitForMermaid())) {
+    $("#flow-status").textContent = tr("flow.mermaid_timeout");
+    return;
+  }
+  if (!_flowMermaidInitialized) {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: "dark",
+      securityLevel: "loose",
+    });
+    _flowMermaidInitialized = true;
+  }
+  $("#flow-status").textContent = tr("flow.fetching_config");
+  let cfgs = {};
+  let stats = null;
+  try {
+    ({ cfgs, stats } = await fetchFlowConfiguration());
+    renderFlowSummary(cfgs);
+    renderFlowStructure(buildFlowSteps(cfgs, stats));
+  } catch (e) {
+    notifyError("flow-config", e, {
+      status: "#flow-status",
+      inlineText: tr("flow.config_fetch_failed", { message: errorText(e) }),
+    });
+    return;
+  }
+  const src = buildMermaidDiagram(cfgs, stats);
+  $("#flow-source").textContent = src;
+  await renderFlowDiagram(src, stats, options);
 }
-
 const _NODE_FOR_CHANNEL = { ntfy: "NTFY", telegram: "TG", smtp: "SMTP" };
-
 function _pulseRecentActivityNodes(stats) {
-  // Clear previous pulse markers
-  $("#flow-diagram")?.querySelectorAll(".node.recent-activity").forEach(n => n.classList.remove("recent-activity"));
+  $("#flow-diagram")
+    ?.querySelectorAll(".node.recent-activity")
+    .forEach((n) => n.classList.remove("recent-activity"));
   if (!stats) return;
-  // Compute activity in last 60s (re-fetch a fresh slice for live feel)
-  // Use what we have from /api/deliveries; cutoff at 60s window
   const activeNodes = new Set();
-  const cutoff = Date.now() / 1000 - 60;
+  const cutoff = Date.now() / 1e3 - 60;
   for (const [src, timestamp] of Object.entries(stats.lastBySource || {})) {
     if (timestamp >= cutoff) activeNodes.add(sourceNodeId(src));
   }
   for (const [chan, timestamp] of Object.entries(stats.lastByChannel || {})) {
-    if (timestamp >= cutoff && _NODE_FOR_CHANNEL[chan]) activeNodes.add(_NODE_FOR_CHANNEL[chan]);
+    if (timestamp >= cutoff && _NODE_FOR_CHANNEL[chan])
+      activeNodes.add(_NODE_FOR_CHANNEL[chan]);
   }
-  activeNodes.forEach(id => {
-    const n = $("#flow-diagram")?.querySelector(`[id$="-${id}"], [id$="-${id}-1"]`);
+  activeNodes.forEach((id) => {
+    const n = $("#flow-diagram")?.querySelector(
+      `[id$="-${id}"], [id$="-${id}-1"]`,
+    );
     if (n) n.classList.add("recent-activity");
   });
 }
-
 async function refreshFlowStats() {
-  if (!$("#flow-diagram")?.querySelector("svg")) return;  // no diagram yet
+  if (!$("#flow-diagram")?.querySelector("svg")) return;
   await loadFlow({ preserveViewport: true });
 }
-
 function _prepareFlowZoom(zoom) {
   const svg = $("#flow-diagram")?.querySelector("svg");
   if (!svg) return;
@@ -170,7 +182,6 @@ function _prepareFlowZoom(zoom) {
   }
   _applyFlowZoom();
 }
-
 function _applyFlowZoom() {
   const viewport = $("#flow-diagram");
   const canvas = viewport?.querySelector(".flow-canvas");
@@ -189,26 +200,29 @@ function _applyFlowZoom() {
   if ($("#flow-zoom-out")) $("#flow-zoom-out").disabled = _flowZoom <= 0.5;
   if ($("#flow-zoom-in")) $("#flow-zoom-in").disabled = _flowZoom >= 5;
 }
-
 function _changeFlowZoom(delta) {
-  _flowZoom = Math.max(0.5, Math.min(5, Math.round((_flowZoom + delta) * 100) / 100));
+  _flowZoom = Math.max(
+    0.5,
+    Math.min(5, Math.round((_flowZoom + delta) * 100) / 100),
+  );
   _applyFlowZoom();
 }
-
 let _flowAutorefreshTimer = null;
 export function setupFlowAutorefresh() {
-  if (_flowAutorefreshTimer) { clearInterval(_flowAutorefreshTimer); _flowAutorefreshTimer = null; }
+  if (_flowAutorefreshTimer) {
+    clearInterval(_flowAutorefreshTimer);
+    _flowAutorefreshTimer = null;
+  }
   if ($("#flow-autorefresh")?.checked) {
-    _flowAutorefreshTimer = setInterval(refreshFlowStats, 30000);
+    _flowAutorefreshTimer = setInterval(refreshFlowStats, 3e4);
   }
 }
-
 $("#flow-refresh")?.addEventListener("click", () => loadFlow());
-$("#flow-animate")?.addEventListener("change", e => {
+$("#flow-animate")?.addEventListener("change", (e) => {
   $("#flow-diagram")?.classList.toggle("animate", e.target.checked);
 });
 $("#flow-autorefresh")?.addEventListener("change", setupFlowAutorefresh);
-$("#flow-show-source")?.addEventListener("change", e => {
+$("#flow-show-source")?.addEventListener("change", (e) => {
   $("#flow-source")?.classList.toggle("hidden", !e.target.checked);
 });
 $("#flow-zoom-out")?.addEventListener("click", () => _changeFlowZoom(-0.25));
@@ -218,19 +232,36 @@ $("#flow-zoom-fit")?.addEventListener("click", () => {
   _applyFlowZoom();
   $("#flow-diagram")?.scrollTo({ left: 0, top: 0 });
 });
-$("#flow-diagram")?.addEventListener("wheel", event => {
+$("#flow-diagram")?.addEventListener(
+  "wheel",
+  (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    _changeFlowZoom(event.deltaY < 0 ? 0.25 : -0.25);
+  },
+  { passive: false },
+);
+$("#flow-diagram")?.addEventListener("keydown", (event) => {
   if (!event.ctrlKey && !event.metaKey) return;
-  event.preventDefault();
-  _changeFlowZoom(event.deltaY < 0 ? 0.25 : -0.25);
-}, { passive: false });
-$("#flow-diagram")?.addEventListener("keydown", event => {
-  if (!event.ctrlKey && !event.metaKey) return;
-  if (["+", "="].includes(event.key)) { event.preventDefault(); _changeFlowZoom(0.25); }
-  if (event.key === "-") { event.preventDefault(); _changeFlowZoom(-0.25); }
-  if (event.key === "0") { event.preventDefault(); _flowZoom = 1; _applyFlowZoom(); }
+  if (["+", "="].includes(event.key)) {
+    event.preventDefault();
+    _changeFlowZoom(0.25);
+  }
+  if (event.key === "-") {
+    event.preventDefault();
+    _changeFlowZoom(-0.25);
+  }
+  if (event.key === "0") {
+    event.preventDefault();
+    _flowZoom = 1;
+    _applyFlowZoom();
+  }
 });
 window.addEventListener("resize", debounce(_applyFlowZoom));
-if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches && $("#flow-animate")) {
+if (
+  window.matchMedia?.("(prefers-reduced-motion: reduce)").matches &&
+  $("#flow-animate")
+) {
   $("#flow-animate").checked = false;
 }
 $("#flow-download-svg")?.addEventListener("click", () => {
@@ -240,16 +271,22 @@ $("#flow-download-svg")?.addEventListener("click", () => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "klaxond-flow-" + new Date().toISOString().split("T")[0] + ".svg";
+  a.download =
+    "klaxond-flow-" + new Date().toISOString().split("T")[0] + ".svg";
   a.click();
   URL.revokeObjectURL(url);
 });
-document.querySelectorAll('[data-tab="flow"]').forEach(btn => {
-  btn.addEventListener("click", () => { loadFlow(); setupFlowAutorefresh(); });
-});
-// Stop autorefresh when leaving the tab (any tab click)
-document.querySelectorAll('.tab:not([data-tab="flow"])').forEach(btn => {
+document.querySelectorAll('[data-tab="flow"]').forEach((btn) => {
   btn.addEventListener("click", () => {
-    if (_flowAutorefreshTimer) { clearInterval(_flowAutorefreshTimer); _flowAutorefreshTimer = null; }
+    loadFlow();
+    setupFlowAutorefresh();
+  });
+});
+document.querySelectorAll('.tab:not([data-tab="flow"])').forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (_flowAutorefreshTimer) {
+      clearInterval(_flowAutorefreshTimer);
+      _flowAutorefreshTimer = null;
+    }
   });
 });

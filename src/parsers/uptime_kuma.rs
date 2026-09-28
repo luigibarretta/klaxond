@@ -11,6 +11,49 @@ pub fn parse_uptime_kuma_payload(
     let heartbeat = payload.get("heartbeat").unwrap_or(&Value::Null);
     let monitor = payload.get("monitor").unwrap_or(&Value::Null);
     let status = heartbeat.get("status").and_then(Value::as_i64);
+    let (severity, state) = uptime_state(status, route_severity);
+    let name = monitor
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("Uptime Kuma");
+    let title = format!("{} Kuma {state}: {name}", cfg.icon(&severity));
+    let tags = if severity == "resolved" {
+        vec![cfg.tag_prefix("resolved"), "uptime-kuma".into()]
+    } else {
+        vec![
+            cfg.tag_prefix(&severity),
+            severity.clone(),
+            "uptime-kuma".into(),
+        ]
+    };
+    let priority = if severity == "resolved" {
+        "low".into()
+    } else {
+        cfg.priority(&severity)
+    };
+    (
+        severity,
+        Parts {
+            title,
+            body: uptime_body(payload, heartbeat, monitor, status, state),
+            tags,
+            actions: uptime_actions(cfg),
+            priority,
+            alertname: format!("uptime-kuma-{name}"),
+            skip_snooze: status == Some(1),
+            render_slug: None,
+            render_panel: None,
+            render_instance: String::new(),
+            attach_url: None,
+            ntfy_sequence_id: None,
+            emergency_ack_url: None,
+            emergency_ack_token: None,
+        },
+    )
+}
+
+fn uptime_state(status: Option<i64>, route_severity: &str) -> (String, &'static str) {
     let severity = match status {
         Some(1) => "resolved",
         Some(2 | 3) => "info",
@@ -28,13 +71,16 @@ pub fn parse_uptime_kuma_payload(
         Some(3) => "MAINTENANCE",
         _ => "NOTICE",
     };
-    let name = monitor
-        .get("name")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("Uptime Kuma");
-    let title = format!("{} Kuma {state}: {name}", cfg.icon(&severity));
+    (severity, state)
+}
 
+fn uptime_body(
+    payload: &Value,
+    heartbeat: &Value,
+    monitor: &Value,
+    status: Option<i64>,
+    state: &str,
+) -> String {
     let mut body = Vec::new();
     if let Some(message) = heartbeat
         .get("msg")
@@ -74,21 +120,10 @@ pub fn parse_uptime_kuma_payload(
     if body.is_empty() {
         body.push(format!("Status: {state}"));
     }
+    body.join("\n")
+}
 
-    let tags = if severity == "resolved" {
-        vec![cfg.tag_prefix("resolved"), "uptime-kuma".into()]
-    } else {
-        vec![
-            cfg.tag_prefix(&severity),
-            severity.clone(),
-            "uptime-kuma".into(),
-        ]
-    };
-    let priority = if severity == "resolved" {
-        "low".into()
-    } else {
-        cfg.priority(&severity)
-    };
+fn uptime_actions(cfg: &RuntimeConfig) -> Vec<super::Action> {
     let mut actions = Vec::new();
     if let Some(url) = cfg.source_url("uptime-kuma") {
         actions.push(action("view", "📈 Open Uptime Kuma", url));
@@ -101,25 +136,7 @@ pub fn parse_uptime_kuma_payload(
         };
         actions.push(action("view", "🔋 Power & UPS", &url));
     }
-    (
-        severity,
-        Parts {
-            title,
-            body: body.join("\n"),
-            tags,
-            actions,
-            priority,
-            alertname: format!("uptime-kuma-{name}"),
-            skip_snooze: status == Some(1),
-            render_slug: None,
-            render_panel: None,
-            render_instance: String::new(),
-            attach_url: None,
-            ntfy_sequence_id: None,
-            emergency_ack_url: None,
-            emergency_ack_token: None,
-        },
-    )
+    actions
 }
 
 fn monitor_target(monitor: &Value) -> Option<String> {

@@ -2,9 +2,7 @@ use super::*;
 use std::fs;
 use tempfile::TempDir;
 
-fn emergency_config(extra: &str) -> String {
-    format!(
-        r#"
+const EMERGENCY_CONFIG_TEMPLATE: &str = r#"
 [server]
 public_url = "https://klaxond.example.test"
 
@@ -33,8 +31,10 @@ notify_on_expiry = true
 auto_resolve = true
 exclude_sources = ["api-test"]
 {extra}
-"#
-    )
+"#;
+
+fn emergency_config(extra: &str) -> String {
+    EMERGENCY_CONFIG_TEMPLATE.replace("{extra}", extra)
 }
 
 #[test]
@@ -154,4 +154,27 @@ pve = "https://admin:secret@proxmox.example.test/"
 
     let error = load_runtime_config(&paths).unwrap_err().to_string();
     assert!(error.contains("render.source_urls.pve must not contain credentials"));
+}
+
+#[test]
+fn delivery_preflight_rejects_invalid_rule_regex() {
+    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    clear_runtime_env();
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    fs::write(
+        &paths.config,
+        r#"
+[[delivery.rules]]
+policy = "cascade"
+
+[delivery.rules.match]
+host = "re:["
+"#,
+    )
+    .unwrap();
+
+    let error = load_runtime_config(&paths).unwrap_err().to_string();
+    assert!(error.contains("delivery rule 1"));
+    assert!(error.contains("invalid regex"));
 }

@@ -4,7 +4,14 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
-type Labels = HashMap<String, String>;
+mod integrations;
+
+use self::integrations::{
+    normalize_decypharr_labels, normalize_github_labels, normalize_prowlarr_labels,
+    normalize_pve_labels, normalize_revaulter_labels, normalize_shelfmark_labels,
+};
+
+pub(super) type Labels = HashMap<String, String>;
 
 pub fn normalize_labels(source: &str, payload: &Value) -> Labels {
     let mut out = HashMap::from([
@@ -203,119 +210,7 @@ fn normalize_authentik_labels(payload: &Value, out: &mut Labels) {
     out.insert("job".into(), "authentik".into());
 }
 
-fn normalize_shelfmark_labels(payload: &Value, out: &mut Labels) {
-    let evt = first_non_empty(&[
-        json_get_str(payload, "event"),
-        json_get_str(payload, "type"),
-    ]);
-    out.insert(
-        "alertname".into(),
-        if evt.is_empty() {
-            "shelfmark".into()
-        } else {
-            format!("shelfmark-{evt}")
-        },
-    );
-    let user = payload
-        .get("user")
-        .map(scalar_to_string)
-        .or_else(|| {
-            payload
-                .get("data")
-                .and_then(|d| d.get("user"))
-                .map(scalar_to_string)
-        })
-        .unwrap_or_default();
-    if !user.is_empty() {
-        out.insert("host".into(), user);
-    }
-    out.insert("job".into(), "shelfmark".into());
-}
-
-fn normalize_prowlarr_labels(payload: &Value, out: &mut Labels) {
-    let evt = json_get_str(payload, "eventType").trim();
-    out.insert("alertname".into(), source_alertname("prowlarr", evt));
-    out.insert(
-        "host".into(),
-        json_get_str(payload, "instanceName")
-            .if_empty("prowlarr")
-            .to_string(),
-    );
-    out.insert("job".into(), "prowlarr".into());
-}
-
-fn normalize_decypharr_labels(payload: &Value, out: &mut Labels) {
-    let evt = json_get_str(payload, "event").trim();
-    out.insert("alertname".into(), source_alertname("decypharr", evt));
-    out.insert(
-        "host".into(),
-        json_get_str(payload, "debrid")
-            .if_empty("decypharr")
-            .to_string(),
-    );
-    out.insert("job".into(), "decypharr".into());
-}
-
-fn normalize_pve_labels(payload: &Value, out: &mut Labels) {
-    out.insert(
-        "host".into(),
-        json_get_str(payload, "node").if_empty("pve").to_string(),
-    );
-    let ntype = json_get_str(payload, "type");
-    out.insert(
-        "alertname".into(),
-        if ntype.is_empty() {
-            "pve-notification".into()
-        } else {
-            format!("pve-{ntype}")
-        },
-    );
-    out.insert("service".into(), ntype.to_string());
-    out.insert("job".into(), "pve".into());
-}
-
-fn normalize_github_labels(payload: &Value, out: &mut Labels) {
-    let repository = json_get_str(payload, "repository").trim();
-    if !repository.is_empty() {
-        out.insert("repository".into(), repository.into());
-    }
-    let issue_number = payload
-        .get("issue_number")
-        .map(scalar_to_string)
-        .unwrap_or_default();
-    if !issue_number.is_empty() {
-        out.insert("issue_number".into(), issue_number);
-    }
-    let actor = json_get_str(payload, "comment_author").trim();
-    if !actor.is_empty() {
-        out.insert("actor".into(), actor.into());
-    }
-    out.insert("alertname".into(), "github-issue-comment".into());
-    out.insert("job".into(), "github".into());
-}
-
-fn normalize_revaulter_labels(payload: &Value, out: &mut Labels) {
-    let host = json_get_str(payload, "host").trim();
-    if !host.is_empty() {
-        out.insert("host".into(), host.into());
-    }
-    let event = json_get_str(payload, "event").trim();
-    if !event.is_empty() {
-        out.insert("event".into(), event.into());
-    }
-    out.insert("alertname".into(), "revaulter-approval-required".into());
-    out.insert("job".into(), "revaulter".into());
-}
-
 fn is_resolved_status(payload: &Value, values: &[&str]) -> bool {
     let status = json_get_str(payload, "status").to_ascii_lowercase();
     values.iter().any(|value| status == *value)
-}
-
-fn source_alertname(source: &str, event: &str) -> String {
-    if event.is_empty() {
-        source.into()
-    } else {
-        format!("{source}-{event}")
-    }
 }
