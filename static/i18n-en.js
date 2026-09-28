@@ -2,6 +2,7 @@ import { EN_AUTH_MESSAGES } from "./i18n-en-auth.js";
 import { EN_DASHBOARD_MESSAGES } from "./i18n-en-dashboard.js";
 import { buildEnglishLegalMessages } from "./i18n-en-legal.js";
 import { buildEnglishOperationalMessages } from "./i18n-en-operational.js";
+import { EN_WORKFLOW_MESSAGES } from "./i18n-en-workflows.js";
 const EN_STATIC_MESSAGES = {
   "app.title": "Klaxond — Reliable alert delivery",
   "app.tagline": "Reliable alerts. Less noise.",
@@ -503,5 +504,6 @@ export function buildEnglishMessages({ authorLink }) {
     ...buildEnglishOperationalMessages(),
     ...EN_DASHBOARD_MESSAGES,
     ...EN_AUTH_MESSAGES,
+    ...EN_WORKFLOW_MESSAGES,
   };
 }

@@ -9,6 +9,28 @@ use axum::http::{Response, StatusCode};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+pub(in crate::handlers) fn inhibition_regex_validate(body: Bytes) -> Response<Body> {
+    let Ok(payload) = json_body(&body) else {
+        return text(StatusCode::BAD_REQUEST, "bad json");
+    };
+    let pattern = payload
+        .get("pattern")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if pattern.is_empty() {
+        return text(StatusCode::BAD_REQUEST, "pattern is required");
+    }
+    match regex::Regex::new(pattern) {
+        Ok(_) => json_response(json!({"valid": true})),
+        Err(error) => {
+            let mut response = json_response(json!({"valid": false, "error": error.to_string()}));
+            *response.status_mut() = StatusCode::BAD_REQUEST;
+            response
+        }
+    }
+}
+
 pub(in crate::handlers) fn inhibition_rules_test(state: &AppState, body: Bytes) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {
         return text(StatusCode::BAD_REQUEST, "bad json");
@@ -210,4 +232,20 @@ pub(in crate::handlers) fn policy_simulate(state: &AppState, body: Bytes) -> Res
             "rules": [],
         })),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn regex_validation_uses_the_backend_regex_engine() {
+        let rust_inline_flags =
+            inhibition_regex_validate(Bytes::from_static(br#"{"pattern":"(?i)blackbox"}"#));
+        assert_eq!(rust_inline_flags.status(), StatusCode::OK);
+
+        let unsupported_lookahead =
+            inhibition_regex_validate(Bytes::from_static(br#"{"pattern":"(?=blackbox)"}"#));
+        assert_eq!(unsupported_lookahead.status(), StatusCode::BAD_REQUEST);
+    }
 }

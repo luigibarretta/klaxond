@@ -1,4 +1,10 @@
-import { applyTablePager, showTableRowPage, tr } from "./app.js";
+import { applyTablePager, markTabDirty, showTableRowPage, tr } from "./app.js";
+import { scheduleRegexValidation } from "./app-inhibitions-regex.js";
+import {
+  appendAppliesToCell, selectedSources, updateSourcePickerSummary,
+} from "./app-inhibitions-scope.js";
+
+let feedbackSequence = 0;
 
 function matchTypeOf(rule) {
   if (rule.match_all) return "match_all";
@@ -24,6 +30,30 @@ function makeInput({ type = "text", value = "", dataKey, placeholder, ariaLabel 
   return input;
 }
 
+function humanDuration(seconds) {
+  const value = Number(seconds) || 0;
+  if (value >= 3600 && value % 3600 === 0) return tr("inhib.duration_hours", { count: value / 3600 });
+  return tr("inhib.duration_minutes", { count: Math.max(1, Math.round(value / 60)) });
+}
+
+function rulePreview(row) {
+  const get = key => row.querySelector(`[data-k="${key}"]`);
+  const source = get("source")?.value.trim() || "…";
+  const matchType = get("match_type")?.value || "match_by";
+  const label = get("match_label")?.value.trim() || "…";
+  const regex = get("match_regex")?.value.trim() || "…";
+  const sources = selectedSources(row);
+  const scope = sources.length ? sources.join(", ") : tr("inhib.scope_all").toLocaleLowerCase();
+  const duration = humanDuration(get("ttl_seconds")?.value);
+  if (matchType === "match_all") {
+    return tr("inhib.preview_all", { source, scope, duration });
+  }
+  if (matchType === "match_label") {
+    return tr("inhib.preview_regex", { source, scope, label, regex, duration });
+  }
+  return tr("inhib.preview_match_by", { source, scope, label, duration });
+}
+
 function appendSourceCell(row, rule) {
   const input = makeInput({
     value: rule.source || "",
@@ -31,7 +61,7 @@ function appendSourceCell(row, rule) {
     placeholder: "e.g. node-down",
     ariaLabel: tr("inhib.rule_name"),
   });
-  input.addEventListener("input", () => markInhibitionRowValidity(row));
+  input.addEventListener("input", () => updateInhibitionRowFeedback(row));
   row.appendChild(makeCell(input, tr("common.source")));
 }
 
@@ -64,7 +94,7 @@ function appendMatchValueCell(row, rule, select, matchType) {
     ariaLabel: tr("inhib.label_name"),
   });
   labelInput.setAttribute("list", "inhib-label-suggestions");
-  labelInput.addEventListener("input", () => markInhibitionRowValidity(row));
+  labelInput.addEventListener("input", () => updateInhibitionRowFeedback(row));
 
   const eqSign = document.createElement("span");
   eqSign.textContent = "=";
@@ -77,7 +107,10 @@ function appendMatchValueCell(row, rule, select, matchType) {
     placeholder: "^blackbox-.*",
     ariaLabel: tr("inhib.regex"),
   });
-  regexInput.addEventListener("input", () => markInhibitionRowValidity(row));
+  regexInput.addEventListener("input", () => {
+    scheduleRegexValidation(row);
+    updateInhibitionRowFeedback(row);
+  });
 
   const hint = document.createElement("span");
   hint.className = "muted inhib-match-all-hint";
@@ -88,12 +121,28 @@ function appendMatchValueCell(row, rule, select, matchType) {
   wrap.appendChild(regexInput);
   wrap.appendChild(hint);
   cell.appendChild(wrap);
+  const preview = document.createElement("p");
+  const feedbackId = ++feedbackSequence;
+  preview.className = "inhib-rule-preview";
+  preview.dataset.inhibPreview = "";
+  preview.id = `inhib-preview-${feedbackId}`;
+  preview.setAttribute("aria-label", tr("inhib.preview_label"));
+  const validation = document.createElement("small");
+  validation.className = "inhib-validation";
+  validation.dataset.inhibValidation = "";
+  validation.id = `inhib-validation-${feedbackId}`;
+  validation.setAttribute("role", "status");
+  labelInput.setAttribute("aria-describedby", `${preview.id} ${validation.id}`);
+  regexInput.setAttribute("aria-describedby", `${preview.id} ${validation.id}`);
+  cell.appendChild(preview);
+  cell.appendChild(validation);
   row.appendChild(cell);
 
   applyMatchType(matchType, labelInput, eqSign, regexInput, hint);
   select.addEventListener("change", () => {
     applyMatchType(select.value, labelInput, eqSign, regexInput, hint);
-    markInhibitionRowValidity(row);
+    if (select.value === "match_label") scheduleRegexValidation(row);
+    updateInhibitionRowFeedback(row);
   });
 }
 
@@ -103,32 +152,6 @@ function applyMatchType(value, labelInput, eqSign, regexInput, hint) {
   regexInput.hidden = value !== "match_label";
   hint.hidden = value !== "match_all";
   labelInput.placeholder = value === "match_label" ? "job" : "host";
-}
-
-function appendAppliesToCell(row, rule, availableSources) {
-  const cell = document.createElement("td");
-  cell.dataset.label = tr("common.applies_to");
-  const wrap = document.createElement("div");
-  wrap.dataset.k = "applies_to";
-  wrap.className = "inhib-source-options";
-  const selected = new Set(rule.applies_to || []);
-  for (const source of availableSources) {
-    const label = document.createElement("label");
-    label.className = "inhib-source-option";
-    const checkbox = document.createElement("input");
-    checkbox.type = "checkbox";
-    checkbox.value = source;
-    checkbox.checked = selected.has(source);
-    label.appendChild(checkbox);
-    label.appendChild(document.createTextNode(" " + source));
-    wrap.appendChild(label);
-  }
-  const allHint = document.createElement("small");
-  allHint.className = "muted inhib-cell-hint";
-  allHint.textContent = tr("inhib.empty_all_sources");
-  cell.appendChild(wrap);
-  cell.appendChild(allHint);
-  row.appendChild(cell);
 }
 
 function appendTtlCell(row, rule) {
@@ -143,7 +166,7 @@ function appendTtlCell(row, rule) {
   });
   input.min = "30";
   input.max = "86400";
-  input.addEventListener("input", () => markInhibitionRowValidity(row));
+  input.addEventListener("input", () => updateInhibitionRowFeedback(row));
   wrap.appendChild(input);
 
   for (const [label, seconds] of [["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600]]) {
@@ -154,7 +177,8 @@ function appendTtlCell(row, rule) {
     button.title = tr("inhib.set_ttl", { value: label });
     button.addEventListener("click", () => {
       input.value = seconds;
-      markInhibitionRowValidity(row);
+      updateInhibitionRowFeedback(row);
+      markTabDirty("inhibitions", true);
     });
     wrap.appendChild(button);
   }
@@ -184,6 +208,7 @@ function appendActionCell(row, availableSources) {
   remove.addEventListener("click", () => {
     row.remove();
     applyTablePager("t-inhib-rules");
+    markTabDirty("inhibitions", true);
   });
 
   wrap.appendChild(duplicate);
@@ -198,6 +223,7 @@ function duplicateRow(row, availableSources) {
   const clone = createInhibitionRuleRow(snapshot, availableSources);
   row.parentNode.insertBefore(clone, row.nextSibling);
   showTableRowPage("t-inhib-rules", clone);
+  markTabDirty("inhibitions", true);
 }
 
 function rowSnapshot(row) {
@@ -206,9 +232,7 @@ function rowSnapshot(row) {
   const snapshot = {
     source: get("source").value.trim(),
     ttl_seconds: parseInt(get("ttl_seconds").value || "900", 10),
-    applies_to: Array.from(row.querySelectorAll('[data-k="applies_to"] input[type=checkbox]'))
-      .filter(cb => cb.checked)
-      .map(cb => cb.value),
+    applies_to: selectedSources(row),
   };
   if (matchType === "match_by") snapshot.match_by = get("match_label").value.trim();
   else if (matchType === "match_label") {
@@ -223,57 +247,100 @@ function rowSnapshot(row) {
 export function createInhibitionRuleRow(rule, availableSources) {
   const row = document.createElement("tr");
   row.classList.add("inhib-rule-row");
+  row.addEventListener("klaxond:regex-validation", () => updateInhibitionRowFeedback(row));
   const matchType = matchTypeOf(rule);
 
   appendSourceCell(row, rule);
   const select = appendMatchTypeCell(row, matchType);
   appendMatchValueCell(row, rule, select, matchType);
-  appendAppliesToCell(row, rule, availableSources);
+  appendAppliesToCell(row, rule, availableSources, () => updateInhibitionRowFeedback(row));
   appendTtlCell(row, rule);
   appendActionCell(row, availableSources);
 
-  markInhibitionRowValidity(row);
+  updateInhibitionRowFeedback(row);
+  if (matchType === "match_label" && rule.match_regex) scheduleRegexValidation(row);
   return row;
 }
 
-export function validateInhibitionRuleRow(row) {
+function inhibitionRowValidation(row) {
   const get = k => row.querySelector(`[data-k="${k}"]`);
   const source = get("source").value.trim();
-  if (!source) return "source name is required";
+  if (!source) return { field: "source", message: tr("inhib.error_source_required") };
   const matchType = get("match_type").value;
   if (matchType === "match_by") {
-    if (!get("match_label").value.trim()) return "label name is required for match_by";
+    if (!get("match_label").value.trim()) return { field: "match_label", message: tr("inhib.error_label_required") };
   } else if (matchType === "match_label") {
-    if (!get("match_label").value.trim()) return "label name is required";
+    if (!get("match_label").value.trim()) return { field: "match_label", message: tr("inhib.error_label_required") };
     const regex = get("match_regex").value.trim();
-    if (!regex) return "regex is required";
-    try {
-      new RegExp(regex);
-    } catch (e) {
-      return "invalid regex: " + e.message;
+    if (!regex) return { field: "match_regex", message: tr("inhib.error_regex_required") };
+    if (row.dataset.regexValue === regex && row.dataset.regexState === "invalid") {
+      return { field: "match_regex", message: tr("inhib.error_regex_invalid", {
+        message: row.dataset.regexError || tr("inhib.regex_error_unknown"),
+      }) };
     }
   }
   const ttl = parseInt(get("ttl_seconds").value || "0", 10);
-  if (!Number.isFinite(ttl) || ttl < 30 || ttl > 86400) return "TTL must be 30..86400 seconds";
+  if (!Number.isFinite(ttl) || ttl < 30 || ttl > 86400) {
+    return { field: "ttl_seconds", message: tr("inhib.error_ttl") };
+  }
   return null;
 }
 
-function markInhibitionRowValidity(row) {
-  const error = validateInhibitionRuleRow(row);
-  if (error) row.dataset.invalid = error;
+export function validateInhibitionRuleRow(row) {
+  return inhibitionRowValidation(row)?.message || null;
+}
+
+function updateInhibitionRowFeedback(row) {
+  const error = inhibitionRowValidation(row);
+  row.querySelectorAll("[aria-invalid], [aria-errormessage]").forEach(input => {
+    input.removeAttribute("aria-invalid");
+    input.removeAttribute("aria-errormessage");
+  });
+  if (error) {
+    row.dataset.invalid = error.message;
+    const field = row.querySelector(`[data-k="${error.field}"]`);
+    field?.setAttribute("aria-invalid", "true");
+    field?.setAttribute("aria-errormessage", row.querySelector("[data-inhib-validation]")?.id || "");
+  }
   else delete row.dataset.invalid;
+  const preview = row.querySelector("[data-inhib-preview]");
+  if (preview) preview.textContent = rulePreview(row);
+  const validation = row.querySelector("[data-inhib-validation]");
+  if (validation) {
+    const matchType = row.querySelector('[data-k="match_type"]')?.value;
+    const regex = row.querySelector('[data-k="match_regex"]')?.value.trim();
+    const currentState = row.dataset.regexValue === regex ? row.dataset.regexState : "";
+    const regexStatus = currentState === "pending"
+      ? tr("inhib.regex_checking")
+      : currentState === "valid"
+        ? tr("inhib.valid_regex")
+        : currentState === "unavailable"
+          ? tr("inhib.regex_validation_unavailable")
+          : "";
+    validation.textContent = error?.message || (matchType === "match_label" && regex ? regexStatus : "");
+    validation.classList.toggle("is-error", Boolean(error));
+  }
 }
 
 export function collectInhibitionRulesFromTable() {
   const rows = document.querySelectorAll("#t-inhib-rules tbody tr.inhib-rule-row");
   const rules = [];
   for (const row of rows) {
+    updateInhibitionRowFeedback(row);
     const error = validateInhibitionRuleRow(row);
     if (error) {
       const source = row.querySelector('[data-k="source"]').value.trim() || "(unnamed)";
+      row.querySelector('[aria-invalid="true"]')?.focus();
       return { error: `rule "${source}": ${error}` };
     }
     rules.push(rowSnapshot(row));
   }
   return { rules };
+}
+
+export function refreshInhibitionRuleRows() {
+  document.querySelectorAll("#t-inhib-rules tbody tr.inhib-rule-row").forEach(row => {
+    updateSourcePickerSummary(row);
+    updateInhibitionRowFeedback(row);
+  });
 }

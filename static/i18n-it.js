@@ -2,6 +2,7 @@ import { IT_AUTH_MESSAGES } from "./i18n-it-auth.js";
 import { IT_DASHBOARD_MESSAGES } from "./i18n-it-dashboard.js";
 import { buildItalianLegalMessages } from "./i18n-it-legal.js";
 import { buildItalianOperationalMessages } from "./i18n-it-operational.js";
+import { IT_WORKFLOW_MESSAGES } from "./i18n-it-workflows.js";
 const IT_STATIC_MESSAGES = {
   "app.title": "Klaxond — Consegna affidabile degli alert",
   "app.tagline": "Alert affidabili. Meno rumore.",
@@ -501,5 +502,6 @@ export function buildItalianMessages({ authorLink }) {
     ...buildItalianOperationalMessages(),
     ...IT_DASHBOARD_MESSAGES,
     ...IT_AUTH_MESSAGES,
+    ...IT_WORKFLOW_MESSAGES,
   };
 }

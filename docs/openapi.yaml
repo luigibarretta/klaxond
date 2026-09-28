@@ -2211,6 +2211,39 @@ paths:
                 type: object
         "4XX":
           $ref: "#/components/responses/ClientError"
+  /api/inhibition-rules/validate-regex:
+    post:
+      tags: [Policy]
+      operationId: validateInhibitionRegex
+      summary: Validate an inhibition pattern with Klaxond's Rust regex engine.
+      security:
+        - bearerAuth: []
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [pattern]
+              properties:
+                pattern:
+                  type: string
+                  minLength: 1
+      responses:
+        "200":
+          description: The pattern is valid.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid]
+                properties:
+                  valid:
+                    type: boolean
+                    const: true
+        "4XX":
+          $ref: "#/components/responses/ClientError"
   /api/inhibitions/clear:
     post:
       tags: [Policy]

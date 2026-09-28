@@ -12,8 +12,8 @@ use super::passkeys::{
     passkey_register_start, passkey_step_up_register_start,
 };
 use super::rules::{
-    clear_acks, clear_inhibitions, inhibition_rules_test, policy_simulate, update_inhibition_rules,
-    update_schedules,
+    clear_acks, clear_inhibitions, inhibition_regex_validate, inhibition_rules_test,
+    policy_simulate, update_inhibition_rules, update_schedules,
 };
 use super::step_up::{step_up_totp_setup_confirm, step_up_totp_setup_start, step_up_totp_verify};
 use crate::auth::{self, AuthOutcome, User};
@@ -211,6 +211,7 @@ async fn handle_post(state: &AppState, req: PostRequest<'_>) -> Response<Body> {
         "/api/acks/clear" => clear_acks(state, body),
         "/api/inhibitions/clear" => clear_inhibitions(state, body),
         "/api/inhibition-rules/test" => inhibition_rules_test(state, body),
+        "/api/inhibition-rules/validate-regex" => inhibition_regex_validate(body),
         "/api/policy-simulate" => policy_simulate(state, body),
         _ if path.starts_with("/api/auth") => StatusCode::NOT_FOUND.into_response(),
         _ if path.starts_with("/api/test/") => api_test(state, path, body).await,

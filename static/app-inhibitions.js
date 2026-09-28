@@ -6,7 +6,10 @@ import {
   showTableRowPage, syncTabFromPath, tr, updateAllTabAccessibleLabels, updatePublicLoginLinksText,
 } from "./app.js";
 import { clearAllSuppressions, loadAcks, loadInhib } from "./app-inhibitions-active.js";
-import { collectInhibitionRulesFromTable, createInhibitionRuleRow } from "./app-inhibitions-row.js";
+import {
+  collectInhibitionRulesFromTable, createInhibitionRuleRow, refreshInhibitionRuleRows,
+} from "./app-inhibitions-row.js";
+import { validateAllInhibitionRegexes } from "./app-inhibitions-regex.js";
 export { loadAcks, loadInhib };
 
 async function testInhibitionRule() {
@@ -63,6 +66,49 @@ export { loadSchedules } from "./app-inhibitions-schedules.js";
 // ---- Inhibition rules (CRUD) ----
 let _inhibAvailableSources = [];
 
+const INHIBITION_PRESETS = {
+  same_host: { source: "node-down", ttl_seconds: 3600, applies_to: [], match_by: "host" },
+  same_service: { source: "service-down", ttl_seconds: 1800, applies_to: [], match_by: "service" },
+  job_regex: { source: "target-down", ttl_seconds: 1800, applies_to: [], match_label: "job", match_regex: "^blackbox-.*" },
+};
+
+function appendInhibitionRule(rule) {
+  const tb = $("#t-inhib-rules tbody");
+  if (!tb) return;
+  const row = createInhibitionRuleRow(rule, _inhibAvailableSources);
+  tb.appendChild(row);
+  applyTablePager("t-inhib-rules", { page: "last" });
+  showTableRowPage("t-inhib-rules", row);
+  markTabDirty("inhibitions", true);
+}
+
+function installInhibitionPresetControl(addButton) {
+  if (!addButton || document.getElementById("inhib-preset")) return;
+  const control = document.createElement("div");
+  control.className = "inhib-preset-control";
+  control.innerHTML = `
+    <label>
+      <span>${escapeHtml(tr("inhib.preset_label"))}</span>
+      <select id="inhib-preset" data-dirty-ignore>
+        <option value="same_host">${escapeHtml(tr("inhib.preset_same_host"))}</option>
+        <option value="same_service">${escapeHtml(tr("inhib.preset_same_service"))}</option>
+        <option value="job_regex">${escapeHtml(tr("inhib.preset_job_regex"))}</option>
+      </select>
+    </label>
+    <button type="button" class="btn" id="inhib-preset-add">${escapeHtml(tr("inhib.add_preset"))}</button>`;
+  addButton.insertAdjacentElement("beforebegin", control);
+  control.querySelector("#inhib-preset-add")?.addEventListener("click", () => {
+    const preset = INHIBITION_PRESETS[control.querySelector("#inhib-preset")?.value];
+    if (preset) appendInhibitionRule({ ...preset, applies_to: [...preset.applies_to] });
+  });
+}
+
+function refreshInhibitionEditorLanguage(addButton) {
+  document.getElementById("inhib-preset")?.closest(".inhib-preset-control")?.remove();
+  installInhibitionPresetControl(addButton);
+  refreshInhibitionRuleRows();
+}
+
 export async function loadInhibRules() {
   try {
     const data = await queryGet("inhibition-rules", "/api/inhibition-rules");
@@ -75,6 +121,7 @@ export async function loadInhibRules() {
 }
 
 async function saveInhibRules() {
+  await validateAllInhibitionRegexes();
   const collected = collectInhibitionRulesFromTable();
   const status = $("#inhib-save-status");
   if (collected.error) {
@@ -108,13 +155,12 @@ onReady(() => {
   const add = document.getElementById("inhib-add");
   const save = document.getElementById("inhib-save");
   const clearAll = document.getElementById("inhib-clear-all");
+  installInhibitionPresetControl(add);
+  document.addEventListener("klaxond:languagechange", () => refreshInhibitionEditorLanguage(add));
   if (add) add.addEventListener("click", () => {
-    const tb = $("#t-inhib-rules tbody");
-    tb.appendChild(createInhibitionRuleRow(
+    appendInhibitionRule(
       {source: "", ttl_seconds: 900, applies_to: [], match_by: ""},
-      _inhibAvailableSources,
-    ));
-    applyTablePager("t-inhib-rules", { page: "last" });
+    );
   });
   if (save) save.addEventListener("click", saveInhibRules);
   if (clearAll) clearAll.addEventListener("click", clearAllSuppressions);

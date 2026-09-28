@@ -210,6 +210,7 @@ pub const ENDPOINT_POLICIES: &[EndpointPolicy] = &[
         "config.inhibition_rules.update",
     ),
     exempt_mutation("/api/inhibition-rules/test", "inhibitions:write"),
+    exempt_mutation("/api/inhibition-rules/validate-regex", "inhibitions:write"),
     sensitive_mutation(
         "/api/inhibitions/clear",
         "inhibitions:write",

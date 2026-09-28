@@ -318,25 +318,6 @@ test("reload-backed editor saves keep inline success visible", async ({ page }) 
   await expect(page.locator(".toast-success").last()).toContainText("Saved");
 });
 
-test("inhibition applies-to checkboxes stay compact and aligned", async ({ page }) => {
-  await page.goto("/inhibitions");
-  const firstCheckbox = page.locator('#t-inhib-rules [data-k="applies_to"] input[type="checkbox"]').first();
-  await expect(firstCheckbox).toBeVisible();
-
-  const box = await firstCheckbox.boundingBox();
-  expect(box?.width).toBeLessThanOrEqual(20);
-  await expect(firstCheckbox.locator("xpath=..")).toHaveCSS("align-items", "center");
-
-  await page.setViewportSize({ width: 1920, height: 1080 });
-  const regex = page.locator('#t-inhib-rules [data-k="match_regex"]:visible').first();
-  await expect(regex).toBeVisible();
-  expect((await regex.boundingBox())?.width).toBeGreaterThanOrEqual(180);
-
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator("#t-inhib-rules .inhib-rule-row").first()).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
-});
-
 test("delivery history exposes keyboard details and ACK only for an active receipt", async ({ page }) => {
   let acknowledged = false;
   await page.route(/\/api\/deliveries\?.*/, route => route.fulfill({

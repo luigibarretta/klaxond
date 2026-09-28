@@ -212,6 +212,11 @@ test("direct flow refresh initializes without frontend TDZ errors", async ({ pag
   await expect(page.locator("#flow-source")).toContainText("SRC_REVAULTER");
   await expect(page.locator("#flow-source")).not.toContainText("SRC_DECYPHARR");
   await expect(page.locator("#flow-config-summary")).toContainText("Enabled sources: 4");
+  await expect(page.locator("#flow-config-summary")).toContainText("Delivery policies:");
+  await expect(page.locator("#flow-route-list .flow-route-step").first()).toContainText("Inbound sources (4)");
+  await page.click('[data-flow-step="policy-selector"]');
+  await expect(page.locator("#flow-step-inspector")).toContainText("Delivery policy selection");
+  await expect(page.locator("#flow-step-inspector a")).toHaveAttribute("href", "/delivery");
 
   await page.click("#flow-zoom-in");
   await expect(page.locator("#flow-zoom-level")).toHaveText("125%");
@@ -253,13 +258,33 @@ test("flow topology follows enabled sources and configured delivery tiers", asyn
     contentType: "application/json",
     body: JSON.stringify({ topics: [] }),
   }));
+  await page.route("**/api/delivery-config", route => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({
+      default_policy: "broadcast-all",
+      policies: [{
+        name: "broadcast-all",
+        mode: "broadcast",
+        tiers: [
+          { name: "smtp", timeout_seconds: 10 },
+          { name: "telegram", timeout_seconds: 8 },
+        ],
+      }],
+      rules: [{ match: { severity: "critical" }, policy: "cascade" }],
+      legacy_cascade_tiers: [{ name: "ntfy", timeout_seconds: 15 }],
+    }),
+  }));
 
   await page.goto("/flow");
   await expect(page.locator("#flow-source")).toContainText("SRC_GITHUB");
   await expect(page.locator("#flow-source")).not.toContainText("SRC_GRAFANA");
-  await expect(page.locator("#flow-source")).toContainText(/CAS -->\|tier 1\| SMTP/);
-  await expect(page.locator("#flow-source")).not.toContainText("NTFY");
+  await expect(page.locator("#flow-source")).toContainText(/POL_1_BROADCAST_ALL -->\|fan-out 1\| POL_1_BROADCAST_ALL_SMTP/);
+  await expect(page.locator("#flow-source")).toContainText(/POL_0_CASCADE -->\|tier 1\| POL_0_CASCADE_NTFY/);
   await expect(page.locator("#flow-config-summary")).toContainText("Enabled sources: 1");
+  await expect(page.locator('[data-flow-step="policy-1"]')).toContainText("Default policy · broadcast-all");
+  await expect(page.locator('[data-flow-step="policy-1"]')).toContainText("Broadcast fan-out: SMTP → Telegram");
+  await expect(page.locator('[data-flow-step="policy-0"]')).toContainText("Selected by rules 1");
 });
 
 test("delivery view controls never create unsaved configuration state", async ({ page }) => {

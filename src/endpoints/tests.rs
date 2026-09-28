@@ -165,6 +165,7 @@ fn all_runtime_operations_are_documented_in_openapi() {
         ("get", "/api/inhibition-rules"),
         ("post", "/api/inhibition-rules"),
         ("post", "/api/inhibition-rules/test"),
+        ("post", "/api/inhibition-rules/validate-regex"),
         ("post", "/api/inhibitions/clear"),
         ("get", "/api/schedules"),
         ("post", "/api/schedules"),

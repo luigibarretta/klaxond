@@ -10,7 +10,9 @@ use serde_json::json;
 
 mod simulate;
 
-pub(super) use self::simulate::{inhibition_rules_test, policy_simulate};
+pub(super) use self::simulate::{
+    inhibition_regex_validate, inhibition_rules_test, policy_simulate,
+};
 
 pub(super) fn update_inhibition_rules(state: &AppState, body: Bytes) -> Response<Body> {
     let Ok(payload) = json_body(&body) else {

@@ -1,5 +1,7 @@
 import { $, J, debounce, errorText, escapeHtml, fetchError, navigateToTab, notifyError, queryGet, tr } from "./app.js";
 import { buildMermaidDiagram, sourceNodeId } from "./app-flow-diagram.js";
+import { renderFlowStructure } from "./app-flow-structure.js";
+import { buildFlowSteps } from "./app-flow-steps.js";
 import { fetchDeliveryActivity } from "./app-status.js";
 
 // Make tab-switcher callable from outside (mermaid click handlers).
@@ -42,9 +44,10 @@ export async function loadFlow(options = {}) {
   $("#flow-status").textContent = tr("flow.fetching_config");
   let cfgs = {}, stats = null;
   try {
-    const [channel, cascade, ntfy, dedup, auth, render, ingest, inhibition, emergency, activity] = await Promise.all([
+    const [channel, cascade, delivery, ntfy, dedup, auth, render, ingest, inhibition, emergency, activity] = await Promise.all([
       queryGet("flow-channel-config", "/api/channel-config", { cancelPrevious: false }),
       queryGet("flow-cascade-config", "/api/cascade-config", { cancelPrevious: false }),
+      queryGet("flow-delivery-config", "/api/delivery-config", { cancelPrevious: false }),
       queryGet("flow-ntfy-topics", "/api/ntfy-topics", { cancelPrevious: false }),
       queryGet("flow-dedup-config", "/api/dedup-config", { cancelPrevious: false }),
       J("/api/auth/config"),
@@ -57,7 +60,7 @@ export async function loadFlow(options = {}) {
         return null;
       }),
     ]);
-    cfgs = { channel, cascade, ntfy, dedup, auth, render, ingest, inhibition, emergency };
+    cfgs = { channel, cascade, delivery, ntfy, dedup, auth, render, ingest, inhibition, emergency };
     stats = activity ? {
       bySource: activity.by_source || {},
       bySeverity: activity.by_severity || {},
@@ -66,6 +69,7 @@ export async function loadFlow(options = {}) {
       lastByChannel: activity.latest_by_channel || {},
     } : null;
     _renderFlowSummary(cfgs);
+    renderFlowStructure(buildFlowSteps(cfgs, stats));
   } catch (e) {
     notifyError("flow-config", e, { status: "#flow-status", inlineText: tr("flow.config_fetch_failed", { message: errorText(e) }) });
     return;
@@ -106,12 +110,12 @@ function _renderFlowSummary(cfgs) {
   if (!target) return;
   const sourceCount = Object.values(cfgs.ingest?.sources || {}).filter(source => source?.configured).length;
   const inhibitionCount = (cfgs.inhibition?.rules || []).length;
-  const tierCount = (cfgs.cascade?.tiers || []).length;
+  const policyCount = (cfgs.delivery?.policies || []).length + 1;
   const profileCount = (cfgs.emergency?.settings?.profiles || []).filter(profile => profile.enabled).length;
   const items = [
     ["/routing", tr("flow.summary_sources", { count: sourceCount })],
     ["/inhibitions", tr("flow.summary_inhibitions", { count: inhibitionCount })],
-    ["/cascade", tr("flow.summary_tiers", { count: tierCount })],
+    ["/delivery", tr("flow.summary_policies", { count: policyCount })],
     ["/emergencies", tr("flow.summary_emergencies", { count: profileCount })],
   ];
   target.innerHTML = items.map(([href, label]) => `<a class="flow-summary-chip" href="${href}">${escapeHtml(label)}</a>`).join("");

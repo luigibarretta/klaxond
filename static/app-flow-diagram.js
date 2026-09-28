@@ -1,5 +1,6 @@
 import { tr } from "./app.js";
 import { deliveryTsSeconds } from "./app-status.js";
+import { cascadeFallbackAudience, configuredDeliveryPolicies } from "./app-flow-policy-model.js";
 
 const SOURCE_ROUTES = {
   grafana: "/webhook/sev",
@@ -47,28 +48,22 @@ export function aggregateDeliveries24h(items) {
 export function buildMermaidDiagram(cfgs, stats) {
   const safeStats = stats || { bySource: {}, byChannel: {}, bySeverity: {} };
   const sources = configuredSources(cfgs.ingest);
-  const tiers = configuredTiers(cfgs.cascade);
   const lines = [];
 
   appendDiagramHeader(lines);
   appendUpstream(lines, sources);
   const emitterIds = appendEmitters(lines, sources, cfgs.ingest, cfgs.auth, safeStats, cfgs.dedup);
-  const stageIds = appendKlaxondFlow(lines, emitterIds, cfgs);
-  const sinkIds = appendSinks(lines, stageIds[stageIds.length - 1], cfgs.channel, cfgs.ntfy, tiers, safeStats);
-  appendClickHandlers(lines, sources, stageIds, sinkIds, cfgs.render);
+  const flow = appendKlaxondFlow(lines, emitterIds, cfgs);
+  const delivery = appendDeliveryPolicies(lines, flow.policyNode, cfgs, safeStats);
+  appendClickHandlers(lines, sources, flow.clickableIds, delivery, cfgs.render);
   return lines.join("\n");
 }
 
-function configuredSources(ingest) {
+export function configuredSources(ingest) {
   return Object.entries(ingest?.sources || {})
     .filter(([, value]) => value?.configured)
     .map(([source]) => source)
     .sort((a, b) => a.localeCompare(b));
-}
-
-function configuredTiers(cascade) {
-  const tiers = Array.isArray(cascade?.tiers) ? cascade.tiers : [];
-  return tiers.length ? tiers : [{ name: "ntfy", timeout_seconds: 15 }];
 }
 
 function mermaidEscape(value) {
@@ -83,9 +78,18 @@ function titleCase(value) {
     .join(" ");
 }
 
-function sourceRoute(source, ingest) {
+export function channelDisplayName(value) {
+  const name = String(value || "").toLowerCase();
+  return { ntfy: "ntfy", telegram: "Telegram", smtp: "SMTP" }[name] || titleCase(name);
+}
+
+export function sourceRoute(source, ingest) {
   const configured = ingest?.sources?.[source]?.endpoint;
   return configured?.replace("{severity}", "sev") || SOURCE_ROUTES[source] || `/${source}/sev`;
+}
+
+export function sourceDisplayName(source, ingest) {
+  return ingest?.sources?.[source]?.display_name || SOURCE_LABELS[source] || titleCase(source);
 }
 
 function sourceStat(stats, source) {
@@ -118,6 +122,7 @@ function appendDiagramHeader(lines) {
   lines.push("  classDef src fill:#2c5282,color:#fff,stroke:#5b8def");
   lines.push("  classDef klx fill:#553c9a,color:#fff,stroke:#9b6bff");
   lines.push("  classDef sink fill:#22543d,color:#fff,stroke:#48bb78");
+  lines.push("  classDef inactive fill:#5c481f,color:#fff,stroke:#d69e2e");
   lines.push("  classDef disabled fill:#444,color:#bbb,stroke:#777");
 }
 
@@ -141,7 +146,7 @@ function appendEmitters(lines, sources, ingest, auth, stats, dedup) {
   const ids = [];
   for (const source of sources) {
     const id = sourceNodeId(source);
-    const label = ingest?.sources?.[source]?.display_name || SOURCE_LABELS[source] || titleCase(source);
+    const label = sourceDisplayName(source, ingest);
     const route = mermaidEscape(sourceRoute(source, ingest));
     lines.push(`    ${id}["${mermaidEscape(label)}<br/><small>POST ${route}</small>${sourceStat(stats, source)}${noiseStat(dedup, source)}"]`);
     ids.push(id);
@@ -152,74 +157,109 @@ function appendEmitters(lines, sources, ingest, auth, stats, dedup) {
   return ids;
 }
 
-function enabledNoiseSources(dedup, field) {
+export function enabledNoiseSources(dedup, field) {
   return Object.entries(dedup?.settings || {})
     .filter(([, config]) => !!config?.[field])
     .map(([source]) => source);
 }
 
 function appendKlaxondFlow(lines, emitters, cfgs) {
-  const stages = [];
+  const clickableIds = [];
   const rules = cfgs.inhibition?.rules || [];
   const grouped = enabledNoiseSources(cfgs.dedup, "enabled");
   const repeated = enabledNoiseSources(cfgs.dedup, "repeat_suppression_enabled");
+  let frontier = emitters;
+
+  const connect = (node, label = "") => {
+    const edge = label ? `|${mermaidEscape(label)}| ` : "";
+    for (const from of frontier) lines.push(`  ${from} -->${edge}${node}`);
+    frontier = [node];
+  };
 
   if (rules.length) {
     lines.push(`  INH{"${mermaidEscape(tr("flow.inhibition_stage", { count: rules.length }))}"}`);
     lines.push(`  DROP["${mermaidEscape(tr("flow.suppressed"))}"]`);
     lines.push("  class INH,DROP klx");
     lines.push(`  INH -->|${mermaidEscape(tr("flow.matched"))}| DROP`);
-    stages.push("INH");
+    connect("INH");
+    clickableIds.push("INH");
   }
   if (grouped.length) {
     lines.push(`  GROUP["${mermaidEscape(tr("flow.grouping_stage", { count: grouped.length }))}"]`);
     lines.push("  class GROUP klx");
-    stages.push("GROUP");
+    connect("GROUP", rules.length ? tr("flow.pass") : "");
+    clickableIds.push("GROUP");
+  }
+  if (cfgs.emergency?.settings?.enabled) {
+    const profileCount = (cfgs.emergency.settings.profiles || []).filter(profile => profile.enabled).length;
+    lines.push(`  EMERGENCY{"${mermaidEscape(tr("flow.emergency_stage", { count: profileCount }))}"}`);
+    lines.push(`  EMERGENCY_PATH["${mermaidEscape(tr("flow.emergency_managed_path"))}"]`);
+    lines.push("  class EMERGENCY,EMERGENCY_PATH klx");
+    connect("EMERGENCY");
+    lines.push(`  EMERGENCY -.->|${mermaidEscape(tr("flow.managed"))}| EMERGENCY_PATH`);
+    clickableIds.push("EMERGENCY", "EMERGENCY_PATH");
   }
   if (repeated.length) {
     lines.push(`  REPEAT{"${mermaidEscape(tr("flow.repeat_stage", { count: repeated.length }))}"}`);
     lines.push(`  REPEAT_DROP["${mermaidEscape(tr("flow.repeat_suppressed"))}"]`);
     lines.push("  class REPEAT,REPEAT_DROP klx");
+    connect("REPEAT", cfgs.emergency?.settings?.enabled ? tr("flow.normal") : "");
     lines.push(`  REPEAT -->|${mermaidEscape(tr("flow.duplicate"))}| REPEAT_DROP`);
-    stages.push("REPEAT");
-  }
-  if (cfgs.emergency?.settings?.enabled) {
-    const profileCount = (cfgs.emergency.settings.profiles || []).filter(profile => profile.enabled).length;
-    lines.push(`  EMERGENCY{"${mermaidEscape(tr("flow.emergency_stage", { count: profileCount }))}"}`);
-    lines.push("  class EMERGENCY klx");
-    stages.push("EMERGENCY");
+    clickableIds.push("REPEAT");
   }
   lines.push(`  RND["${mermaidEscape(tr("flow.render_stage"))}<br/><small>title · body · tags · actions</small>"]`);
-  lines.push(`  CAS{"${mermaidEscape(tr(cfgs.cascade?.runtime_enabled === false ? "flow.cascade_off" : "flow.cascade_on"))}"}`);
-  lines.push("  class RND,CAS klx");
-  stages.push("RND", "CAS");
-
-  for (const emitter of emitters) lines.push(`  ${emitter} --> ${stages[0]}`);
-  for (let index = 0; index < stages.length - 1; index += 1) {
-    const from = stages[index];
-    const to = stages[index + 1];
-    const edge = from === "INH" ? `|${mermaidEscape(tr("flow.pass"))}| ` : "";
-    lines.push(`  ${from} -->${edge}${to}`);
-  }
-  return stages;
+  const model = configuredDeliveryPolicies(cfgs.delivery, cfgs.cascade);
+  lines.push(`  POLICY{"${mermaidEscape(tr("flow.policy_stage", {
+    policy: model.effectiveDefault,
+    count: model.rules.length,
+  }))}"}`);
+  lines.push("  class RND,POLICY klx");
+  connect("RND", cfgs.emergency?.settings?.enabled && !repeated.length ? tr("flow.normal") : "");
+  lines.push("  RND --> POLICY");
+  clickableIds.push("RND", "POLICY");
+  return { policyNode: "POLICY", clickableIds };
 }
 
-function appendSinks(lines, cascadeId, channel, ntfy, tiers, stats) {
+function appendDeliveryPolicies(lines, selectorId, cfgs, stats) {
+  const model = configuredDeliveryPolicies(cfgs.delivery, cfgs.cascade);
+  const fallbackAudience = cascadeFallbackAudience(cfgs.cascade, configuredSources(cfgs.ingest));
+  const policyIds = [];
   const sinkIds = [];
-  tiers.forEach((tier, index) => {
-    const name = String(tier.name || "").toLowerCase();
-    const id = SINK_IDS[name] || `SINK_${index}`;
-    const configured = sinkConfigured(name, channel, ntfy);
-    lines.push(`  ${id}["${mermaidEscape(sinkLabel(name, channel, ntfy, stats))}"]`);
-    lines.push(`  class ${id} ${configured ? "sink" : "disabled"}`);
-    if (index === 0) lines.push(`  ${cascadeId} -->|${mermaidEscape(tr("flow.tier", { count: 1 }))}| ${id}`);
-    else lines.push(`  ${cascadeId} -.->|${mermaidEscape(tr("flow.fallback_tier", { count: index + 1 }))}| ${id}`);
-    sinkIds.push([id, name]);
-  });
-  return sinkIds;
+  for (const policy of model.policies.filter(item => item.reachable)) {
+    const id = policy.nodeId;
+    const detail = `${policy.mode} · ${policy.tiers.map(tier => channelDisplayName(tier.name)).join(" + ") || tr("flow.not_configured")}`;
+    lines.push(`  ${id}["${mermaidEscape(policy.name)}<br/><small>${mermaidEscape(detail)}</small>"]`);
+    lines.push(`  class ${id} klx`);
+    const selectedBy = policy.isDefault
+      ? tr("flow.default_policy")
+      : tr("flow.rules", { rules: policy.ruleIndexes.join(", ") });
+    lines.push(`  ${selectorId} -->|${mermaidEscape(selectedBy)}| ${id}`);
+    policyIds.push(id);
+    policy.tiers.forEach((tier, index) => {
+      const name = String(tier.name || "").toLowerCase();
+      const sinkId = `${id}_${SINK_IDS[name] || `SINK_${index}`}`;
+      const configured = sinkConfigured(name, cfgs.channel, cfgs.ntfy);
+      const inactiveFallback = policy.mode === "cascade" && index > 0 && fallbackAudience === "none";
+      lines.push(`  ${sinkId}["${mermaidEscape(sinkLabel(name, cfgs.channel, cfgs.ntfy, stats))}"]`);
+      lines.push(`  class ${sinkId} ${!configured ? "disabled" : inactiveFallback ? "inactive" : "sink"}`);
+      const edgeKey = policy.mode === "broadcast"
+        ? "flow.broadcast_tier"
+        : index === 0 ? "flow.tier" : "flow.fallback_tier";
+      const edge = policy.mode === "cascade" && index > 0 ? "-.->" : "-->";
+      let edgeLabel = tr(edgeKey, { count: index + 1 });
+      if (policy.mode === "cascade" && index > 0 && fallbackAudience !== "all") {
+        edgeLabel += ` · ${tr(fallbackAudience === "none"
+          ? "flow.fallback_inactive_grafana"
+          : "flow.fallback_non_grafana")}`;
+      }
+      lines.push(`  ${id} ${edge}|${mermaidEscape(edgeLabel)}| ${sinkId}`);
+      sinkIds.push([sinkId, name]);
+    });
+  }
+  return { policyIds, sinkIds };
 }
 
-function sinkConfigured(name, channel, ntfy) {
+export function sinkConfigured(name, channel, ntfy) {
   if (name === "ntfy") return !!ntfy?.topics?.length;
   if (name === "telegram") return !!channel?.telegram?.chat_id;
   if (name === "smtp") return !!channel?.smtp?.host;
@@ -242,7 +282,7 @@ function sinkLabel(name, channel, ntfy, stats) {
   return `${titleCase(name)}${channelStat(stats, name)}`;
 }
 
-function appendClickHandlers(lines, sources, stages, sinks, render) {
+function appendClickHandlers(lines, sources, clickableIds, delivery, render) {
   const grafanaBase = String(render?.grafana_base || "").replace(/\/$/, "");
   if (sources.includes("grafana") && /^https?:\/\//.test(grafanaBase)) {
     lines.push(`  click GRA "${mermaidEscape(grafanaBase)}/alerting/list" _blank`);
@@ -250,11 +290,13 @@ function appendClickHandlers(lines, sources, stages, sinks, render) {
   for (const source of sources) {
     lines.push(`  click ${sourceNodeId(source)} call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
   }
-  if (stages.includes("INH")) lines.push(`  click INH call flowGotoTab("inhibitions") "${mermaidEscape(tr("tab.inhibitions"))}"`);
-  if (stages.includes("GROUP")) lines.push(`  click GROUP call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
-  if (stages.includes("REPEAT")) lines.push(`  click REPEAT call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
-  if (stages.includes("EMERGENCY")) lines.push(`  click EMERGENCY call flowGotoTab("emergencies") "${mermaidEscape(tr("tab.emergencies"))}"`);
+  if (clickableIds.includes("INH")) lines.push(`  click INH call flowGotoTab("inhibitions") "${mermaidEscape(tr("tab.inhibitions"))}"`);
+  if (clickableIds.includes("GROUP")) lines.push(`  click GROUP call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
+  if (clickableIds.includes("REPEAT")) lines.push(`  click REPEAT call flowGotoTab("grouping") "${mermaidEscape(tr("tab.grouping"))}"`);
+  if (clickableIds.includes("EMERGENCY")) lines.push(`  click EMERGENCY call flowGotoTab("emergencies") "${mermaidEscape(tr("tab.emergencies"))}"`);
+  if (clickableIds.includes("EMERGENCY_PATH")) lines.push(`  click EMERGENCY_PATH call flowGotoTab("emergencies") "${mermaidEscape(tr("tab.emergencies"))}"`);
   lines.push(`  click RND call flowGotoTab("render") "${mermaidEscape(tr("tab.render"))}"`);
-  lines.push(`  click CAS call flowGotoTab("cascade") "${mermaidEscape(tr("tab.cascade"))}"`);
-  for (const [id] of sinks) lines.push(`  click ${id} call flowGotoTab("routing") "${mermaidEscape(tr("tab.routing"))}"`);
+  lines.push(`  click POLICY call flowGotoTab("delivery") "${mermaidEscape(tr("tab.delivery"))}"`);
+  for (const id of delivery.policyIds) lines.push(`  click ${id} call flowGotoTab("delivery") "${mermaidEscape(tr("tab.delivery"))}"`);
+  for (const [id] of delivery.sinkIds) lines.push(`  click ${id} call flowGotoTab("routing") "${mermaidEscape(tr("tab.routing"))}"`);
 }
