@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { exportConfigBundle, openSidebar, restoreConfigBundle } from "./klaxond-helpers";
+import { exportConfigBundle, restoreConfigBundle } from "./klaxond-helpers";
 
 test("noise-control page configures grouping and repeat suppression with human durations", async ({ page, request }) => {
   const originalBundle = await exportConfigBundle(request);
@@ -110,8 +110,7 @@ test("noise-control page configures grouping and repeat suppression with human d
       })]
     });
 
-    await openSidebar(page);
-    await page.locator('[data-language-option="it"]').click();
+    await page.locator('.app-footer [data-language-option="it"]').click();
     await expect(page.locator("#tab-grouping h2")).toHaveText("Controllo rumore notifiche");
     await expect(grafana.locator(".d-repeat-window option:checked")).toHaveText("6 ore");
     await expect(selectiveRules.first().locator('[data-rule-field="action"] option:checked')).toHaveText("Invia sempre");

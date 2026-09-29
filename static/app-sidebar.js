@@ -29,6 +29,20 @@ function focusableElements(root) {
 function renderIcons() {
   window.lucide?.createIcons({ attrs: { "stroke-width": 1.8 } });
 }
+function syncSidebarToggleIcon(toggle, mobile, collapsed) {
+  const iconName = mobile
+    ? "menu"
+    : collapsed
+      ? "panel-left-open"
+      : "panel-left-close";
+  if (toggle.dataset.icon === iconName) return;
+  toggle.dataset.icon = iconName;
+  const icon = document.createElement("i");
+  icon.dataset.lucide = iconName;
+  icon.setAttribute("aria-hidden", "true");
+  toggle.replaceChildren(icon);
+  renderIcons();
+}
 function translate(key, fallback, vars = {}) {
   return window.klaxondI18n?.t?.(key, vars) || fallback;
 }
@@ -177,6 +191,7 @@ function createSidebarCollapseHandler({ sidebar, toggle, backdrop, appMain, medi
     document.body.classList.toggle("sidebar-collapsed", collapsed);
     document.body.classList.toggle("mobile-nav-open", mobile && !collapsed);
     toggle.setAttribute("aria-expanded", String(!collapsed));
+    syncSidebarToggleIcon(toggle, mobile, collapsed);
     if (appMain) appMain.inert = mobile && !collapsed;
     if (mobile && !collapsed) {
       sidebar.setAttribute("role", "dialog");

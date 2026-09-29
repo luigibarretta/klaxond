@@ -56,7 +56,8 @@ test("serves health and admin UI", async ({ page, request }) => {
   await expect(page.locator(".brand-name")).toHaveText("Klaxond");
   await expect(page.locator('[data-tab="status"] .tab-icon')).toBeVisible();
   await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Overview");
-  await expect(page.locator('[data-language-option="it"]')).toBeVisible();
+  await expect(page.locator('.sidebar [data-language-option="it"]')).toHaveCount(0);
+  await expect(page.locator('.app-footer [data-language-option="it"]')).toBeVisible();
   await expect(page.locator('[data-theme-mode-option="system"]')).toBeVisible();
   await expect(page.locator("#sidebar-user-card")).toBeVisible();
   const expandedTabs = page.locator(".sidebar nav.tabs .tab:visible");

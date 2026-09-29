@@ -7,6 +7,7 @@ test("mobile shell is modal, stable, keyboard operable, and closes after navigat
 
   await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
   await expect(page.locator("#sidebar-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator('#sidebar-toggle [data-lucide="menu"]')).toBeVisible();
   await expect(page.locator("nav.tabs")).toBeHidden();
   await expect(page.locator(".brand-name")).toBeVisible();
   await expect(page.locator("main")).toBeVisible();
@@ -15,6 +16,7 @@ test("mobile shell is modal, stable, keyboard operable, and closes after navigat
 
   await page.click("#sidebar-toggle");
   await expect(page.locator("#sidebar-toggle")).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator("#sidebar-toggle")).toBeHidden();
   await expect(page.locator("nav.tabs")).toBeVisible();
   await expect(page.locator("#sidebar-backdrop")).toBeVisible();
   await expect(page.locator("#sidebar")).toHaveCSS("position", "fixed");
@@ -22,6 +24,19 @@ test("mobile shell is modal, stable, keyboard operable, and closes after navigat
   await expect(page.locator(".app-main")).toHaveAttribute("inert", "");
   expect(await page.locator(".app-main").evaluate(element => element.getBoundingClientRect().top)).toBe(contentTop);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+
+  const drawerWidth = await page.locator("#sidebar").evaluate(element =>
+    element.getBoundingClientRect().width
+  );
+  expect(drawerWidth).toBeLessThanOrEqual(272);
+  expect(drawerWidth).toBeLessThanOrEqual(390 - 48);
+
+  await page.locator("#sidebar-backdrop").click({ position: { x: 380, y: 400 } });
+  await expect(page.locator("body")).toHaveClass(/sidebar-collapsed/);
+  await expect(page.locator("#sidebar-toggle")).toBeVisible();
+  await expect(page.locator("#sidebar-toggle")).toBeFocused();
+
+  await page.click("#sidebar-toggle");
 
   await page.click('[data-group="activity"] .tab-group-toggle');
   await page.click('[data-tab="deliveries"]');

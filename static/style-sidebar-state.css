@@ -20,7 +20,7 @@ body.sidebar-collapsed .brand-lockup small,
 body.sidebar-collapsed .brand-name,
 body.sidebar-collapsed .tab-group-toggle,
 body.sidebar-collapsed .tab-label,
-body.sidebar-collapsed .pref-label,
+body.sidebar-collapsed .sidebar .pref-label,
 body.sidebar-collapsed .sidebar-user-meta,
 body.sidebar-collapsed .sidebar-user a {
   display: none;
@@ -60,13 +60,13 @@ body.sidebar-collapsed .tab .tab-dirty {
   border: 1px solid var(--panel);
   box-shadow: 0 1px 2px var(--shadow);
 }
-body.sidebar-collapsed .pref-control {
+body.sidebar-collapsed .sidebar .pref-control {
   justify-content: center;
 }
-body.sidebar-collapsed .segmented-control {
+body.sidebar-collapsed .sidebar .segmented-control {
   width: 100%;
 }
-body.sidebar-collapsed .seg-btn {
+body.sidebar-collapsed .sidebar .seg-btn {
   padding: 4px 0;
   font-size: 10px;
 }

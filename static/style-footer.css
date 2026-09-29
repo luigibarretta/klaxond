@@ -12,12 +12,29 @@
   text-align: center;
 }
 .footer-meta,
-.footer-links {
+.footer-links,
+.footer-language {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+.footer-language {
+  gap: 8px;
+}
+.footer-language::before {
+  content: "";
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin-right: 4px;
+}
+.footer-language-segment {
+  width: 88px;
+}
+body.public-info-route .footer-language {
+  display: none;
 }
 .footer-meta strong { color: var(--text); font-weight: 600; }
 .footer-meta span,
@@ -49,6 +66,16 @@
   height: 16px;
   background: var(--border);
   margin-right: 4px;
+}
+@media (max-width: 760px) {
+  .app-footer {
+    gap: 10px;
+    padding: 12px 16px;
+  }
+  .footer-links::before,
+  .footer-language::before {
+    display: none;
+  }
 }
 .legal-page {
   max-width: 880px;

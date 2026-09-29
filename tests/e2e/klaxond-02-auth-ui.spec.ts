@@ -192,12 +192,12 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
   });
 
   await page.goto("/");
-  await openSidebar(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "light");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   await expect(page.locator("#gbase")).toHaveText("https://grafana.example.com");
 
-  await page.click('[data-language-option="it"]');
+  await page.click('.app-footer [data-language-option="it"]');
+  await openSidebar(page);
   await expect(page.locator("html")).toHaveAttribute("lang", "it");
   await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Panoramica");
   await expect(page.locator('[data-tab="deliveries"]')).toContainText("Consegne");
@@ -230,7 +230,8 @@ test("supports Italian and English plus system/light/dark theme modes", async ({
   await expect(page.locator("html")).toHaveAttribute("data-theme-mode", "system");
   await expect(page.locator("html")).toHaveAttribute("data-theme", /^(light|dark)$/);
 
-  await page.click('[data-language-option="en"]');
+  if (await page.locator("#sidebar-toggle").isHidden()) await page.keyboard.press("Escape");
+  await page.click('.app-footer [data-language-option="en"]');
   await expect(page.locator("html")).toHaveAttribute("lang", "en");
   await expect(page.locator('[data-tab="status"] .tab-label')).toHaveText("Overview");
   await expect(page.locator('[data-language-option="en"]')).toHaveAttribute("aria-pressed", "true");
