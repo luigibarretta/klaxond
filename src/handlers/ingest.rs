@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 
 mod auth;
+mod deferral;
 mod pipeline;
 
 use self::auth::verify_ingest_auth;
@@ -51,6 +52,12 @@ pub(super) async fn ingest(
         }
     };
     let dry_run = dry_run_requested(&route.qs, &payload);
+    if !dry_run
+        && let Some(key) = deferral::cancel_key(&payload)
+        && deferral::cancel(&source, key)
+    {
+        tracing::info!(source = %source, key = %key, "cancelled deferred notification");
+    }
     let norm = normalize_labels(&source, &payload);
     let (should_send, reason) = inhibition::apply_inhibition(state, &source, &norm, dry_run);
     if !should_send {
@@ -60,6 +67,11 @@ pub(super) async fn ingest(
     let delivery = delivery_candidate(state, &source, &route.severity, &payload, &norm);
     if dry_run {
         return dry_run_delivery_response(state, &source, delivery, reason);
+    }
+    if let Some(request) = deferral::defer_request(&payload) {
+        tracing::info!(source = %source, key = %request.key, seconds = request.seconds, "deferring notification");
+        deferral::schedule(state, source.clone(), delivery, request);
+        return text(StatusCode::ACCEPTED, "deferred (cancellable)");
     }
     if maybe_buffer_dedup(state, &source, &payload, &delivery).await {
         return text(StatusCode::ACCEPTED, "buffered (dedup window)");

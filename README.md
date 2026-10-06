@@ -232,6 +232,14 @@ noise control, inhibition and emergency selectors. The generic parser accepts
 common `title`, `message`, `status`, `url` and `labels` fields while preserving
 the complete JSON body as a readable fallback.
 
+Any ingress payload may ask for cancellable deferred delivery with
+`"defer": {"seconds": N, "key": "..."}` (N is capped at 600). Klaxond answers
+`202` and delivers the notification after N seconds unless a later payload from
+the same source carries `"cancel_defer": "<key>"`; a newer deferral with the
+same key replaces the older one. Pending deferrals live in memory only and are
+lost on restart. Example: a rejected MFA code is held for a minute and dropped
+when the same user signs in from the same IP.
+
 ### Health + UI
 
 | Method | Path | Purpose |
@@ -736,6 +744,7 @@ instances; SQLite remains intended for a single active writer.
 | State | Where | Impact of split between instances |
 |---|---|---|
 | Inhibition deque (recent alert hashes) | RAM, last ~256 entries per instance | Best-effort dedup. The canonical inhibition layer should be Alertmanager — this is a safety net for direct webhook posts. With 2 instances, occasional duplicate inhibition misses. |
+| Pending `defer` notifications | RAM, per instance | A `cancel_defer` must reach the instance holding the item; a restart drops pending items. |
 
 ### Load balancer config — Traefik example
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.21.0 — 2026-10-06
+
+- Add cancellable deferred delivery: a payload with
+  `"defer": {"seconds": N, "key": "..."}` is held for up to N seconds (max 600)
+  and dropped when a later payload from the same source carries
+  `"cancel_defer": "<key>"`. Pending items are in memory only, so a restart
+  inside the window drops them.
 - Add the project attribution notice and preserve `LICENSE` and `NOTICE` in
   backend/frontend container images and future Compose release bundles.
 
