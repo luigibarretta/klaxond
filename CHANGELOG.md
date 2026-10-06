@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-## 0.21.0 — 2026-10-06
+## 0.21.1 — 2026-10-06
+
+- Release 0.21.0 again with `.env.example` image tags in sync; the 0.21.0
+  tag failed the release contract and published nothing.
+
+## 0.21.0 — 2026-10-06 (not published)
 
 - Add cancellable deferred delivery: a payload with
   `"defer": {"seconds": N, "key": "..."}` is held for up to N seconds (max 600)
