@@ -1,5 +1,11 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { exportConfigBundle, restoreConfigBundle } from "./klaxond-helpers";
+
+// WebKit reports a fetch cancelled by navigation as an access-control error,
+// so let in-flight inhibition regex validation finish before leaving a page.
+async function settleRegexValidation(page: Page) {
+  await expect(page.locator('#t-inhib-rules tr[data-regex-state="pending"]')).toHaveCount(0);
+}
 
 test("custom JSON sources work end-to-end from the routing UI", async ({ page, request }) => {
   const originalBundle = await exportConfigBundle(request);
@@ -51,10 +57,12 @@ test("custom JSON sources work end-to-end from the routing UI", async ({ page, r
     await expect(noise).toBeOK();
     expect((await noise.json()).sources).toContain("home-assistant");
 
+    await settleRegexValidation(page);
     await page.goto("/flow");
     await expect(page.locator("#flow-source")).toContainText("SRC_HOME_ASSISTANT");
     await expect(page.locator("#flow-source")).toContainText("POST /ingest/home-assistant/sev");
 
+    await settleRegexValidation(page);
     await page.goto("/routing");
     await sourceRow.locator('[data-act="remove"]').click();
     await page.locator(".app-dialog-overlay .btn.danger").click();
