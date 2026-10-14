@@ -3,7 +3,8 @@
 Open an issue before a large behavior or storage change. Security reports belong
 in the private advisory flow documented in `SECURITY.md`.
 
-Use Rust 1.96.1, Go 1.24 and Node 20.19 or newer. Before submitting a change:
+Use Rust 1.96.1, Go 1.24 and Node 24 LTS (CI pins 24.21.0; Node 20.19 or newer
+still works). Before submitting a change:
 
 ```bash
 bash scripts/check-rsa-private-usage.sh

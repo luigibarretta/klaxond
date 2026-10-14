@@ -884,7 +884,7 @@ a cohesive `match`, linear function, or domain module is clearer.
 `npm run openapi:lint` runs the pinned Redocly CLI from `package-lock.json`
 against [`docs/openapi.yaml`](docs/openapi.yaml) using `.redocly.yaml`.
 Redocly CLI 2.x requires Node 20.19+ with npm 10+; the CI workflows pin Node
-20.19.0 for that check.
+24.21.0 (Node 24 LTS) for that check.
 Redocly checks the quality and consistency of the OpenAPI document; it does not
 replace backend tests, contract behavior tests, or the custom route/spec coverage
 checks in the Rust test suite.

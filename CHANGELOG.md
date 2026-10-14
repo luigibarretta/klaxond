@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CI and release workflows run on Node 24 LTS (24.21.0) instead of 20.19.0.
+
 ## 0.21.1 — 2026-10-06
 
 - Release 0.21.0 again with `.env.example` image tags in sync; the 0.21.0
