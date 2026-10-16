@@ -69,6 +69,26 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Restore pinned cargo-audit
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-0.22.2-${{ runner.os }}
+
+      - name: Install pinned cargo-audit when absent from cache
+        run: |
+          if ! cargo-audit --version 2>/dev/null | grep -q 'cargo-audit 0.22.2'; then
+            cargo install cargo-audit --version 0.22.2 --locked
+          fi
+
+      # RUSTSEC-2023-0071 (rsa Marvin timing side channel, no fixed release) is
+      # accepted: klaxond never uses RSA private keys, which the "Check RSA
+      # private-key usage" step above enforces. Every other advisory fails CI.
+      - name: Audit Rust dependencies (RustSec)
+        run: |
+          cargo audit --ignore RUSTSEC-2023-0071
+          cargo audit --file sdk/rust/Cargo.lock
+
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@v2
         with:
