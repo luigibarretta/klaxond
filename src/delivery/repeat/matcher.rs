@@ -1,5 +1,6 @@
 use crate::config::{
-    NoiseControlRule, NoiseMatchField, NoiseMatchOperator, NoiseRuleAction, RuntimeConfig,
+    DedupSetting, NoiseControlRule, NoiseMatchField, NoiseMatchOperator, NoiseRuleAction,
+    RuntimeConfig,
 };
 use crate::parsers::Parts;
 use regex::RegexBuilder;
@@ -48,6 +49,23 @@ pub(super) fn select_policy(
     } else {
         RepeatPolicy::Disabled
     }
+}
+
+/// Name of the noise-control rule that exempts this event from dedup
+/// grouping: the first enabled matching rule decides, as in
+/// `select_policy`, and only a `Bypass` action exempts it.
+pub(crate) fn grouping_bypass_rule(
+    setting: &DedupSetting,
+    parts: &Parts,
+    labels: &HashMap<String, String>,
+) -> Option<String> {
+    setting
+        .rules
+        .iter()
+        .filter(|rule| rule.enabled)
+        .find(|rule| rule_matches(rule, parts, labels))
+        .filter(|rule| rule.action == NoiseRuleAction::Bypass)
+        .map(|rule| rule.name.clone())
 }
 
 fn rule_matches(rule: &NoiseControlRule, parts: &Parts, labels: &HashMap<String, String>) -> bool {

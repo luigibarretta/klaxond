@@ -249,3 +249,64 @@ fn uptime_kuma_dedup_key_falls_back_to_monitor_name() {
         "uptime-kuma:Public API"
     );
 }
+
+#[tokio::test]
+async fn bypass_rule_delivers_critical_container_updates_outside_the_batch() {
+    use crate::config::{NoiseControlRule, NoiseMatchField, NoiseMatchOperator, NoiseRuleAction};
+
+    let tmp = TempDir::new().unwrap();
+    let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let mut cfg = state.cfg();
+    let wud = cfg.dedup.get_mut("wud").unwrap();
+    wud.enabled = true;
+    wud.strategy = "time".into();
+    wud.window_s = 3_600;
+    wud.rules = vec![NoiseControlRule {
+        name: "critical-container-updates".into(),
+        enabled: true,
+        field: NoiseMatchField::Title,
+        label: String::new(),
+        operator: NoiseMatchOperator::Regex,
+        pattern: r"Update available for (nut-server|authentik-server) on ".into(),
+        case_sensitive: false,
+        action: NoiseRuleAction::Bypass,
+        cooldown_s: 0,
+        include_critical: false,
+    }];
+    state.replace_config(cfg);
+
+    let wud_event = |title: &str| SubmitInput {
+        source: "wud".into(),
+        severity: "info".into(),
+        payload: json!({"watcher": "local"}),
+        parts: item(title).parts,
+        common_labels: HashMap::new(),
+        with_cascade: true,
+    };
+
+    assert!(
+        !submit(
+            &state,
+            wud_event("ℹ️ WUD: Update available for nut-server on local")
+        )
+        .await
+    );
+    assert!(
+        submit(
+            &state,
+            wud_event("ℹ️ WUD: Update available for vector on local")
+        )
+        .await
+    );
+    let queued = state
+        .dedup
+        .lock()
+        .await
+        .queues
+        .get("wud")
+        .map_or(0, Vec::len);
+    assert_eq!(
+        queued, 1,
+        "only the non-critical update waits for the grouped batch"
+    );
+}

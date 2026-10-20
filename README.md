@@ -562,8 +562,8 @@ Noise control also supports ordered selective rules per source. Rules can match
 the rendered title, body, alert name, or an arbitrary normalized label using an
 exact value, case-insensitive substring, or Rust regular expression. The first
 matching rule either suppresses identical repeats for its own cooldown or
-bypasses suppression and always delivers; unmatched notifications retain the
-source-wide behavior. Critical notifications require an explicit per-rule
+bypasses suppression and always delivers, outside any burst-grouping batch, as
+its own notification; unmatched notifications retain the source-wide behavior. Critical notifications require an explicit per-rule
 opt-in. See the commented `[[dedup.grafana.rules]]` example in
 `klaxond.default.toml`.
 

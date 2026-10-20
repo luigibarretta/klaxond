@@ -8,7 +8,7 @@ mod tests;
 pub use self::key::dedup_key;
 use self::persistence::{clear_persisted, pending_path, persist_item};
 use self::render::{highest_severity, render_batch};
-use crate::delivery::deliver;
+use crate::delivery::{deliver, grouping_bypass_rule};
 use crate::parsers::Parts;
 use crate::state::{AppState, DedupItem};
 use crate::util::now_epoch;
@@ -42,6 +42,12 @@ pub async fn submit(state: &AppState, input: SubmitInput) -> bool {
         return false;
     }
     if severity == "critical" && !setting.override_critical {
+        return false;
+    }
+    // A Bypass noise-control rule (e.g. updates for critical containers)
+    // delivers the event on its own instead of inside the grouped batch.
+    if let Some(rule) = grouping_bypass_rule(setting, &input.parts, &input.common_labels) {
+        tracing::debug!(%source, %rule, "dedup grouping bypassed by noise-control rule");
         return false;
     }
     let window = setting.window_s;

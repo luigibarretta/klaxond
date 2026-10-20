@@ -224,7 +224,8 @@ ttl_seconds = 1800
 #
 # Optional selective rules are evaluated in order before the source-wide
 # repeat setting. A matching `suppress` rule uses its own cooldown; a matching
-# `bypass` rule always delivers. If no rule matches, the source-wide setting
+# `bypass` rule always delivers, immediately and outside the burst-grouping
+# batch. If no rule matches, the source-wide setting
 # above remains the fallback. Matching is case-insensitive by default.
 #
 # These settings are bootstrapped to /data/dedup-config.json on first run.

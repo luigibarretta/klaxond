@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- A noise-control rule with the `bypass` action now also exempts matching
+  notifications from burst grouping: they are delivered immediately as their
+  own notification instead of being folded into the source batch (for example
+  one WUD update notice per critical container, with its versions).
 - CI and release workflows run on Node 24 LTS (24.21.0) instead of 20.19.0.
 
 ## 0.21.1 — 2026-10-06

@@ -19,6 +19,7 @@ use emergency::Preparation;
 use policy::dispatch;
 pub use policy::pick_policy;
 use render::render_alert_image;
+pub(crate) use repeat::grouping_bypass_rule;
 
 pub async fn deliver(
     state: &AppState,

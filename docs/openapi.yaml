@@ -3263,7 +3263,7 @@ components:
         action:
           type: string
           enum: [suppress, bypass]
-          description: Suppress identical repeats for the rule cooldown, or bypass repeat suppression and always deliver.
+          description: Suppress identical repeats for the rule cooldown, or bypass repeat suppression and burst grouping and always deliver immediately.
         cooldown_s:
           type: integer
           minimum: 60

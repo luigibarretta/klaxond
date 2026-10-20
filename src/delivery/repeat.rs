@@ -10,6 +10,8 @@ use std::time::Duration;
 
 mod matcher;
 
+pub(crate) use self::matcher::grouping_bypass_rule;
+
 use self::matcher::{RepeatPolicy, select_policy};
 
 pub(super) enum RepeatGate {
