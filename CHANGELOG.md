@@ -1,6 +1,6 @@
 # Klaxond — CHANGELOG
 
-## Unreleased
+## 0.21.2 — 2026-10-20
 
 - A noise-control rule with the `bypass` action now also exempts matching
   notifications from burst grouping: they are delivered immediately as their
