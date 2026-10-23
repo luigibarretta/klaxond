@@ -1,5 +1,17 @@
 # Klaxond — CHANGELOG
 
+## Unreleased
+
+- Fix LDAP login over `ldaps://`: the build enabled both the ring and
+  aws-lc-rs rustls providers, so ldap3 could not pick a process-default
+  provider and every LDAP TLS connection panicked in the authentication
+  worker. LDAP now uses ring (shared `auth-modules` `ldap-ring` feature),
+  which also drops aws-lc-sys and its C/cmake build from the dependency graph.
+- Security: update `tokio` to 1.54.1 (RUSTSEC-2026-0386).
+- The Rust application-event SDK (`klaxond-protocol`) is now a workspace
+  member sharing the daemon lockfile, and a daemon test proves every
+  SDK-rendered event is accepted and parsed by `/webhook/{severity}`.
+
 ## 0.21.3 — 2026-10-23
 
 - Security: update `ctutils` to 0.4.5 (RUSTSEC-2026-0385), `rustls-webpki`
