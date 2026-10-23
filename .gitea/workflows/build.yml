@@ -87,7 +87,6 @@ jobs:
       - name: Audit Rust dependencies (RustSec)
         run: |
           cargo audit --ignore RUSTSEC-2023-0071
-          cargo audit --file sdk/rust/Cargo.lock
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@v2
@@ -101,7 +100,7 @@ jobs:
         run: cargo check --locked --all-features
 
       - name: Lint Rust application
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Test Rust application
         run: cargo test --locked --all-features -- --nocapture
@@ -112,7 +111,7 @@ jobs:
         run: cargo test --locked --all-features -- --ignored --nocapture --test-threads=1
 
       - name: Test Rust application-event SDK
-        run: cargo test --manifest-path sdk/rust/Cargo.toml --locked
+        run: cargo test --locked -p klaxond-protocol
 
       - name: Set up Go
         uses: actions/setup-go@v5

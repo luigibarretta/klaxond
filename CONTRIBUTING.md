@@ -10,9 +10,9 @@ still works). Before submitting a change:
 bash scripts/check-rsa-private-usage.sh
 bash scripts/check-auth-gold-standard.sh
 cargo fmt --all -- --check
-cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo test --locked --all-features
-cargo test --manifest-path sdk/rust/Cargo.toml --locked
+cargo test --locked -p klaxond-protocol
 (cd sdk/go && go test ./...)
 npm ci
 npm run static:check

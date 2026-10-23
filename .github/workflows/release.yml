@@ -76,7 +76,7 @@ jobs:
         run: |
           cargo fmt --all -- --check
           cargo check --locked --all-features
-          cargo clippy --locked --all-targets --all-features -- -D warnings
+          cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           cargo test --locked --all-features -- --nocapture
 
       - name: Test PostgreSQL persistence
@@ -85,7 +85,7 @@ jobs:
         run: cargo test --locked --all-features -- --ignored --nocapture --test-threads=1
 
       - name: Test Rust application-event SDK
-        run: cargo test --manifest-path sdk/rust/Cargo.toml --locked
+        run: cargo test --locked -p klaxond-protocol
 
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5

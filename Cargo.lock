@@ -1543,6 +1543,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "ipnet",
+ "klaxond-protocol",
  "lettre",
  "mime_guess",
  "postgres",
@@ -1561,6 +1562,14 @@ dependencies = [
  "url",
  "urlencoding",
  "webauthn-rs",
+]
+
+[[package]]
+name = "klaxond-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

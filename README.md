@@ -796,7 +796,7 @@ This single push **bypasses klaxond** by design — it's the one alert that has 
 
 ```
 klaxond/
-├── Cargo.toml / Cargo.lock backend crate and locked Rust dependencies
+├── Cargo.toml / Cargo.lock backend crate, workspace root and the single Rust lockfile
 ├── src/                    Rust backend modules
 │   └── handlers/           HTTP router, ingest, config, auth and observability handlers
 ├── static/
@@ -809,7 +809,11 @@ klaxond/
 │   └── app-*.js            feature modules for status, auth, logs, routing and editors
 ├── tests/
 │   ├── parity.rs           parser/inhibition parity tests
+│   ├── application_event_sdk.rs SDK payloads accepted by the ingest router
 │   └── e2e/                Playwright smoke tests
+├── sdk/
+│   ├── rust/               klaxond-protocol crate (workspace member, own version)
+│   └── go/                 Go application-event module
 ├── docs/
 │   ├── openapi.yaml                  canonical API contract, also served by the binary
 │   ├── grafana-dashboard.json        importable Grafana dashboard example
