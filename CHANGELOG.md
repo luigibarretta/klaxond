@@ -1,5 +1,11 @@
 # Klaxond — CHANGELOG
 
+## 0.21.3 — 2026-10-23
+
+- Security: update `ctutils` to 0.4.5 (RUSTSEC-2026-0385), `rustls-webpki`
+  to 0.103.16 (RUSTSEC-2026-0382) and `webpki-roots` to 1.0.11
+  (RUSTSEC-2026-0381). Lockfile-only; no behaviour change.
+
 ## 0.21.2 — 2026-10-20
 
 - A noise-control rule with the `bypass` action now also exempts matching
