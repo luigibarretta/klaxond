@@ -3,7 +3,7 @@ name = "auth-modules"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-repository = "https://git.luigibarretta.com/luigibarretta/auth-modules"
+repository = "https://git.luigibarretta.com/luigibarretta/lib-auth-modules"
 description = "Shared Rust authentication building blocks for personal projects"
 
 [features]
@@ -21,7 +21,12 @@ default = [
 ]
 audit = []
 errors = []
-ldap = ["dep:ldap3"]
+# LDAP over rustls. `ldap` keeps the historical aws-lc-rs provider; `ldap-ring`
+# selects ring instead (no C/cmake build). Enable exactly one of them: ldap3
+# builds its rustls config from the process-default provider, which rustls can
+# only infer when a single provider feature is active in the whole build.
+ldap = ["dep:ldap3", "ldap3/tls-rustls-aws-lc-rs"]
+ldap-ring = ["dep:ldap3", "ldap3/tls-rustls-ring"]
 oidc = ["dep:jsonwebtoken", "dep:openidconnect", "dep:serde", "dep:serde_json"]
 oidc-async = ["oidc", "openidconnect/reqwest"]
 oidc-blocking = ["oidc", "openidconnect/reqwest-blocking"]
@@ -39,7 +44,7 @@ totp = ["dep:hmac", "dep:rand", "dep:sha1"]
 argon2 = { version = "0.5", optional = true }
 base64 = { version = "0.22", optional = true }
 hmac = { version = "0.12", optional = true }
-ldap3 = { version = "0.12.1", default-features = false, features = ["sync", "tls-rustls-aws-lc-rs"], optional = true }
+ldap3 = { version = "0.12.1", default-features = false, features = ["sync"], optional = true }
 jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"], optional = true }
 openidconnect = { version = "4.0.1", default-features = false, features = ["rustls-tls"], optional = true }
 password-hash = { version = "0.5", features = ["getrandom"], optional = true }

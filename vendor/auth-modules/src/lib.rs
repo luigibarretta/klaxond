@@ -2,7 +2,7 @@
 pub mod audit;
 #[cfg(feature = "errors")]
 pub mod errors;
-#[cfg(feature = "ldap")]
+#[cfg(any(feature = "ldap", feature = "ldap-ring"))]
 pub mod ldap;
 pub mod methods;
 #[cfg(feature = "oidc")]
