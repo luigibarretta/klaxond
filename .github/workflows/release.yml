@@ -70,7 +70,8 @@ jobs:
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          ignore: RUSTSEC-2023-0071
+          # Reasons: docs/security/rustsec-policy.md
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0387
 
       - name: Check and test Rust
         run: |

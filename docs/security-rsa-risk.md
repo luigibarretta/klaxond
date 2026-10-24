@@ -27,8 +27,9 @@ oracle.
 
 ## Required Controls
 
-- Keep `RUSTSEC-2023-0071` ignored explicitly when running `cargo audit` until
-  RustCrypto publishes a fixed `rsa` release.
+- Keep `RUSTSEC-2023-0071` ignored explicitly in the `audit-lockfiles` step of
+  `ci-local.json` until RustCrypto publishes a fixed `rsa` release (register:
+  `docs/security/rustsec-policy.md`).
 - Run `scripts/check-rsa-private-usage.sh` in CI to block direct RSA crate usage
   and obvious private-key RSA APIs in production Rust code.
 - Prefer non-RSA OIDC signing algorithms, such as ES256 or EdDSA, when the

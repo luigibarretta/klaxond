@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { extname, join, relative, resolve, sep } from 'node:path'
 const repoRoot = resolve(process.env.REPO_TOOLING_ROOT || process.cwd())
 const baselinePath = resolve(repoRoot, process.env.LOC_BASELINE || 'scripts/loc-baseline.json')
@@ -66,8 +66,16 @@ for (const [rel, entry] of Object.entries(ignore)) {
     baselineErrors.push('ignore entry ' + rel + ' must be an object')
     continue
   }
+  for (const key of Object.keys(entry)) {
+    if (!['reason', 'optional'].includes(key)) {
+      baselineErrors.push('ignore entry ' + rel + ' has unknown key: ' + key)
+    }
+  }
   if (typeof entry.reason !== 'string' || entry.reason.trim().length === 0) {
     baselineErrors.push('ignore entry ' + rel + ' must include a non-empty reason')
+  }
+  if (entry.optional !== undefined && typeof entry.optional !== 'boolean') {
+    baselineErrors.push('ignore entry ' + rel + '.optional must be a boolean')
   }
 }
 
@@ -152,7 +160,7 @@ function walk(dir, out = [], seenIgnore = new Set()) {
       continue
     }
 
-    const stat = statSync(filePath)
+    const stat = lstatSync(filePath)
     if (stat.isDirectory()) {
       walk(filePath, out, seenIgnore)
     } else if (extensions.includes(extname(filePath))) {
@@ -211,7 +219,7 @@ for (const rel of Object.keys(allow)) {
 }
 
 for (const rel of Object.keys(ignore)) {
-  if (!seenIgnore.has(rel)) {
+  if (!seenIgnore.has(rel) && ignore[rel].optional !== true) {
     stale.push(rel + ' is ignored in scripts/loc-baseline.json but no longer exists')
   }
 }

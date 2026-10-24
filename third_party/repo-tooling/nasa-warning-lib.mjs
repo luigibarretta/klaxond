@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { extname, join, relative, sep } from 'node:path'
 
 import { findFunctions } from './nasa-warning-functions.mjs'
@@ -64,7 +64,7 @@ function walk(repoRoot, dir, out, extensions, ignoredRepoPaths) {
     const filePath = join(dir, entry)
     const rel = toRepoPath(repoRoot, filePath)
     if (isIgnored(rel, ignoredRepoPaths)) continue
-    const stat = statSync(filePath)
+    const stat = lstatSync(filePath)
     if (stat.isDirectory()) {
       walk(repoRoot, filePath, out, extensions, ignoredRepoPaths)
     } else if (extensions.has(extname(filePath))) {

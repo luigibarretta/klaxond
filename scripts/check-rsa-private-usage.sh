@@ -13,6 +13,10 @@ status=0
 
 direct_dependency_pattern='^[[:space:]]*rsa[[:space:]]*='
 private_api_pattern='EncodingKey::from_rsa(_pem|_der)?|RsaPrivateKey|DecodeRsaPrivateKey|EncodeRsaPrivateKey|rsa::(Oaep|Pkcs1v15Encrypt|Pkcs1v15Sign|Pss|pkcs1v15::SigningKey|pss::SigningKey)'
+# RUSTSEC-2026-0387 (crypto-bigint 0.5) is accepted only while elliptic-curve
+# arithmetic sees public keys alone; see docs/security/rustsec-policy.md.
+ec_dependency_pattern='^[[:space:]]*(p256|p384|p521|ecdsa|elliptic-curve|crypto-bigint)[[:space:]]*='
+ec_private_api_pattern='EncodingKey::from_ec_(pem|der)|(p256|p384|p521|ecdsa|elliptic_curve)::[A-Za-z0-9_:]*(SigningKey|SecretKey|NonZeroScalar|EphemeralSecret|ecdh)'
 
 scan_pattern() {
   local pattern=$1
@@ -62,8 +66,30 @@ MSG
   status=1
 fi
 
+if scan_pattern "$ec_dependency_pattern" Cargo.toml; then
+  cat >&2 <<'MSG'
+error: direct dependency on an elliptic-curve crate found.
+
+Klaxond accepts p256/p384/p521 and crypto-bigint 0.5 only as transitive
+dependencies for public-key OIDC/WebAuthn verification (RUSTSEC-2026-0387).
+Direct use needs a dedicated security review; see docs/security/rustsec-policy.md.
+MSG
+  status=1
+fi
+
+if scan_pattern "$ec_private_api_pattern" src; then
+  cat >&2 <<'MSG'
+error: production Rust code appears to use elliptic-curve private-key APIs.
+
+RUSTSEC-2026-0387 makes crypto-bigint 0.5 arithmetic on secret operands
+timing-variable. Do not add server-side EC signing, key agreement or
+decryption; see docs/security/rustsec-policy.md.
+MSG
+  status=1
+fi
+
 if [[ "$status" -eq 0 ]]; then
-  echo "RSA private-key usage guard passed."
+  echo "RSA and elliptic-curve private-key usage guard passed."
 fi
 
 exit "$status"

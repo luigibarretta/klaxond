@@ -31,32 +31,34 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
-    env:
-      CARGO_INCREMENTAL: "0"
     steps:
+      # Checks come from ci-local.json through the vendored ci-local runner,
+      # the same entry point used before a push
+      # (`node third_party/repo-tooling/ci-local.mjs --quick`, then the full
+      # gate). Every manifest step runs in exactly one call below
+      # (scripts/check-ci-local-jobs.mjs). Plain workflow steps are CI-only:
+      # checkouts, the repo-tooling pin check, toolchains, caches, system
+      # packages, image build/publish, promotion and deploy.
       - name: Checkout
         uses: actions/checkout@v4
 
+      # CI-only: verifies third_party/repo-tooling against a checkout of the
+      # commit pinned in dependencies/repo-tooling.sha.
       - name: Checkout pinned repository tooling
         uses: actions/checkout@v4
         with:
           repository: luigibarretta/repo-tooling
-          ref: 7686291766ce5d185fefd4f60b1cb15b9a34c3da
+          ref: da53160c52a8cb3f83201e57b333ec399b87bcde
           path: vendor/repo-tooling
 
       - name: Verify pinned repository tooling
         run: scripts/check-repo-tooling-sync.sh
 
+      # CI-only provisioning: the guards use ripgrep.
       - name: Install check tools
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ripgrep
-
-      - name: Check RSA private-key usage
-        run: bash scripts/check-rsa-private-usage.sh
-
-      - name: Check auth gold standard
-        run: bash scripts/check-auth-gold-standard.sh
 
       - name: Restore Rust toolchain cache
         uses: actions/cache@v4
@@ -81,45 +83,10 @@ jobs:
             cargo install cargo-audit --version 0.22.2 --locked
           fi
 
-      # RUSTSEC-2023-0071 (rsa Marvin timing side channel, no fixed release) is
-      # accepted: klaxond never uses RSA private keys, which the "Check RSA
-      # private-key usage" step above enforces. Every other advisory fails CI.
-      - name: Audit Rust dependencies (RustSec)
-        run: |
-          cargo audit --ignore RUSTSEC-2023-0071
-
-      - name: Restore Rust build cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-
-      - name: Check Rust application
-        run: cargo check --locked --all-features
-
-      - name: Lint Rust application
-        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-
-      - name: Test Rust application
-        run: cargo test --locked --all-features -- --nocapture
-
-      - name: Test PostgreSQL persistence
-        env:
-          KLAXOND_TEST_POSTGRES_URL: postgres://klaxond:klaxond-test@postgres:5432/klaxond_test
-        run: cargo test --locked --all-features -- --ignored --nocapture --test-threads=1
-
-      - name: Test Rust application-event SDK
-        run: cargo test --locked -p klaxond-protocol
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-
-      - name: Test Go application-event SDK
-        run: cd sdk/go && go test ./...
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -128,8 +95,25 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install Node dependencies
-        run: npm ci
+      # RUSTSEC-2023-0071 and RUSTSEC-2026-0387 are ignored in the
+      # audit-lockfiles step of ci-local.json, each with its reason; see
+      # docs/security/rustsec-policy.md. Every other advisory fails CI.
+      - name: Repository guards, release contract, LOC, NASA, static checks and dependency audit
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            export RELEASE_CONTRACT_TAG="$GITHUB_REF_NAME"
+          fi
+          node third_party/repo-tooling/ci-local.mjs --ci --only ci-local-jobs,rsa-guard,auth-gold,release-pipeline,release-contract,loc,nasa,static-check,audit-lockfiles,rust-fmt,sdk-go
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Rust check, lint, tests, PostgreSQL persistence and SDK tests
+        env:
+          KLAXOND_TEST_POSTGRES_URL: postgres://klaxond:klaxond-test@postgres:5432/klaxond_test
+        run: node third_party/repo-tooling/ci-local.mjs --ci --only rust-check,rust-clippy,rust-test,rust-test-postgres,sdk-rust
 
       - name: Restore Playwright browser cache
         uses: actions/cache@v4
@@ -137,37 +121,18 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
 
-      - name: Check frontend JavaScript syntax
-        run: npm run static:check
+      - name: Install Node dependencies and lint OpenAPI
+        run: node third_party/repo-tooling/ci-local.mjs --ci --only npm-install,openapi-lint
 
-      - name: Check LOC guardrails
-        run: npm run loc:check
-
-      - name: NASA/JPL maintainability warnings
-        env:
-          NASA_WARNINGS_FAIL: "0"
-        run: npm run nasa:warn
-
-      - name: Lint OpenAPI
-        run: npm run openapi:lint
-
-      - name: Check release version contract
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            npm run release:check -- --tag "$GITHUB_REF_NAME"
-          else
-            npm run release:check
-          fi
-
-      - name: Check release pipeline dependency contract
-        run: bash scripts/check-release-pipeline.sh
-
+      # CI-only provisioning: the browsers and their system packages.
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium firefox webkit
 
       - name: Test browser workflows
-        run: npm run test:e2e
+        run: node third_party/repo-tooling/ci-local.mjs --ci --no-needs --only e2e
 
+  # CI-only from here on: image build and publication, release promotion and
+  # the Semaphore deploy. None of these run in the local gate.
   publish-immutable:
     needs: check
     if: >-

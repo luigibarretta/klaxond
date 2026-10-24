@@ -11,6 +11,15 @@
 - The Rust application-event SDK (`klaxond-protocol`) is now a workspace
   member sharing the daemon lockfile, and a daemon test proves every
   SDK-rendered event is accepted and parsed by `/webhook/{severity}`.
+- CI: every check of the Gitea `check` job is now a step of `ci-local.json`,
+  run by the workflow through the shared `ci-local` runner (repo-tooling
+  0.5.2) and before a push with the same command; the lockfile audit now also
+  covers `package-lock.json` with `npm audit`.
+- Security: accept RUSTSEC-2026-0387 (`crypto-bigint` 0.5 timing variability)
+  as a documented exception: it is reachable only through public-key
+  OIDC/WebAuthn verification, klaxond performs no elliptic-curve private-key
+  operation and the RSA guard now also blocks EC private-key APIs
+  (`docs/security/rustsec-policy.md`).
 
 ## 0.21.3 — 2026-10-23
 

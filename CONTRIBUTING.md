@@ -4,22 +4,25 @@ Open an issue before a large behavior or storage change. Security reports belong
 in the private advisory flow documented in `SECURITY.md`.
 
 Use Rust 1.96.1, Go 1.24 and Node 24 LTS (CI pins 24.21.0; Node 20.19 or newer
-still works). Before submitting a change:
+still works). Every CI check is a step of `ci-local.json`, and the Gitea
+workflow runs those same steps through `ci-local.mjs --ci`. Before pushing, run
+the local gate:
 
 ```bash
-bash scripts/check-rsa-private-usage.sh
-bash scripts/check-auth-gold-standard.sh
-cargo fmt --all -- --check
-cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
-cargo test --locked --all-features
-cargo test --locked -p klaxond-protocol
-(cd sdk/go && go test ./...)
-npm ci
-npm run static:check
-npm run openapi:lint
-npm run release:check
-npm run test:e2e
+export PATH=$HOME/.local/dev-build-lock-bin:$PATH   # dev-01: build lock first
+node third_party/repo-tooling/ci-local.mjs --quick  # guards, contracts, LOC, audit, fmt
+node third_party/repo-tooling/ci-local.mjs          # full gate, as in CI
+node third_party/repo-tooling/ci-local.mjs --list   # steps and flags
 ```
+
+The full gate covers the RSA/EC and auth gold-standard guards, the release and
+release-pipeline contracts, LOC/NASA, static checks, the RustSec and npm audit,
+rustfmt, `cargo check`/clippy for the workspace, the Rust tests, the PostgreSQL
+persistence suite (a disposable `postgres:17.6-alpine` container locally, the
+job service in CI), the Rust and Go SDK tests, OpenAPI lint and the Playwright
+matrix. `scripts/check-ci-local-jobs.mjs` fails CI when a manifest step is not
+run by exactly one workflow call. When you add a CI check, add it to
+`ci-local.json` and to one `--only` list in `.gitea/workflows/build.yml`.
 
 The matrix deliberately starts a clean local server for Chromium, Firefox,
 desktop WebKit, and the WebKit-based Mobile Safari device profile in sequence.

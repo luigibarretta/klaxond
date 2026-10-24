@@ -899,18 +899,21 @@ warnings. Redirect-only routes such as auth callbacks are valid in Klaxond, so
 the generic Redocly 2xx-only rule is replaced with a repo-local rule that accepts
 documented `2XX` or `3XX` responses. Redocly errors still fail the pipeline.
 
-Security checks include an RSA timing-advisory guard. `cargo audit` currently
-reports `RUSTSEC-2023-0071` for the transitive RustCrypto `rsa` crate, which has
-no fixed release yet. Klaxond accepts that dependency only for public-key
-OIDC/WebAuthn verification and does not perform RSA private-key decrypt/sign
-operations in the request path. Run:
+Security checks include an RSA and elliptic-curve private-key guard. `cargo
+audit` currently reports `RUSTSEC-2023-0071` for the transitive RustCrypto `rsa`
+crate and `RUSTSEC-2026-0387` for the transitive `crypto-bigint` 0.5; neither
+has a compatible fixed release yet. Klaxond accepts both only for public-key
+OIDC/WebAuthn verification and performs no RSA or EC private-key operation.
+Both ignores live, with their reasons, in the `audit-lockfiles` step of
+`ci-local.json`. Run:
 
 ```bash
-cargo audit --ignore RUSTSEC-2023-0071
-scripts/check-rsa-private-usage.sh
+node third_party/repo-tooling/ci-local.mjs --only rsa-guard,audit-lockfiles
 ```
 
-The threat model and review checklist are tracked in
+The accepted-advisory register is
+[`docs/security/rustsec-policy.md`](docs/security/rustsec-policy.md); the RSA
+threat model and review checklist are tracked in
 [`docs/security-rsa-risk.md`](docs/security-rsa-risk.md).
 
 ## License

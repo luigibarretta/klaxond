@@ -4,6 +4,7 @@ export function findFunctions(rel, text) {
   const ext = extname(rel)
   if (ext === '.rs') return findRustFunctions(rel, text)
   if (['.ts', '.tsx', '.js', '.jsx', '.mjs'].includes(ext)) return findEcmaFunctions(rel, text)
+  if (ext === '.svelte') return findSvelteFunctions(rel, text)
   if (ext === '.py') return findPythonFunctions(rel, text)
   return []
 }
@@ -20,6 +21,22 @@ function findEcmaFunctions(rel, text) {
   const functionRegex = /\b(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g
   collectBraceFunctions(rel, text, functionRegex, 'function', results)
   collectArrowFunctions(rel, text, results)
+  return dedupeFunctions(results)
+}
+
+function findSvelteFunctions(rel, text) {
+  const results = []
+  const scriptRegex = /<script\b[^>]*>/gi
+  for (const match of text.matchAll(scriptRegex)) {
+    const scriptStart = match.index + match[0].length
+    const closeOffset = text.slice(scriptStart).search(/<\/script\s*>/i)
+    if (closeOffset < 0) continue
+    const scriptText = text.slice(scriptStart, scriptStart + closeOffset)
+    const lineOffset = lineForIndex(text, scriptStart) - 1
+    for (const fn of findEcmaFunctions(rel, scriptText)) {
+      results.push({ ...fn, startLine: fn.startLine + lineOffset })
+    }
+  }
   return dedupeFunctions(results)
 }
 

@@ -1,0 +1,173 @@
+{
+  "schemaVersion": 1,
+  "strict": true,
+  "logMaxKbPerStep": 256,
+  "defaults": {
+    "timeout_s": 600,
+    "env": { "CARGO_INCREMENTAL": "0" }
+  },
+  "pressure": { "maxSomeAvg60": 20 },
+  "fixtures": {
+    "postgres": {
+      "setup": "bash {root}/scripts/ci-local-postgres.sh start",
+      "env_from_setup": true,
+      "ready": { "command": "bash {root}/scripts/ci-local-postgres.sh ready", "timeout_s": 120, "interval_s": 2 },
+      "teardown": "bash {root}/scripts/ci-local-postgres.sh stop",
+      "timeout_s": 300
+    }
+  },
+  "steps": [
+    {
+      "name": "ci-local-jobs",
+      "description": "Every manifest step runs in exactly one CI job (scripts/check-ci-local-jobs.mjs)",
+      "run": "node --test scripts/check-ci-local-jobs.test.mjs && node scripts/check-ci-local-jobs.mjs",
+      "quick": true,
+      "timeout_s": 120
+    },
+    {
+      "name": "rsa-guard",
+      "description": "npm run security:rsa-guard",
+      "run": "bash scripts/check-rsa-private-usage.sh",
+      "quick": true,
+      "timeout_s": 120
+    },
+    {
+      "name": "auth-gold",
+      "description": "Auth gold-standard guard",
+      "run": ["bash", "scripts/check-auth-gold-standard.sh"],
+      "quick": true,
+      "timeout_s": 300
+    },
+    {
+      "name": "release-pipeline",
+      "description": "The tag workflow promotes the image its own checked SHA published",
+      "run": ["bash", "scripts/check-release-pipeline.sh"],
+      "quick": true,
+      "timeout_s": 60
+    },
+    {
+      "name": "release-contract",
+      "description": "npm run release:check (tag workflows export RELEASE_CONTRACT_TAG)",
+      "uses": "release-contract",
+      "quick": true,
+      "timeout_s": 60
+    },
+    {
+      "name": "loc",
+      "description": "npm run loc:check",
+      "uses": "loc",
+      "quick": true,
+      "timeout_s": 120
+    },
+    {
+      "name": "nasa",
+      "description": "npm run nasa:warn (warning-only)",
+      "uses": "nasa",
+      "quick": true,
+      "timeout_s": 300,
+      "env": { "NASA_WARNINGS_FAIL": "0" }
+    },
+    {
+      "name": "static-check",
+      "description": "npm run static:check",
+      "run": "find static -type f -name '*.js' ! -path 'static/vendor/*' ! -name 'mermaid.min.js' -exec node --check {} \\; && npm run i18n:check",
+      "quick": true,
+      "timeout_s": 300
+    },
+    {
+      "name": "audit-lockfiles",
+      "description": "RustSec audit of Cargo.lock and npm audit of package-lock.json",
+      "uses": "audit-all-lockfiles",
+      "quick": true,
+      "timeout_s": 900,
+      "with": {
+        "ecosystems": ["cargo", "npm"],
+        "cargo": {
+          "ignore": [
+            {
+              "id": "RUSTSEC-2023-0071",
+              "reason": "rsa Marvin timing side channel, no fixed release; reachable only through public-key OIDC/JWT/WebAuthn verification; klaxond performs no RSA private-key operation (enforced by rsa-guard, docs/security-rsa-risk.md)"
+            },
+            {
+              "id": "RUSTSEC-2026-0387",
+              "reason": "crypto-bigint 0.5 timing variability, reachable only through elliptic-curve 0.13 public-key verification (auth-modules jsonwebtoken/openidconnect -> p256/p384, webauthn-rs -> crypto-glue); klaxond performs no EC private-key operation (enforced by rsa-guard); the 0.7.6 fix needs elliptic-curve 0.14, which no jsonwebtoken release uses yet (docs/security/rustsec-policy.md)"
+            }
+          ]
+        },
+        "npm": { "mode": "npm-audit", "audit_level": "moderate" }
+      }
+    },
+    {
+      "name": "rust-fmt",
+      "description": "rustfmt check",
+      "run": ["cargo", "fmt", "--all", "--", "--check"],
+      "quick": true,
+      "timeout_s": 300
+    },
+    {
+      "name": "sdk-go",
+      "description": "Go application-event SDK tests",
+      "run": ["go", "test", "./..."],
+      "cwd": "sdk/go",
+      "timeout_s": 600
+    },
+    {
+      "name": "rust-check",
+      "description": "cargo check, all features",
+      "run": ["cargo", "check", "--locked", "--all-features"],
+      "heavy": true,
+      "timeout_s": 2400
+    },
+    {
+      "name": "rust-clippy",
+      "description": "clippy, whole workspace, all targets and features, warnings denied",
+      "run": ["cargo", "clippy", "--locked", "--workspace", "--all-targets", "--all-features", "--", "-D", "warnings"],
+      "heavy": true,
+      "timeout_s": 2400
+    },
+    {
+      "name": "rust-test",
+      "description": "Rust application tests",
+      "run": ["cargo", "test", "--locked", "--all-features", "--", "--nocapture"],
+      "heavy": true,
+      "timeout_s": 2400
+    },
+    {
+      "name": "rust-test-postgres",
+      "description": "PostgreSQL persistence tests (the ignored suite) against a real database",
+      "run": ["cargo", "test", "--locked", "--all-features", "--", "--ignored", "--nocapture", "--test-threads=1"],
+      "heavy": true,
+      "fixtures": ["postgres"],
+      "timeout_s": 2400
+    },
+    {
+      "name": "sdk-rust",
+      "description": "Rust application-event SDK tests",
+      "run": ["cargo", "test", "--locked", "-p", "klaxond-protocol"],
+      "heavy": true,
+      "timeout_s": 1200
+    },
+    {
+      "name": "npm-install",
+      "description": "Clean install of the root lockfile (Playwright, Redocly)",
+      "run": ["npm", "ci"],
+      "heavy": true,
+      "timeout_s": 900
+    },
+    {
+      "name": "openapi-lint",
+      "description": "Redocly lint of docs/openapi.yaml (npm run openapi:lint)",
+      "run": ["npm", "run", "openapi:lint"],
+      "needs": ["npm-install"],
+      "timeout_s": 300
+    },
+    {
+      "name": "e2e",
+      "description": "Playwright browser workflows: Chromium, Firefox, WebKit and Mobile Safari (npm run test:e2e)",
+      "run": ["npm", "run", "test:e2e"],
+      "heavy": true,
+      "needs": ["npm-install"],
+      "timeout_s": 3000
+    }
+  ]
+}
