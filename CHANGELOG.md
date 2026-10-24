@@ -1,6 +1,6 @@
 # Klaxond — CHANGELOG
 
-## Unreleased
+## 0.21.4 — 2026-10-24
 
 - Fix LDAP login over `ldaps://`: the build enabled both the ring and
   aws-lc-rs rustls providers, so ldap3 could not pick a process-default
