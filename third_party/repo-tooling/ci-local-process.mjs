@@ -10,10 +10,30 @@ let activeChild = null
 // can terminate the whole tree (cargo -> rustc, npm -> node, sh -> children).
 // `track: false` keeps the process out of interrupt handling (teardowns must
 // finish even after Ctrl-C).
-export function runProcess({ argv, cwd, env, timeoutMs, onOutput, track = true }) {
+// Build-lock waits reported by the dev-01 wrapper (DEV_LOCK_WAIT_REPORT):
+// "start <id> <ms>" when a command starts waiting for CI and the lock,
+// "end <id> <ms>" once it holds the lock. Returns the total waited time,
+// counting still-open waits up to `now`, and whether any wait is open.
+export function lockWaitMs(path, now = Date.now()) {
+  if (!path || !existsSync(path)) return { waitedMs: 0, open: false }
+  const starts = new Map()
+  let waitedMs = 0
+  for (const line of readFileSync(path, 'utf8').split('\n')) {
+    const [kind, id, at] = line.trim().split(/\s+/)
+    const ms = Number(at)
+    if (!id || !Number.isFinite(ms)) continue
+    if (kind === 'start' && !starts.has(id)) starts.set(id, ms)
+    if (kind === 'end' && starts.has(id)) { waitedMs += Math.max(0, ms - starts.get(id)); starts.delete(id) }
+  }
+  for (const ms of starts.values()) waitedMs += Math.max(0, now - ms)
+  return { waitedMs, open: starts.size > 0 }
+}
+
+export function runProcess({ argv, cwd, env, timeoutMs, onOutput, track = true, waitReport = null, maxWaitExtensionMs = 0 }) {
   return new Promise((resolvePromise) => {
     const started = Date.now()
     let timedOut = false
+    let grantedMs = 0
     let child
     try {
       child = spawn(argv[0], argv.slice(1), { cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -25,11 +45,25 @@ export function runProcess({ argv, cwd, env, timeoutMs, onOutput, track = true }
     if (track) activeChild = child
     child.stdout.on('data', (chunk) => onOutput(chunk.toString()))
     child.stderr.on('data', (chunk) => onOutput(chunk.toString()))
-    const timer = setTimeout(() => {
+    // Time spent queued for the shared build lock is not the step's own work:
+    // at the deadline, extend by the newly reported waits (bounded), and keep
+    // re-checking while a wait is still open.
+    const onDeadline = () => {
+      const { waitedMs, open } = lockWaitMs(waitReport)
+      const room = maxWaitExtensionMs - grantedMs
+      const extra = Math.min(Math.max(0, waitedMs - grantedMs), room)
+      if (room > 0 && (extra > 0 || open)) {
+        const delay = Math.max(extra, open ? Math.min(30_000, room) : 0)
+        grantedMs += delay
+        onOutput(`\nci-local: deadline extended by ${Math.round(delay / 1000)}s for build-lock waits\n`)
+        timer = setTimeout(onDeadline, Math.max(1, delay))
+        return
+      }
       timedOut = true
-      onOutput(`\nci-local: timeout after ${Math.round(timeoutMs / 1000)}s, killing process group\n`)
+      onOutput(`\nci-local: timeout after ${Math.round((timeoutMs + grantedMs) / 1000)}s, killing process group\n`)
       killGroup(child)
-    }, Math.max(1, timeoutMs))
+    }
+    let timer = setTimeout(onDeadline, Math.max(1, timeoutMs))
     child.on('error', (error) => onOutput(`ci-local: cannot start ${argv[0]}: ${error.message}\n`))
     child.on('close', (code, signal) => {
       clearTimeout(timer)

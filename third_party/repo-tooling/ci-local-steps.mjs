@@ -1,5 +1,7 @@
 // Step execution for the ci-local runner: shell/argv steps, built-ins,
 // fixtures around a step and declared-writes checks after it.
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { planAudit, validateAuditConfig } from './ci-local-audit.mjs'
@@ -99,13 +101,21 @@ export function stepEnvironment(step, context, fixtureEnv = {}, extraEnv = {}) {
 }
 
 async function runOne(command, step, context, { deadline, fixtureEnv }) {
+  // Outside --ci, the build-lock wrapper reports its waits here so the step's
+  // timeout measures its own work (bounded by CI_LOCAL_MAX_LOCK_WAIT_S).
+  const waitReport = context.ci ? null : join(mkdtempSync(join(tmpdir(), 'ci-local-wait-')), 'waits')
+  const maxWaitS = Number(process.env.CI_LOCAL_MAX_LOCK_WAIT_S ?? 7200)
+  const extraEnv = waitReport ? { ...command.extraEnv, DEV_LOCK_WAIT_REPORT: waitReport } : command.extraEnv
   const result = await runProcess({
     argv: command.argv,
     cwd: resolve(context.root, command.cwd),
-    env: stepEnvironment(step, context, fixtureEnv, command.extraEnv),
+    env: stepEnvironment(step, context, fixtureEnv, extraEnv),
     timeoutMs: deadline - Date.now(),
     onOutput: context.output,
+    waitReport,
+    maxWaitExtensionMs: Number.isFinite(maxWaitS) && maxWaitS > 0 ? maxWaitS * 1000 : 0,
   })
+  if (waitReport) rmSync(dirname(waitReport), { recursive: true, force: true })
   if (result.timedOut) return { status: 'timeout', detail: `timeout after ${step.timeoutS}s` }
   if (result.code !== 0) return { status: 'fail', detail: result.signal ? `signal ${result.signal}` : `exit ${result.code}` }
   return { status: 'ok' }

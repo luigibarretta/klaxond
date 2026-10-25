@@ -48,7 +48,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: luigibarretta/repo-tooling
-          ref: da53160c52a8cb3f83201e57b333ec399b87bcde
+          ref: 7c1288562bb7ae8c5e111cf7da965cc69830cdd7
           path: vendor/repo-tooling
 
       - name: Verify pinned repository tooling
