@@ -1,6 +1,6 @@
 # Klaxond — CHANGELOG
 
-## Unreleased
+## 0.22.0
 
 - Security (K-01): `POST /api/auth/magic/request` no longer returns the
   magic link in the JSON response or redirects the browser to the callback.
