@@ -14,11 +14,17 @@ const USAGE = `usage: ci-local [--ci] [--quick] [--only a,b] [--from step] [--no
                 [--manifest path] [--log path] [--verbose]`
 const EXIT = { ok: 0, failed: 1, usage: 2, blocked: 3, interrupted: 130 }
 // Under --ci the dev-01 build-lock wrapper must never wait for CI from inside CI.
-const CI_FORCED_ENV = { DEV_IGNORE_CI: '1', QUADRO_IGNORE_CI: '1' }
+// A pinned date (REPO_TOOLING_TODAY) must never move expiry checks in CI.
+const CI_FORCED_ENV = { DEV_IGNORE_CI: '1', QUADRO_IGNORE_CI: '1', REPO_TOOLING_TODAY: '' }
 let interrupted = false
 
 main().then((code) => {
   process.exitCode = code
+}, (error) => {
+  // An unexpected error (for example an unwritable log) still ends with a
+  // one-line diagnosis and the "failed" exit code, not a raw rejection.
+  process.stderr.write(`ci-local: internal error: ${error?.stack ?? error}\n`)
+  process.exitCode = EXIT.failed
 })
 
 async function main() {

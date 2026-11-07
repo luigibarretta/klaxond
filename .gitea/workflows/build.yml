@@ -37,22 +37,20 @@ jobs:
       # (`node third_party/repo-tooling/ci-local.mjs --quick`, then the full
       # gate). Every manifest step runs in exactly one call below
       # (scripts/check-ci-local-jobs.mjs). Plain workflow steps are CI-only:
-      # checkouts, the repo-tooling pin check, toolchains, caches, system
-      # packages, image build/publish, promotion and deploy.
+      # checkouts, toolchains, caches, system packages, image build/publish,
+      # promotion and deploy.
       - name: Checkout
         uses: actions/checkout@v4
 
-      # CI-only: verifies third_party/repo-tooling against a checkout of the
-      # commit pinned in dependencies/repo-tooling.sha.
+      # CI-only: the checkout of the commit pinned in
+      # dependencies/repo-tooling.sha that the repo-tooling-sync step
+      # compares third_party/repo-tooling with.
       - name: Checkout pinned repository tooling
         uses: actions/checkout@v4
         with:
           repository: luigibarretta/repo-tooling
-          ref: 7c1288562bb7ae8c5e111cf7da965cc69830cdd7
+          ref: b8ee6b7218d4d01c90403d1d24826006242a6a23
           path: vendor/repo-tooling
-
-      - name: Verify pinned repository tooling
-        run: scripts/check-repo-tooling-sync.sh
 
       # CI-only provisioning: the guards use ripgrep.
       - name: Install check tools
@@ -103,7 +101,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             export RELEASE_CONTRACT_TAG="$GITHUB_REF_NAME"
           fi
-          node third_party/repo-tooling/ci-local.mjs --ci --only ci-local-jobs,rsa-guard,auth-gold,release-pipeline,release-contract,loc,nasa,static-check,audit-lockfiles,rust-fmt,sdk-go
+          node third_party/repo-tooling/ci-local.mjs --ci --only repo-tooling-sync,ci-local-jobs,rsa-guard,auth-gold,release-pipeline,release-contract,loc,nasa,static-check,audit-lockfiles,rust-fmt,sdk-go
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@v2

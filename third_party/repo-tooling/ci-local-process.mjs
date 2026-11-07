@@ -1,6 +1,6 @@
 // Process execution with per-step timeouts, output capture and host guards.
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { delimiter, join, resolve } from 'node:path'
 
 export const KILL_GRACE_MS = 5000
@@ -173,6 +173,18 @@ export function lockWrapperProblem(lockDir, pathValue) {
         return `${join(entry, name)} shadows the build-lock wrapper in ${lockDir}`
       }
     }
+  }
+  return null
+}
+
+// Returns the first executable `name` on a PATH-style value, or null.
+export function findOnPath(name, pathValue) {
+  for (const entry of (pathValue || '').split(delimiter).filter(Boolean)) {
+    const candidate = join(entry, name)
+    try {
+      accessSync(candidate, constants.X_OK)
+      if (statSync(candidate).isFile()) return candidate
+    } catch { /* not here */ }
   }
   return null
 }

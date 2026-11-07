@@ -6,7 +6,27 @@ export function findFunctions(rel, text) {
   if (['.ts', '.tsx', '.js', '.jsx', '.mjs'].includes(ext)) return findEcmaFunctions(rel, text)
   if (ext === '.svelte') return findSvelteFunctions(rel, text)
   if (ext === '.py') return findPythonFunctions(rel, text)
+  if (ext === '.go') return findGoFunctions(rel, text)
   return []
+}
+
+// Go: top-level functions and methods, including type parameters
+// (`func (r *T) Name[K comparable](...)`). Function literals are not detected.
+function findGoFunctions(rel, text) {
+  const results = []
+  const regex = /^func\s*(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^(]*\])?\s*\(/gm
+  for (const match of text.matchAll(regex)) {
+    const paramsOpen = match.index + match[0].length - 1
+    const paramsClose = findMatching(text, paramsOpen, '(', ')')
+    if (paramsClose < 0) continue
+    const bodyOpen = findNextBodyOpen(text, paramsClose)
+    if (bodyOpen < 0 || text.slice(paramsClose, bodyOpen).includes('\nfunc ')) continue
+    const bodyClose = findMatchingBrace(text, bodyOpen)
+    if (bodyClose < 0) continue
+    const paramsText = text.slice(paramsOpen + 1, paramsClose)
+    results.push(buildFunctionResult({ rel, text, startIndex: match.index, endIndex: bodyClose, name: match[1], kind: 'func', paramsText, syntax: 'go' }))
+  }
+  return results
 }
 
 function findRustFunctions(rel, text) {
@@ -122,13 +142,14 @@ function buildFunctionResult({ rel, text, startIndex, endIndex, name, kind, para
 function countParameters(paramsText, syntax) {
   const trimmed = paramsText.trim()
   if (!trimmed) return 0
-  const params = splitTopLevel(trimmed).filter((part) => part.trim().length > 0)
+  // Go has no angle-bracket generics, and `<-chan` would unbalance them.
+  const params = splitTopLevel(trimmed, syntax !== 'go').filter((part) => part.trim().length > 0)
   if (syntax === 'rust') return params.filter((part) => !/^(?:mut\s+)?(?:&\s*)?(?:mut\s+)?self\b/.test(part.trim())).length
   if (syntax === 'python') return params.filter((part) => !['self', 'cls'].includes(part.trim().split(/[=:]/)[0].trim())).length
   return params.length
 }
 
-function splitTopLevel(text) {
+function splitTopLevel(text, useAngles = true) {
   const parts = []
   let current = ''
   const depth = { paren: 0, bracket: 0, brace: 0, angle: 0 }
@@ -147,7 +168,7 @@ function splitTopLevel(text) {
       current += char
       continue
     }
-    updateDepth(depth, char)
+    if (useAngles || (char !== '<' && char !== '>')) updateDepth(depth, char)
     if (char === ',' && isFlat(depth)) {
       parts.push(current)
       current = ''

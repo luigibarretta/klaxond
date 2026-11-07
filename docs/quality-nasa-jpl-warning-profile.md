@@ -24,6 +24,11 @@ trial a future blocking gate:
 NASA_WARNINGS_FAIL=1 npm run nasa:warn
 ```
 
+The `nasa` step of `ci-local.json` (and therefore CI) runs the profile as a
+ratchet: `npm run nasa:warn -- --ratchet` fails when a warning counter rises
+above `scripts/nasa-baseline.json`, and asks for
+`npm run nasa:warn -- --update` (committed with the refactor) when one drops.
+
 Useful knobs:
 
 - `NASA_WARN_FILE_LINES`: default `300`.

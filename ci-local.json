@@ -18,6 +18,13 @@
   },
   "steps": [
     {
+      "name": "repo-tooling-sync",
+      "description": "third_party/repo-tooling matches dist/ of the pinned commit (CI checks out the pin at vendor/repo-tooling; locally set REPO_TOOLING_UPSTREAM)",
+      "uses": "repo-tooling-sync",
+      "quick": true,
+      "timeout_s": 60
+    },
+    {
       "name": "ci-local-jobs",
       "description": "Every manifest step runs in exactly one CI job (scripts/check-ci-local-jobs.mjs)",
       "run": "node --test scripts/check-ci-local-jobs.test.mjs && node scripts/check-ci-local-jobs.mjs",
@@ -61,11 +68,11 @@
     },
     {
       "name": "nasa",
-      "description": "npm run nasa:warn (warning-only)",
+      "description": "npm run nasa:warn -- --ratchet (counters in scripts/nasa-baseline.json never rise)",
       "uses": "nasa",
       "quick": true,
       "timeout_s": 300,
-      "env": { "NASA_WARNINGS_FAIL": "0" }
+      "with": { "args": ["--ratchet"] }
     },
     {
       "name": "static-check",
@@ -86,11 +93,13 @@
           "ignore": [
             {
               "id": "RUSTSEC-2023-0071",
-              "reason": "rsa Marvin timing side channel, no fixed release; reachable only through public-key OIDC/JWT/WebAuthn verification; klaxond performs no RSA private-key operation (enforced by rsa-guard, docs/security-rsa-risk.md)"
+              "reason": "rsa Marvin timing side channel, no fixed release; reachable only through public-key OIDC/JWT/WebAuthn verification; klaxond performs no RSA private-key operation (enforced by rsa-guard, docs/security-rsa-risk.md)",
+              "until": "2027-05-01"
             },
             {
               "id": "RUSTSEC-2026-0387",
-              "reason": "crypto-bigint 0.5 timing variability, reachable only through elliptic-curve 0.13 public-key verification (auth-modules jsonwebtoken/openidconnect -> p256/p384, webauthn-rs -> crypto-glue); klaxond performs no EC private-key operation (enforced by rsa-guard); the 0.7.6 fix needs elliptic-curve 0.14, which no jsonwebtoken release uses yet (docs/security/rustsec-policy.md)"
+              "reason": "crypto-bigint 0.5 timing variability, reachable only through elliptic-curve 0.13 public-key verification (auth-modules jsonwebtoken/openidconnect -> p256/p384, webauthn-rs -> crypto-glue); klaxond performs no EC private-key operation (enforced by rsa-guard); the 0.7.6 fix needs elliptic-curve 0.14, which no jsonwebtoken release uses yet (docs/security/rustsec-policy.md)",
+              "until": "2027-05-01"
             }
           ]
         },

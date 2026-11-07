@@ -1,25 +1,24 @@
 {
-  "maxLines": 400,
-  "allowedGrowthLines": 50,
+  "extends": "fleet-default",
   "roots": [
     "src",
     "static",
     "tests",
     "scripts"
   ],
-  "extensions": [
-    ".rs",
-    ".js",
-    ".mjs",
-    ".ts",
-    ".css",
-    ".html"
-  ],
+  "overrides": {
+    "extensions": {
+      "value": [".rs", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".svelte", ".py", ".go", ".swift", ".sql", ".css", ".html"],
+      "reason": "The web console is hand-written CSS and HTML under static/; they were counted before 0.6 and stay counted (tightens the preset)."
+    }
+  },
   "ignore": {
     "static/vendor": {
+      "kind": "vendored",
       "reason": "Vendored Swagger UI assets; update from upstream instead of hand-splitting."
     },
     "static/mermaid.min.js": {
+      "kind": "vendored",
       "reason": "Vendored minified Mermaid bundle; update from upstream instead of hand-editing."
     }
   },

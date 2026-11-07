@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
-import { isPlainObject, nonEmptyString, rejectUnknown } from './ci-local-util.mjs'
+import { isPlainObject, nonEmptyString, rejectUnknown, relativePath } from './ci-local-util.mjs'
 
 const COMPARE_KEYS = new Set(['file', 'json_pointer', 'path', 'ref', 'on_change', 'on_missing_ref', 'label'])
 const POLICIES = new Set(['warn', 'fail'])
@@ -70,7 +70,7 @@ export function verifyWritesClean(root, writes) {
 export function validateCompareConfig(raw, where) {
   const errors = []
   rejectUnknown(raw, COMPARE_KEYS, where, errors)
-  if (!nonEmptyString(raw.file)) errors.push(`${where}.file is required`)
+  if (!relativePath(raw.file)) errors.push(`${where}.file must be a relative path inside the repository`)
   if ((raw.json_pointer === undefined) === (raw.path === undefined)) errors.push(`${where} must set exactly one of json_pointer or path`)
   if (raw.json_pointer !== undefined && !(typeof raw.json_pointer === 'string' && (raw.json_pointer === '' || raw.json_pointer.startsWith('/')))) {
     errors.push(`${where}.json_pointer must be an RFC 6901 pointer such as /route_count`)

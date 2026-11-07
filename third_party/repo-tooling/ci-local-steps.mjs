@@ -4,17 +4,23 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { planAudit, validateAuditConfig } from './ci-local-audit.mjs'
+import { ECOSYSTEMS, OPTIONAL_ECOSYSTEMS, TOOL_HINTS, planAudit, validateAuditConfig } from './ci-local-audit.mjs'
 import { fixtureTail, startFixtures, stopFixtures } from './ci-local-fixture.mjs'
 import { changedSince, compareToRef, snapshotWrites, validateCompareConfig, verifyWritesClean } from './ci-local-git.mjs'
-import { commandArgv, runProcess, substituteEnv, substituteRoot } from './ci-local-process.mjs'
+import { commandArgv, findOnPath, runProcess, substituteEnv, substituteRoot } from './ci-local-process.mjs'
 import { rejectUnknown } from './ci-local-util.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
+const WRITE_ARGS = new Set(['--update', '--update-digest'])
+// Built-ins that run a command shipped next to this file; `args` are the
+// fixed leading arguments, `with.args` follow them.
 const TOOL_SCRIPTS = {
-  loc: 'check-loc.mjs',
-  nasa: 'check-nasa-warnings.mjs',
-  'release-contract': 'check-release-contract.mjs',
+  loc: { script: 'check-loc.mjs', args: [] },
+  nasa: { script: 'check-nasa-warnings.mjs', args: [] },
+  'release-contract': { script: 'check-release-contract.mjs', args: [] },
+  'check-vendored-dep': { script: 'check-vendored-dep.mjs', args: [] },
+  'repo-tooling-sync': { script: 'check-vendored-dep.mjs', args: ['--repo-tooling'] },
+  'env-example': { script: 'check-env-example.mjs', args: [] },
 }
 
 // Validates built-in `with` blocks up front so a typo fails before any step runs.
@@ -88,8 +94,15 @@ async function executeBody(step, context, fixtureEnv) {
   const deadline = Date.now() + step.timeoutS * 1000
   if (step.uses === 'audit-all-lockfiles') return executeAudit(step, context, deadline, fixtureEnv)
   if (step.uses === 'compare-to-ref') return compareToRef(context.root, step.config, context.output)
+  // CI verifies; it never rewrites baselines, counters or digests.
+  const writing = (step.with.args ?? []).filter((arg) => WRITE_ARGS.has(arg))
+  if (step.uses && context.ci && writing.length > 0) {
+    const message = `${writing.join(', ')} rewrites committed baselines and is refused under --ci`
+    context.output(`ci-local: ${message}\n`)
+    return { status: 'fail', detail: message }
+  }
   const argv = step.uses
-    ? [process.execPath, join(here, TOOL_SCRIPTS[step.uses]), ...(step.with.args ?? [])]
+    ? [process.execPath, join(here, TOOL_SCRIPTS[step.uses].script), ...TOOL_SCRIPTS[step.uses].args, ...(step.with.args ?? [])]
     : commandArgv(step.run).map((part) => substituteRoot(part, context.root))
   return runOne({ argv, cwd: step.cwd, extraEnv: {} }, step, context, { deadline, fixtureEnv })
 }
@@ -134,28 +147,39 @@ async function executeAudit(step, context, deadline, fixtureEnv) {
     return { status: 'fail', detail: error.message }
   }
   reportPlan(plan, step.config.ecosystems, context.output)
+  const notices = plan.notices
   if (plan.problems.length > 0) {
     for (const problem of plan.problems) context.output(`audit-all-lockfiles: ERROR ${problem}\n`)
-    return { status: 'fail', detail: `${plan.problems.length} lockfile coverage problem(s)` }
+    return { status: 'fail', detail: `${plan.problems.length} audit configuration problem(s)`, notices }
+  }
+  const missingTool = plan.commands.find((command) => command.requiresTool &&
+    !findOnPath(command.requiresTool, stepEnvironment(step, context, fixtureEnv).PATH))
+  if (missingTool) {
+    const message = `${missingTool.requiresTool} is not on PATH, but ${missingTool.label} needs it; install it: ${TOOL_HINTS[missingTool.requiresTool]}`
+    context.output(`audit-all-lockfiles: ERROR ${message}\n`)
+    return { status: 'fail', detail: message, notices }
   }
   const failed = []
   for (const command of plan.commands) {
     context.output(`\n--- ${command.label}\n`)
-    const commandSpec = { argv: command.argv, cwd: command.cwd, extraEnv: command.env ?? {} }
+    const argv = command.argv.map((part) => substituteRoot(part, context.root))
+    const commandSpec = { argv, cwd: command.cwd, extraEnv: command.env ?? {} }
     const result = await runOne(commandSpec, step, context, { deadline, fixtureEnv })
-    if (result.status === 'timeout') return result
+    if (result.status === 'timeout') return { ...result, notices }
     if (result.status !== 'ok') failed.push(command.label)
   }
   // Report every vulnerable lockfile in one run instead of one per push.
-  if (failed.length > 0) return { status: 'fail', detail: `${failed.length}/${plan.commands.length} audit(s) failed: ${failed.join('; ')}` }
-  return { status: 'ok', detail: `${plan.commands.length} audit(s)` }
+  if (failed.length > 0) return { status: 'fail', detail: `${failed.length}/${plan.commands.length} audit(s) failed: ${failed.join('; ')}`, notices }
+  return { status: 'ok', detail: `${plan.commands.length} audit(s)`, notices }
 }
 
 function reportPlan(plan, ecosystems, output) {
-  for (const ecosystem of ['cargo', 'npm']) {
+  for (const ecosystem of ECOSYSTEMS) {
     const paths = plan.selected[ecosystem]
+    if (OPTIONAL_ECOSYSTEMS.has(ecosystem) && paths.length === 0 && !ecosystems.includes(ecosystem)) continue
     const scope = ecosystems.includes(ecosystem) ? 'audit' : 'covered by another step'
     output(`audit-all-lockfiles: ${ecosystem} ${paths.length} lockfile(s) [${scope}]${paths.length ? ': ' + paths.join(', ') : ''}\n`)
   }
   for (const entry of plan.excluded) output(`audit-all-lockfiles: excluded ${entry.path} (${entry.reason})\n`)
+  for (const applied of plan.vexApplied) output(`audit-all-lockfiles: VEX not_affected applied: ${applied}\n`)
 }

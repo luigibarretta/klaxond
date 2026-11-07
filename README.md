@@ -897,8 +897,9 @@ explicit, reviewed and covered by the complete authentication test suite.
 
 `npm run nasa:warn` runs a warning-only maintainability profile inspired by
 NASA/JPL rules. It reports files over 300 LOC, functions over 60 LOC and
-functions with more than 6 parameters, but does not fail by default. The same
-warning profile runs in CI. See
+functions with more than 6 parameters, but does not fail by default. CI runs it
+as a ratchet: the counters recorded in `scripts/nasa-baseline.json` may only go
+down. See
 [`docs/quality-nasa-jpl-warning-profile.md`](docs/quality-nasa-jpl-warning-profile.md)
 for thresholds, environment knobs, and the refactor policy. The warning profile
 is a review signal: do not split Rust code solely to satisfy LOC thresholds when

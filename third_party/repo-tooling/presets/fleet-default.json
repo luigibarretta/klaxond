@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "name": "fleet-default",
+  "description": "Fleet standard (2026-11-07): one 400-line file limit everywhere, zero growth, ratchet down, no part_NN fragments. Target 300 via the ratchet in a later minor release.",
+  "loc": {
+    "maxLines": 400,
+    "allowedGrowthLines": 0,
+    "ratchet": true,
+    "requireIgnoreKind": true,
+    "extensions": [
+      ".rs",
+      ".ts", ".tsx", ".mts", ".cts",
+      ".js", ".jsx", ".mjs", ".cjs",
+      ".svelte",
+      ".py",
+      ".go",
+      ".swift",
+      ".sql"
+    ],
+    "fragmentPatterns": ["(^|/)part_\\d+(/|\\.[^/]+$)"]
+  },
+  "nasa": {
+    "fileWarnLines": 300,
+    "functionWarnLines": 60,
+    "maxParameters": 6
+  }
+}

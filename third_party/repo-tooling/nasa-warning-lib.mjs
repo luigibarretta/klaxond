@@ -1,31 +1,27 @@
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
-import { extname, join, relative, sep } from 'node:path'
+import { readFileSync } from 'node:fs'
 
+import { loadLocPolicy } from './loc-config.mjs'
+import { countLines, toRepoPath, walkSources } from './loc-scan.mjs'
 import { findFunctions } from './nasa-warning-functions.mjs'
+import { today } from './policy-dates.mjs'
 
-const defaultIgnoredDirs = new Set([
-  '.git',
-  '.next',
-  '.turbo',
-  '__pycache__',
-  'coverage',
-  'dist',
-  'node_modules',
-  'target',
-])
+// Rule keys shared by the report, the --json output and nasa-baseline.json.
+export const RULES = ['fileLines', 'functionLines', 'parameters']
+
+// The source set is the LOC baseline's (roots, extensions, ignore), resolved
+// through its preset when it `extends` one. An invalid baseline or an
+// unusable root is an error: counting nothing must never pass.
+export function nasaSources(repoRoot, locBaseline) {
+  const { policy, errors } = loadLocPolicy(locBaseline, { today: today() })
+  const scan = walkSources({ repoRoot, roots: policy.roots, extensions: policy.extensions, ignoredPaths: Object.keys(policy.ignore) })
+  const problems = [...errors, ...scan.errors, ...scan.missingRoots.map((root) => `root does not exist: ${root}`)]
+  return { files: scan.files, presetNasa: policy.nasa, errors: problems }
+}
 
 export function buildNasaWarningReport({ repoRoot, locBaseline, policy }) {
-  const roots = asStringArray(locBaseline.roots)
-  const extensions = new Set(asStringArray(locBaseline.extensions))
-  const ignoredRepoPaths = new Set(Object.keys(locBaseline.ignore ?? {}))
-  const files = []
-
-  for (const root of roots) {
-    const fullPath = join(repoRoot, root)
-    if (existsSync(fullPath)) walk(repoRoot, fullPath, files, extensions, ignoredRepoPaths)
-  }
-
+  const { files, errors } = nasaSources(repoRoot, locBaseline)
   const report = {
+    errors,
     filesChecked: files.length,
     fileWarnings: [],
     functionWarnings: [],
@@ -44,6 +40,11 @@ export function buildNasaWarningReport({ repoRoot, locBaseline, policy }) {
   }
 
   report.totalWarnings = report.fileWarnings.length + report.functionWarnings.length + report.parameterWarnings.length
+  report.counters = {
+    fileLines: report.fileWarnings.length,
+    functionLines: report.functionWarnings.length,
+    parameters: report.parameterWarnings.length,
+  }
   return report
 }
 
@@ -58,41 +59,6 @@ function collectFunctionWarnings(report, rel, text, policy) {
   }
 }
 
-function walk(repoRoot, dir, out, extensions, ignoredRepoPaths) {
-  for (const entry of readdirSync(dir)) {
-    if (defaultIgnoredDirs.has(entry)) continue
-    const filePath = join(dir, entry)
-    const rel = toRepoPath(repoRoot, filePath)
-    if (isIgnored(rel, ignoredRepoPaths)) continue
-    const stat = lstatSync(filePath)
-    if (stat.isDirectory()) {
-      walk(repoRoot, filePath, out, extensions, ignoredRepoPaths)
-    } else if (extensions.has(extname(filePath))) {
-      out.push(filePath)
-    }
-  }
-}
-
 function warning(file, line, actual, limit, message, name = '') {
   return { file, line, actual, limit, message, name }
-}
-
-function asStringArray(value) {
-  return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item.length > 0) : []
-}
-
-function isIgnored(rel, ignoredRepoPaths) {
-  for (const ignored of ignoredRepoPaths) {
-    if (rel === ignored || rel.startsWith(ignored + '/')) return true
-  }
-  return false
-}
-
-function toRepoPath(repoRoot, filePath) {
-  return relative(repoRoot, filePath).split(sep).join('/')
-}
-
-function countLines(text) {
-  if (!text) return 0
-  return text.endsWith('\n') ? text.split('\n').length - 1 : text.split('\n').length
 }

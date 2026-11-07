@@ -7,7 +7,9 @@ import {
   validateEnvObject,
 } from './ci-local-util.mjs'
 
-export const BUILTINS = new Set(['audit-all-lockfiles', 'compare-to-ref', 'loc', 'nasa', 'release-contract'])
+export const BUILTINS = new Set([
+  'audit-all-lockfiles', 'check-vendored-dep', 'compare-to-ref', 'env-example', 'loc', 'nasa', 'release-contract', 'repo-tooling-sync',
+])
 export const DEFAULT_MANIFESTS = ['ci-local.json', 'scripts/ci-local.json']
 const NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/
 const TOP_KEYS = new Set(['schemaVersion', 'strict', 'log', 'logMaxKbPerStep', 'defaults', 'pressure', 'fixtures', 'steps'])
