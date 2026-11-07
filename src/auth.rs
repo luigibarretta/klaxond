@@ -28,12 +28,15 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_magic_link;
+#[cfg(test)]
 mod tests_session;
 #[cfg(test)]
 mod tests_step_up;
 mod tokens;
 mod totp_handlers;
 mod totp_replay;
+pub(crate) use totp_replay::consume_basic_totp;
 
 pub use authenticate::authenticate;
 pub use backchannel_logout::backchannel_logout;
@@ -47,7 +50,7 @@ pub use oidc_client::{spawn_refresh as spawn_oidc_provider_refresh, warm as warm
 pub use session::{api_logout, issue_session_cookie};
 pub(crate) use step_up::{
     StepUpChallenge, finish_totp_step_up, finish_webauthn_step_up, pending_step_up_challenge,
-    pending_step_up_user_sub, redirect_location_after_primary,
+    pending_step_up_user_sub, redirect_location_after_primary, user_has_totp,
 };
 pub use tokens::{public_token, required_scope, scopes_allow, token_hash};
 pub use totp_handlers::{totp_disable, totp_enable, totp_start};

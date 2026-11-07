@@ -3,7 +3,7 @@ use crate::state::AppState;
 use crate::totp;
 use crate::util::now_epoch_i64;
 
-pub(super) fn consume_basic_totp(state: &AppState, code: &str) -> Result<bool, String> {
+pub(crate) fn consume_basic_totp(state: &AppState, code: &str) -> Result<bool, String> {
     state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
         let basic = &mut cfg.auth.basic;

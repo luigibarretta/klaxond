@@ -1,5 +1,25 @@
 # Klaxond — CHANGELOG
 
+## Unreleased
+
+- Security (K-01): `POST /api/auth/magic/request` no longer returns the
+  magic link in the JSON response or redirects the browser to the callback.
+  The link is delivered only out of band over SMTP to `SMTP_TO`, the answer is
+  identical for known and unknown usernames (`202 {sent: true}` or a redirect
+  to the login page), and magic links are now opt-in: they require
+  `[auth] magic_link_enabled = true`, SMTP, `KLAXOND_PUBLIC_URL` and a local
+  account without TOTP. Otherwise the endpoints return 404 and the login page
+  hides the form.
+- Security (K-01 hardening): magic links now also require SMTP STARTTLS
+  (plain SMTP alerts are unchanged), a new request revokes the previous unused
+  link, a global cap of 5 issued links per 15 minutes stops further mail while
+  keeping the uniform `202`, and the mail includes the requester IP and time.
+- Security: `POST /api/auth/step-up/totp/setup/start` and `/setup/confirm` now
+  answer `409 Conflict` when the user already has a TOTP authenticator (a
+  step-up factor or the basic account's built-in TOTP). Previously a
+  password-only attacker could enrol a new authenticator, silently replace the
+  owner's factor and pass the TOTP step-up; only the UI hid the button.
+
 ## 0.21.4 — 2026-10-24
 
 - Fix LDAP login over `ldaps://`: the build enabled both the ring and

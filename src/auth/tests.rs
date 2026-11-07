@@ -151,7 +151,8 @@ fn magic_link_issue_and_consume_is_single_use() {
     runtime.auth.basic.password_hash = hash_password("correct horse battery staple").unwrap();
     state.replace_config(runtime.clone());
 
-    assert!(magic_link_enabled(&runtime.auth));
+    // Basic auth alone no longer enables magic links (explicit opt-in + SMTP).
+    assert!(!magic_link_enabled(&runtime));
     assert!(issue_magic_link(&state, &runtime.auth, "nobody", "/status").is_none());
 
     let token = issue_magic_link(&state, &runtime.auth, "luigi", "/status").expect("token");

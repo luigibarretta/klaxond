@@ -24,6 +24,38 @@ pub(crate) async fn post_to_smtp_with_config(
     let Some(email) = message(cfg, severity, parts) else {
         return false;
     };
+    deliver(cfg, email, timeout_s).await
+}
+
+fn smtp_configured(cfg: &RuntimeConfig) -> bool {
+    !cfg.smtp_host.is_empty()
+        && !cfg.smtp_user.is_empty()
+        && !cfg.smtp_pass.is_empty()
+        && !cfg.smtp_to.is_empty()
+}
+
+/// True when every SMTP field needed to deliver a message is configured.
+pub(crate) fn smtp_ready(cfg: &RuntimeConfig) -> bool {
+    smtp_configured(cfg) && !cfg.smtp_from.trim().is_empty()
+}
+
+/// Sends a plain-text message to the configured operator recipient (`smtp_to`).
+pub(crate) async fn send_operator_text(
+    cfg: &RuntimeConfig,
+    subject: &str,
+    body: String,
+    timeout_s: u64,
+) -> bool {
+    if !smtp_ready(cfg) {
+        return false;
+    }
+    let Some(email) = plain_message(cfg, subject.to_string(), body) else {
+        return false;
+    };
+    deliver(cfg, email, timeout_s).await
+}
+
+async fn deliver(cfg: &RuntimeConfig, email: Message, timeout_s: u64) -> bool {
     let Some(mailer) = transport(cfg, timeout_s) else {
         return false;
     };
@@ -40,13 +72,6 @@ pub(crate) async fn post_to_smtp_with_config(
     }
 }
 
-fn smtp_configured(cfg: &RuntimeConfig) -> bool {
-    !cfg.smtp_host.is_empty()
-        && !cfg.smtp_user.is_empty()
-        && !cfg.smtp_pass.is_empty()
-        && !cfg.smtp_to.is_empty()
-}
-
 fn message(cfg: &RuntimeConfig, severity: &str, parts: &Parts) -> Option<Message> {
     let mut body = format!("{}\n\nseverity: {severity}\n", parts.body);
     if !parts.actions.is_empty() {
@@ -60,6 +85,10 @@ fn message(cfg: &RuntimeConfig, severity: &str, parts: &Parts) -> Option<Message
                 .join("\n"),
         );
     }
+    plain_message(cfg, format!("[{severity}] {}", parts.title), body)
+}
+
+fn plain_message(cfg: &RuntimeConfig, subject: String, body: String) -> Option<Message> {
     let from = cfg
         .smtp_from
         .parse()
@@ -77,7 +106,7 @@ fn message(cfg: &RuntimeConfig, severity: &str, parts: &Parts) -> Option<Message
     Message::builder()
         .from(from)
         .to(to)
-        .subject(format!("[{severity}] {}", parts.title))
+        .subject(subject)
         .header(ContentType::TEXT_PLAIN)
         .body(body)
         .map_err(|error| tracing::warn!("smtp message build failed: {error}"))

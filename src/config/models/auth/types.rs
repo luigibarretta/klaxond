@@ -27,6 +27,9 @@ pub struct AuthConfig {
     pub passkeys: Vec<PasskeyRecord>,
     #[serde(default)]
     pub totp_factors: Vec<TotpRecord>,
+    /// Explicit opt-in for out-of-band magic-link login (also requires SMTP).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub magic_link_enabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

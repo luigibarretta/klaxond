@@ -38,6 +38,7 @@ impl Default for AuthConfig {
             api_keys: Vec::new(),
             passkeys: Vec::new(),
             totp_factors: Vec::new(),
+            magic_link_enabled: false,
         }
     }
 }

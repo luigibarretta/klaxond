@@ -8,6 +8,20 @@ use axum::http::{HeaderMap, Response};
 
 const STEP_UP_TTL_SECONDS: f64 = 600.0;
 
+/// True when `user_sub` already owns a TOTP authenticator: a step-up factor
+/// in `totp_factors`, or the basic-auth account's built-in TOTP (enabled or
+/// with a stored secret). Callers use it to refuse silent re-enrolment, which
+/// would let a password-only attacker replace the victim's authenticator.
+pub(crate) fn user_has_totp(auth: &AuthConfig, user_sub: &str) -> bool {
+    let basic = &auth.basic;
+    let basic_owner = !basic.username.trim().is_empty() && basic.username == user_sub;
+    (basic_owner && (basic.totp_enabled || !basic.totp_secret.trim().is_empty()))
+        || auth
+            .totp_factors
+            .iter()
+            .any(|record| record.user_sub == user_sub)
+}
+
 pub(crate) fn redirect_location_after_primary(
     state: &AppState,
     auth: &AuthConfig,

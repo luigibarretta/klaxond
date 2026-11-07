@@ -71,7 +71,7 @@ pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<
     login_page(
         &auth.mode,
         auth.webauthn.enabled,
-        magic_link_enabled(&auth),
+        magic_link_enabled(&state.cfg()),
         &return_to,
     )
 }

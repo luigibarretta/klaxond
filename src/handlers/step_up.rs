@@ -18,6 +18,7 @@ pub(super) use page::step_up_page;
 mod tests;
 
 const STEP_UP_TOTP_TTL_SECONDS: f64 = 600.0;
+const TOTP_ALREADY_REGISTERED: &str = "a TOTP authenticator is already registered for this user";
 
 pub(super) fn step_up_status_response(state: &AppState, full_path: &str) -> Response<Body> {
     let Some(token) = query_value(full_path, "token") else {
@@ -41,7 +42,7 @@ pub(super) fn step_up_status_response(state: &AppState, full_path: &str) -> Resp
             "email": challenge.user.email,
         },
         "passkey_registered": cfg.passkeys.iter().any(|record| record.user_sub == challenge.user.sub),
-        "totp_registered": cfg.totp_factors.iter().any(|record| record.user_sub == challenge.user.sub),
+        "totp_registered": auth::user_has_totp(&cfg, &challenge.user.sub),
     }))
 }
 
@@ -55,6 +56,11 @@ pub(super) fn step_up_totp_setup_start(state: &AppState, body: Bytes) -> Respons
             "unknown or expired TOTP step-up request",
         );
     };
+    // Step-up setup is first-time enrolment only: replacing an existing
+    // authenticator here would let a password-only attacker pass step-up.
+    if auth::user_has_totp(&state.cfg().auth, &challenge.user.sub) {
+        return text(StatusCode::CONFLICT, TOTP_ALREADY_REGISTERED);
+    }
     let secret = totp::generate_secret();
     let label = totp_label(&challenge);
     let request_id = random_hex(16);
@@ -153,19 +159,23 @@ fn complete_totp_setup(
 ) -> Response<Body> {
     let record = match state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
+        // Re-check under the config write lock: a factor may have been
+        // registered after setup/start (e.g. two concurrent setup requests).
+        if auth::user_has_totp(&cfg.auth, &pending.user_sub) {
+            lock_mutex(&state.totp_registrations, "totp registrations").remove(request_id);
+            return Ok(None);
+        }
         let record = totp_record(&pending, counter);
-        cfg.auth
-            .totp_factors
-            .retain(|existing| existing.user_sub != record.user_sub);
         cfg.auth.totp_factors.push(record.clone());
         if let Err(err) = save_auth(&state.paths, &cfg.auth) {
             return Err(err.to_string());
         }
         state.replace_config(cfg);
         lock_mutex(&state.totp_registrations, "totp registrations").remove(request_id);
-        Ok(record)
+        Ok(Some(record))
     }) {
-        Ok(Ok(record)) => record,
+        Ok(Ok(Some(record))) => record,
+        Ok(Ok(None)) => return text(StatusCode::CONFLICT, TOTP_ALREADY_REGISTERED),
         Ok(Err(err)) | Err(err) => return text(StatusCode::INTERNAL_SERVER_ERROR, &err),
     };
     issue_totp_step_up_session(state, &pending.step_up, &record.user_sub)
@@ -195,6 +205,17 @@ fn issue_totp_step_up_session(state: &AppState, token: &str, user_sub: &str) -> 
 }
 
 fn consume_totp_factor(state: &AppState, user_sub: &str, code: &str) -> Result<bool, String> {
+    // The basic account may hold only its built-in TOTP (never a step-up
+    // factor, since re-enrolment is refused): verify that one instead.
+    let basic_only = {
+        let cfg = state.cfg();
+        cfg.auth.basic.username == user_sub
+            && !cfg.auth.basic.totp_secret.is_empty()
+            && !cfg.auth.totp_factors.iter().any(|r| r.user_sub == user_sub)
+    };
+    if basic_only {
+        return auth::consume_basic_totp(state, code);
+    }
     state.with_config_write_lock(|| {
         let mut cfg = state.cfg();
         let Some(record) = cfg

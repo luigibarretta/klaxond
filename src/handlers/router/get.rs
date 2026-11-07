@@ -238,7 +238,10 @@ fn auth_config_response(state: &AppState, authed_user: Option<&User>) -> Respons
 
 fn auth_methods_response(state: &AppState) -> Response<Body> {
     let cfg = state.cfg();
-    json_response(auth_methods_payload(&cfg.auth))
+    json_response(auth_methods_payload(
+        &cfg.auth,
+        auth::magic_link_enabled(&cfg),
+    ))
 }
 
 fn auth_tokens_response(state: &AppState) -> Response<Body> {

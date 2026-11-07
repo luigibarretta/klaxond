@@ -13,7 +13,7 @@ fn auth_methods_payload_maps_hardware_key_and_magic_link() {
     auth.basic.totp_enabled = true;
     auth.webauthn.enabled = true;
 
-    let payload = auth_methods_payload(&auth);
+    let payload = auth_methods_payload(&auth, true);
     let actual = payload["methods"]
         .as_array()
         .expect("methods")
@@ -51,7 +51,7 @@ fn auth_methods_payload_enables_configured_ldap() {
     auth.ldap.url = "ldaps://directory.example.com:636".to_string();
     auth.ldap.bind_dn_template = "uid={username},ou=people,dc=example,dc=com".to_string();
 
-    let payload = auth_methods_payload(&auth);
+    let payload = auth_methods_payload(&auth, false);
     let methods = payload["methods"].as_array().expect("methods");
 
     assert!(

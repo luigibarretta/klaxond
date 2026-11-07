@@ -186,6 +186,25 @@ user and have an eight-hour absolute lifetime.
 Account authentication failures and lockouts use the same persistent backend
 with hashed keys and transactional updates; bounded per-IP and magic-link burst
 limits remain in memory by design.
+Magic-link login is off unless `magic_link_enabled = true` (`[auth]` bootstrap or
+`/data/auth-config.json`), basic auth,
+SMTP with STARTTLS (`SMTP_STARTTLS=true`) and `KLAXOND_PUBLIC_URL` are all
+configured and the local account has no TOTP factor. The request endpoint
+answers identically for every username and never returns the link. A new
+request revokes the previous unused link, and at most 5 links are issued per
+15 minutes across all requesters; beyond that the answer is unchanged but no
+mail is sent. The mail names the requester IP and the request time.
+
+> **Warning — magic links.**
+> - `[auth] magic_link_enabled` in the TOML is read **only on first start**,
+>   when `/data/auth-config.json` does not exist yet (sidecar bootstrap).
+>   After that, changing the TOML has no effect: set `magic_link_enabled` in
+>   `/data/auth-config.json` and restart Klaxond to turn magic links on or off
+>   (the Authentication tab does not expose this flag).
+> - The link is e-mailed to `SMTP_TO`, i.e. the **alert mailbox**, not to a
+>   per-user address. Anyone who can read the alert mailbox can sign in as the
+>   local account; enable magic links only if that mailbox is private to the
+>   account owner.
 `auth.trusted_proxy.trusted_cidrs` must contain only the addresses or narrow
 subnets of reverse proxies that are allowed to supply forwarded identity and
 client-IP headers. The default trusts loopback only; split-host deployments must

@@ -45,7 +45,7 @@ pub(super) fn anonymous_user() -> User {
 
 pub(super) use redaction::redacted_auth_settings;
 
-pub(super) fn auth_methods_payload(auth_cfg: &AuthConfig) -> Value {
+pub(super) fn auth_methods_payload(auth_cfg: &AuthConfig, magic_link_available: bool) -> Value {
     let mode = auth_cfg.mode.as_str();
     let methods: Vec<_> = canonical_auth_method_statuses(|method| match method {
         PASSWORD => mode == "basic" && !auth_cfg.basic.password_hash.is_empty(),
@@ -64,7 +64,7 @@ pub(super) fn auth_methods_payload(auth_cfg: &AuthConfig) -> Value {
         TRUSTED_PROXY => mode == "trusted-proxy",
         LDAP => auth::ldap_login_enabled(auth_cfg),
         API_TOKEN => mode != "none",
-        MAGIC_LINK => auth::magic_link_enabled(auth_cfg),
+        MAGIC_LINK => magic_link_available,
         _ => false,
     })
     .into_iter()

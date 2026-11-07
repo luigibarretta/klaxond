@@ -113,6 +113,7 @@ fn merge_auth(mut base: AuthConfig, raw: AuthConfig) -> AuthConfig {
     base.api_keys = raw.api_keys;
     base.passkeys = raw.passkeys;
     base.totp_factors = raw.totp_factors;
+    base.magic_link_enabled = raw.magic_link_enabled;
     base
 }
 
@@ -145,6 +146,9 @@ pub(super) fn merge_auth_toml(mut base: AuthConfig, seed: &toml::Value) -> AuthC
         .and_then(|v| v.as_integer())
     {
         base.session_timeout_hours = h.max(1) as u64;
+    }
+    if let Some(enabled) = seed.get("magic_link_enabled").and_then(|v| v.as_bool()) {
+        base.magic_link_enabled = enabled;
     }
     if let Some(table) = section_table(seed, "basic") {
         merge_basic_toml(&mut base, table);
