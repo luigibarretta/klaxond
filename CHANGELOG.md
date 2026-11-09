@@ -1,6 +1,6 @@
 # Klaxond — CHANGELOG
 
-## Unreleased
+## 0.23.0 — 2026-11-09
 
 - Dependencies: vendored `auth-modules` moves to `v0.2.0`
   (`2a9aec766b0edb4cf0a55f8a4acd246b73b8a078`), pinned in
@@ -36,6 +36,10 @@
   proxy address.
 - Magic links are issued with `issue_for_delivery`: the plaintext token can
   only reach the SMTP body, never a response.
+- Security (K-07): a callback carrying more than one `klaxond_oidc_flow`
+  cookie is rejected instead of trying each value.
+- Dependencies: `rusqlite` 0.41.1 bundles SQLite 3.54.1 (`libsqlite3-sys`
+  0.39.1), closing RUSTSEC-2026-0459 / CVE-2026-119375.
 
 ## 0.22.0
 
