@@ -4,7 +4,7 @@ use super::session::{
     cookie_values, rotate_session_on_worker, sanitize_return_to, set_session_cookie, verify_session,
 };
 use super::{AUTH_SESSION_COOKIE, magic_link_enabled, redirect};
-use crate::state::{AppState, PendingOidcState, lock_mutex};
+use crate::state::{AppState, PendingOidcState};
 use crate::util::token_urlsafe;
 use auth_modules::oidc::OidcClientConfig;
 use axum::body::Body;
@@ -14,6 +14,9 @@ use axum::response::IntoResponse;
 use url::Url;
 
 mod callback;
+mod flow;
+
+use flow::{OIDC_FLOW_TTL_SECONDS, append_cookie, flow_cookie, store_pending_flow};
 
 pub use callback::oidc_callback;
 
@@ -110,22 +113,23 @@ async fn oidc_login_redirect(state: &AppState, headers: HeaderMap, uri: &str) ->
                 .into_response();
         }
     };
-    {
-        let mut states = lock_mutex(&state.oidc_states, "oidc states");
-        let now = crate::util::now_epoch();
-        states.insert(
-            state_token.clone(),
-            PendingOidcState {
-                created_at: now,
-                return_to,
-                nonce: flow.nonce,
-                code_verifier: flow.pkce_verifier,
-            },
-        );
-        let cutoff = now - 600.0;
-        states.retain(|_, pending| pending.created_at >= cutoff);
-    }
-    redirect(&flow.authorization_url)
+    store_pending_flow(
+        state,
+        &state_token,
+        PendingOidcState {
+            created_at: crate::util::now_epoch(),
+            return_to,
+            nonce: flow.nonce,
+            code_verifier: flow.pkce_verifier,
+        },
+    );
+    // Bind the flow to this browser: the callback must present this cookie.
+    let mut response = redirect(&flow.authorization_url);
+    append_cookie(
+        &mut response,
+        &flow_cookie(state, &state_token, OIDC_FLOW_TTL_SECONDS),
+    );
+    response
 }
 
 fn login_return_to(uri: &str) -> String {

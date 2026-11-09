@@ -163,7 +163,7 @@ fn validate_url(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::oidc::types::OidcProviderAdditionalMetadata;
+    use crate::oidc::types::metadata::OidcProviderAdditionalMetadata;
     use openidconnect::core::{CoreJsonCurveType, CoreSubjectIdentifierType};
     use openidconnect::{
         AuthUrl, JsonWebKeyId, JsonWebKeySet, JsonWebKeySetUrl, PkceCodeChallengeMethod,

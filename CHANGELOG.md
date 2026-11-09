@@ -1,5 +1,42 @@
 # Klaxond — CHANGELOG
 
+## Unreleased
+
+- Dependencies: vendored `auth-modules` moves to `v0.2.0`
+  (`2a9aec766b0edb4cf0a55f8a4acd246b73b8a078`), pinned in
+  `dependencies/auth-modules.sha` with a tree digest verified by the new
+  `vendored-deps` ci-local step (`dependencies/vendored.json`). Features
+  `client-ip`, `keys` and `secret-files` are enabled; the unused
+  `recovery-codes` feature is dropped.
+- Security (K-10): the session secret is no longer used directly as the HMAC
+  key of five unrelated tokens. Emergency acknowledgements, inhibition
+  acknowledgements, session rotation, account rate-limit keys and legacy
+  cookies each use their own HKDF sub-key (`auth_modules::keys`). An emergency
+  acknowledgement token no longer verifies as an inhibition acknowledgement
+  for the alert name `ack`. Links already sent through ntfy keep working until
+  they expire (the raw secret still verifies acknowledgement links and legacy
+  cookies only, and their payload shapes are checked), lockouts and session
+  rotations recorded before the upgrade are still honoured.
+  **Breaking:** a configured `AUTH_SESSION_SECRET` / `[auth].session_secret`
+  shorter than 32 bytes (or one repeated byte) now stops startup; the
+  generated `auth-session.key` is unaffected.
+- Security (K-03): `auth-session.key` and `auth-config.json` (OIDC client
+  secret, password hash, TOTP secrets, API-key hashes) are written `0600`
+  atomically, including configuration restores, and read with symlink, owner
+  and permission checks; files left `0644` by earlier releases are tightened
+  at startup.
+- Security (K-07): OIDC login is bound to the browser with the
+  `klaxond_oidc_flow` cookie, pending flows expire after 10 minutes when they
+  are consumed, and the callback uses `exchange_callback`, which verifies the
+  returned `state` against the browser-bound one in constant time.
+- Security: client IP resolution uses the shared `TrustedProxies` resolver
+  (`AUTH_TRUSTED_PROXY_CIDRS` unchanged): `X-Real-IP` is no longer trusted and
+  a malformed `X-Forwarded-For` hop no longer lets the next hop be trusted.
+  Ingest authentication failures now log the resolved client instead of the
+  proxy address.
+- Magic links are issued with `issue_for_delivery`: the plaintext token can
+  only reach the SMTP body, never a response.
+
 ## 0.22.0
 
 - Security (K-01): `POST /api/auth/magic/request` no longer returns the

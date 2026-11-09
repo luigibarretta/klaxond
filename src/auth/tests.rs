@@ -3,7 +3,7 @@ use super::magic_link::{
     MagicLinkError, consume_magic_link, issue_magic_link, magic_link_ttl_seconds,
 };
 use super::session::{cookie_values, sanitize_return_to};
-use super::test_support::{temp_paths, test_user};
+use super::test_support::{delivered, temp_paths, test_user};
 use super::*;
 use crate::state::{AppState, PendingMagicLink, lock_mutex};
 use auth_modules::one_time_token;
@@ -155,7 +155,7 @@ fn magic_link_issue_and_consume_is_single_use() {
     assert!(!magic_link_enabled(&runtime));
     assert!(issue_magic_link(&state, &runtime.auth, "nobody", "/status").is_none());
 
-    let token = issue_magic_link(&state, &runtime.auth, "luigi", "/status").expect("token");
+    let token = delivered(issue_magic_link(&state, &runtime.auth, "luigi", "/status").unwrap());
     assert_eq!(
         magic_link_callback_url(&runtime.public_url, &token),
         format!("https://klaxond.example.test/api/auth/magic/callback/{token}")

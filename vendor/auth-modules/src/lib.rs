@@ -1,7 +1,11 @@
 #[cfg(feature = "audit")]
 pub mod audit;
+#[cfg(feature = "client-ip")]
+pub mod client_ip;
 #[cfg(feature = "errors")]
 pub mod errors;
+#[cfg(feature = "keys")]
+pub mod keys;
 #[cfg(any(feature = "ldap", feature = "ldap-ring"))]
 pub mod ldap;
 pub mod methods;

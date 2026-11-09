@@ -1,6 +1,6 @@
+use crate::state::keys::INHIBITION_ACK;
 use crate::state::{AppState, lock_mutex};
-use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch};
-use auth_modules::secrets::constant_time_eq;
+use crate::util::{b64url_decode_padded, b64url_no_pad, now_epoch};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -8,7 +8,7 @@ pub fn ack_sign(state: &AppState, alertname: &str, ttl_sec: u64) -> String {
     let exp = now_epoch() as i64 + ttl_sec as i64;
     let payload = json!({"a": alertname, "t": ttl_sec, "e": exp}).to_string();
     let b = b64url_no_pad(payload.as_bytes());
-    let sig = hmac_hex(state.session_key.as_slice(), b.as_bytes());
+    let sig = state.keys.sign_hex(INHIBITION_ACK, b.as_bytes());
     format!("{b}.{sig}")
 }
 
@@ -16,8 +16,11 @@ pub fn ack_verify(state: &AppState, token: &str) -> (Option<String>, String) {
     let Some((body_b64, sig)) = token.split_once('.') else {
         return (None, "malformed".into());
     };
-    let expected = hmac_hex(state.session_key.as_slice(), body_b64.as_bytes());
-    if !constant_time_eq(sig.as_bytes(), expected.as_bytes()) {
+    if state
+        .keys
+        .verify_hex(INHIBITION_ACK, body_b64.as_bytes(), sig)
+        .is_none()
+    {
         return (None, "bad-signature".into());
     }
     let Ok(bytes) = b64url_decode_padded(body_b64) else {
@@ -26,6 +29,9 @@ pub fn ack_verify(state: &AppState, token: &str) -> (Option<String>, String) {
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
         return (None, "bad-payload".into());
     };
+    if !is_inhibition_ack_payload(&payload) {
+        return (None, "bad-payload".into());
+    }
     if payload.get("e").and_then(|v| v.as_i64()).unwrap_or(0) < now_epoch() as i64 {
         return (None, "expired".into());
     }
@@ -39,6 +45,14 @@ pub fn ack_verify(state: &AppState, token: &str) -> (Option<String>, String) {
         return (None, "no-alertname".into());
     }
     (Some(alertname), "ok".into())
+}
+
+/// Inhibition tokens always carry the TTL (`t`) and never a receipt (`r`).
+/// Emergency acknowledgement tokens (`{"r","e","a":"ack"}`) were signed with
+/// the same raw key before 0.23; this shape check keeps such a legacy token
+/// from verifying here as an acknowledgement of the alert name `"ack"`.
+fn is_inhibition_ack_payload(payload: &serde_json::Value) -> bool {
+    payload.get("t").is_some_and(serde_json::Value::is_u64) && payload.get("r").is_none()
 }
 
 pub fn register_ack_suppression(state: &AppState, alertname: &str, ttl_sec: u64) {
@@ -76,3 +90,6 @@ pub fn ack_status_snapshot(state: &AppState) -> Vec<serde_json::Value> {
     });
     rows
 }
+
+#[cfg(test)]
+mod tests;

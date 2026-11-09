@@ -40,3 +40,13 @@ pub(super) fn test_user(mode: &str) -> User {
         provider_session_id: String::new(),
     }
 }
+
+/// Test-only out-of-band channel: returns the plaintext of an issued token.
+pub(crate) fn delivered(token: auth_modules::one_time_token::DeliverableToken) -> String {
+    let mut plaintext = String::new();
+    let Ok(()) = token.deliver(|token: &str| {
+        plaintext = token.to_string();
+        Ok::<(), std::convert::Infallible>(())
+    });
+    plaintext
+}

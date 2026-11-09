@@ -1,6 +1,6 @@
 [package]
 name = "auth-modules"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://git.luigibarretta.com/luigibarretta/lib-auth-modules"
@@ -9,18 +9,23 @@ description = "Shared Rust authentication building blocks for personal projects"
 [features]
 default = [
     "audit",
+    "client-ip",
     "errors",
+    "keys",
     "oidc-pkce",
     "one-time-token",
     "password",
     "rate-limit",
     "recovery-codes",
+    "secret-files",
     "security-profile",
     "session-policy",
     "totp",
 ]
 audit = []
+client-ip = []
 errors = []
+keys = ["dep:hmac", "dep:sha2"]
 # LDAP over rustls. `ldap` keeps the historical aws-lc-rs provider; `ldap-ring`
 # selects ring instead (no C/cmake build). Enable exactly one of them: ldap3
 # builds its rustls config from the process-default provider, which rustls can
@@ -35,6 +40,8 @@ one-time-token = ["dep:base64", "dep:rand", "dep:sha2"]
 password = ["dep:argon2", "dep:password-hash"]
 rate-limit = []
 recovery-codes = ["dep:base64", "dep:rand", "dep:sha2"]
+# Unix-only private secret file read/atomic write (`secrets::files`).
+secret-files = []
 security-profile = ["password", "rate-limit", "session-policy"]
 session-policy = []
 testing = []

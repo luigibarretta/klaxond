@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "dependencies": [
+    {
+      "name": "auth-modules",
+      "description": "lib-auth-modules at the commit in dependencies/auth-modules.sha: only Cargo.toml, CHANGELOG.md and src/ are vendored (git archive of those paths), plus the local provenance README.md and the selected LICENSE-APACHE; refresh pin, tree and digest together (vendor/auth-modules/README.md)",
+      "path": "vendor/auth-modules",
+      "pinFile": "dependencies/auth-modules.sha",
+      "treeSha256File": "dependencies/auth-modules-vendor.sha256",
+      "exclude": [
+        ".cargo",
+        ".dockerignore",
+        ".gitea",
+        ".gitignore",
+        "LICENSE-APACHE",
+        "README.md",
+        "ci-local.json",
+        "dependencies",
+        "docs",
+        "go",
+        "package.json",
+        "scripts",
+        "third_party"
+      ],
+      "upstream": {
+        "checkout": [".ci/auth-modules", "../lib-auth-modules"],
+        "url": "https://git.luigibarretta.com/luigibarretta/lib-auth-modules.git",
+        "subdir": ""
+      }
+    }
+  ]
+}

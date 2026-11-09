@@ -4,6 +4,7 @@ use openidconnect::core::CoreGenderClaim;
 use openidconnect::reqwest;
 use openidconnect::{AuthorizationCode, Nonce, OAuth2TokenResponse, TokenResponse};
 
+use super::callback::{verify_callback_state, CallbackParams};
 use super::client::{
     build_authorization_flow, build_authorization_flow_with_values, client_from_metadata,
     same_provider_configuration, ReadyClient, SharedTokenResponse,
@@ -88,7 +89,32 @@ impl PreparedBlockingOidcClient {
         ))
     }
 
+    /// Verifies the callback `state` in constant time, then exchanges the
+    /// code and validates the ID token.
+    pub fn exchange_callback(
+        &self,
+        config: &OidcClientConfig,
+        params: &CallbackParams<'_>,
+    ) -> Result<OidcIdentity, OidcError> {
+        verify_callback_state(params)?;
+        self.exchange_code_unchecked(config, params.code, params.nonce, params.pkce_verifier)
+    }
+
+    #[deprecated(
+        since = "0.2.0",
+        note = "use exchange_callback: it verifies the returned state before the exchange (AM-03)"
+    )]
     pub fn exchange_code(
+        &self,
+        config: &OidcClientConfig,
+        code: &str,
+        nonce: &str,
+        pkce_verifier: &str,
+    ) -> Result<OidcIdentity, OidcError> {
+        self.exchange_code_unchecked(config, code, nonce, pkce_verifier)
+    }
+
+    fn exchange_code_unchecked(
         &self,
         config: &OidcClientConfig,
         code: &str,
@@ -149,13 +175,31 @@ pub fn authorization_url_with_flow(
     )
 }
 
+/// Verifies the callback `state` before discovery, then exchanges the code.
+pub fn exchange_callback(
+    config: &OidcClientConfig,
+    params: &CallbackParams<'_>,
+) -> Result<OidcIdentity, OidcError> {
+    verify_callback_state(params)?;
+    PreparedBlockingOidcClient::discover(config)?.exchange_callback(config, params)
+}
+
+#[deprecated(
+    since = "0.2.0",
+    note = "use exchange_callback: it verifies the returned state before the exchange (AM-03)"
+)]
 pub fn exchange_code(
     config: &OidcClientConfig,
     code: &str,
     nonce: &str,
     pkce_verifier: &str,
 ) -> Result<OidcIdentity, OidcError> {
-    PreparedBlockingOidcClient::discover(config)?.exchange_code(config, code, nonce, pkce_verifier)
+    PreparedBlockingOidcClient::discover(config)?.exchange_code_unchecked(
+        config,
+        code,
+        nonce,
+        pkce_verifier,
+    )
 }
 
 fn discover(

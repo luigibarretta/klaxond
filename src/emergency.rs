@@ -5,8 +5,8 @@ use crate::history::{
 };
 use crate::parsers::{Parts, action};
 use crate::state::AppState;
-use crate::util::{b64url_decode_padded, b64url_no_pad, hmac_hex, now_epoch};
-use auth_modules::secrets::constant_time_eq;
+use crate::state::keys::EMERGENCY_ACK;
+use crate::util::{b64url_decode_padded, b64url_no_pad, now_epoch};
 use serde_json::json;
 
 const ACK_HEADER: &str = "x-klaxond-emergency-token";
@@ -149,16 +149,15 @@ fn sign_token(state: &AppState, receipt: &str, exp: i64) -> String {
     );
     format!(
         "{body}.{}",
-        hmac_hex(state.session_key.as_slice(), body.as_bytes())
+        state.keys.sign_hex(EMERGENCY_ACK, body.as_bytes())
     )
 }
 
 fn verify_token(state: &AppState, token: &str) -> Option<String> {
     let (body, signature) = token.split_once('.')?;
-    let expected = hmac_hex(state.session_key.as_slice(), body.as_bytes());
-    if !constant_time_eq(signature.as_bytes(), expected.as_bytes()) {
-        return None;
-    }
+    state
+        .keys
+        .verify_hex(EMERGENCY_ACK, body.as_bytes(), signature)?;
     let value: serde_json::Value =
         serde_json::from_slice(&b64url_decode_padded(body).ok()?).ok()?;
     if value.get("a")?.as_str()? != "ack" || value.get("e")?.as_i64()? < now_epoch() as i64 {

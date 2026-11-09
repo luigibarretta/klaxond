@@ -1,12 +1,11 @@
 use super::{AuthConfig, Paths};
-use crate::util::atomic_write_json;
+use crate::util::private_file::{read_private, write_private_json};
 use anyhow::Result;
-use std::fs;
 
 pub(super) fn load_auth(paths: &Paths, seed: Option<&toml::Value>) -> Result<AuthConfig> {
     let mut out = AuthConfig::default();
-    if paths.auth_config.exists() {
-        let raw: AuthConfig = serde_json::from_slice(&fs::read(&paths.auth_config)?)?;
+    if paths.auth_config.exists() || paths.auth_config.is_symlink() {
+        let raw: AuthConfig = serde_json::from_slice(&read_private(&paths.auth_config)?)?;
         out = merge_auth(out, raw);
     } else {
         if let Some(seed) = seed {
@@ -58,14 +57,16 @@ pub fn save_auth(paths: &Paths, auth: &AuthConfig) -> Result<()> {
     write_auth(paths, &auth_for_persistence(paths, auth)?)
 }
 
+/// The sidecar holds the OIDC client secret, the password hash, TOTP secrets
+/// and API-key hashes: it is always written 0600.
 fn write_auth(paths: &Paths, auth: &AuthConfig) -> Result<()> {
-    atomic_write_json(&paths.auth_config, auth)
+    write_private_json(&paths.auth_config, auth)
 }
 
 fn auth_for_persistence(paths: &Paths, auth: &AuthConfig) -> Result<AuthConfig> {
     let mut persisted = auth.clone();
-    let existing = if paths.auth_config.exists() {
-        Some(serde_json::from_slice::<AuthConfig>(&fs::read(
+    let existing = if paths.auth_config.exists() || paths.auth_config.is_symlink() {
+        Some(serde_json::from_slice::<AuthConfig>(&read_private(
             &paths.auth_config,
         )?)?)
     } else {

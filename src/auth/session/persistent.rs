@@ -1,9 +1,9 @@
-use super::token::{new_session_token, rotated_session_token};
+use super::token::{legacy_rotated_session_token, new_session_token, rotated_session_token};
 use super::{VerifiedSession, session_cookie};
 use crate::auth::User;
 use crate::auth::blocking::{AUTH_STORE_TIMEOUT, run_with_timeout};
 use crate::config::AuthConfig;
-use crate::history::AuthSessionRecord;
+use crate::history::{AuthSessionRecord, HistoryStore};
 use crate::state::AppState;
 use crate::util::{now_epoch_i64, token_urlsafe};
 use auth_modules::one_time_token::hash_token;
@@ -160,27 +160,23 @@ pub(super) async fn verify_persistent_session(
     let now = now_epoch_i64();
     let policy = SessionPolicy::gold_standard();
     let idle_timeout_seconds = i64::try_from(policy.idle_timeout.as_secs()).unwrap_or(i64::MAX);
-    let replacement_token = rotated_session_token(state, &id_hash);
-    let replacement_hash = hash_token(&replacement_token);
+    // Current-key successor first, then the one a pre-0.23 rotation produced.
+    let replacement_tokens = [
+        rotated_session_token(state, &id_hash),
+        legacy_rotated_session_token(state, &id_hash),
+    ];
+    let replacement_hashes = replacement_tokens.each_ref().map(|token| hash_token(token));
     let state_for_store = state.clone();
     let predecessor_hash = id_hash.clone();
     let (record, recovered_rotation) = run_with_timeout(state, AUTH_STORE_TIMEOUT, move || {
         state_for_store.with_auth_store(|store| {
-            if let Some(record) = store
-                .auth_session(&predecessor_hash, now, idle_timeout_seconds)
-                .map_err(|err| err.to_string())?
-            {
-                return Ok::<_, String>((Some(record), false));
-            }
-            let successor = store
-                .auth_session_rotation_successor(
-                    &predecessor_hash,
-                    &replacement_hash,
-                    now,
-                    idle_timeout_seconds,
-                )
-                .map_err(|err| err.to_string())?;
-            Ok::<_, String>((successor, true))
+            session_or_rotation_successor(
+                store,
+                &predecessor_hash,
+                &replacement_hashes,
+                now,
+                idle_timeout_seconds,
+            )
         })
     })
     .await??;
@@ -202,11 +198,43 @@ pub(super) async fn verify_persistent_session(
         should_rotate: policy.should_rotate(record.last_rotated_at, now),
         user,
         legacy: false,
-        replacement_cookie: recovered_rotation.then(|| {
+        replacement_cookie: recovered_rotation.map(|index| {
             let remaining = record.expires_at.saturating_sub(now);
-            session_cookie(state, &replacement_token, remaining.max(0) as u64)
+            session_cookie(state, &replacement_tokens[index], remaining.max(0) as u64)
         }),
     }))
+}
+
+/// The live session for `predecessor_hash`, or else the successor of a recent
+/// rotation, tried with each candidate successor hash in order. The index
+/// tells which candidate matched.
+fn session_or_rotation_successor(
+    store: &HistoryStore,
+    predecessor_hash: &str,
+    replacement_hashes: &[String],
+    now: i64,
+    idle_timeout_seconds: i64,
+) -> Result<(Option<AuthSessionRecord>, Option<usize>), String> {
+    if let Some(record) = store
+        .auth_session(predecessor_hash, now, idle_timeout_seconds)
+        .map_err(|err| err.to_string())?
+    {
+        return Ok((Some(record), None));
+    }
+    for (index, replacement_hash) in replacement_hashes.iter().enumerate() {
+        if let Some(successor) = store
+            .auth_session_rotation_successor(
+                predecessor_hash,
+                replacement_hash,
+                now,
+                idle_timeout_seconds,
+            )
+            .map_err(|err| err.to_string())?
+        {
+            return Ok((Some(successor), Some(index)));
+        }
+    }
+    Ok((None, None))
 }
 
 fn non_empty(value: &str) -> Option<String> {

@@ -112,39 +112,7 @@ fn parse_options(args: &[String]) -> Result<Option<DoctorOptions>> {
 fn persistence_checks(paths: &Paths, cfg: &RuntimeConfig, checks: &mut Vec<Check>) {
     checks.push(path_check("configuration file", &paths.config, true));
 
-    let explicit_session_secret = std::env::var("AUTH_SESSION_SECRET")
-        .is_ok_and(|value| !value.trim().is_empty())
-        || !cfg.auth.session_secret.trim().is_empty();
-    if explicit_session_secret {
-        checks.push(check(
-            "ACK signing key",
-            CheckStatus::Ok,
-            "persistent session secret is configured",
-        ));
-    } else if paths.auth_session_key.exists() {
-        let status = match fs::metadata(&paths.auth_session_key) {
-            Ok(metadata) if metadata.len() >= 32 && private_mode(&metadata) => CheckStatus::Ok,
-            Ok(metadata) if metadata.len() < 32 => CheckStatus::Error,
-            Ok(_) => CheckStatus::Warn,
-            Err(_) => CheckStatus::Error,
-        };
-        let detail = match status {
-            CheckStatus::Ok => "persistent key exists with private permissions",
-            CheckStatus::Warn => "persistent key exists but permissions are broader than 0600",
-            CheckStatus::Error => "persistent key is unreadable or shorter than 32 bytes",
-            CheckStatus::Skipped => unreachable!(),
-        };
-        checks.push(check("ACK signing key", status, detail));
-    } else {
-        checks.push(check(
-            "ACK signing key",
-            CheckStatus::Warn,
-            format!(
-                "{} will be generated on first server start; keep its parent storage persistent",
-                paths.auth_session_key.display()
-            ),
-        ));
-    }
+    checks.push(session_key_check(paths, cfg));
 
     match cfg.history.backend.as_str() {
         "sqlite" => checks.push(path_check("SQLite history", &paths.history_db, false)),
@@ -163,6 +131,51 @@ fn persistence_checks(paths: &Paths, cfg: &RuntimeConfig, checks: &mut Vec<Check
             CheckStatus::Error,
             format!("unsupported backend: {other}"),
         )),
+    }
+}
+
+/// The session secret every acknowledgement and session key derives from.
+fn session_key_check(paths: &Paths, cfg: &RuntimeConfig) -> Check {
+    let explicit_session_secret = std::env::var("AUTH_SESSION_SECRET")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            (!cfg.auth.session_secret.trim().is_empty()).then(|| cfg.auth.session_secret.clone())
+        });
+    if let Some(secret) = explicit_session_secret {
+        // The key ring refuses shorter secrets at startup.
+        let (status, detail) = if secret.len() >= 32 {
+            (CheckStatus::Ok, "persistent session secret is configured")
+        } else {
+            (
+                CheckStatus::Error,
+                "session secret is shorter than 32 bytes",
+            )
+        };
+        check("ACK signing key", status, detail)
+    } else if paths.auth_session_key.exists() {
+        let status = match fs::metadata(&paths.auth_session_key) {
+            Ok(metadata) if metadata.len() >= 32 && private_mode(&metadata) => CheckStatus::Ok,
+            Ok(metadata) if metadata.len() < 32 => CheckStatus::Error,
+            Ok(_) => CheckStatus::Warn,
+            Err(_) => CheckStatus::Error,
+        };
+        let detail = match status {
+            CheckStatus::Ok => "persistent key exists with private permissions",
+            CheckStatus::Warn => "persistent key exists but permissions are broader than 0600",
+            CheckStatus::Error => "persistent key is unreadable or shorter than 32 bytes",
+            CheckStatus::Skipped => unreachable!(),
+        };
+        check("ACK signing key", status, detail)
+    } else {
+        check(
+            "ACK signing key",
+            CheckStatus::Warn,
+            format!(
+                "{} will be generated on first server start; keep its parent storage persistent",
+                paths.auth_session_key.display()
+            ),
+        )
     }
 }
 

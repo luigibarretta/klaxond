@@ -2,42 +2,18 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
 
-use openidconnect::core::{
-    CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClientAuthMethod, CoreGrantType,
-    CoreJsonWebKey, CoreJweContentEncryptionAlgorithm, CoreJweKeyManagementAlgorithm,
-    CoreResponseMode, CoreResponseType, CoreSubjectIdentifierType,
-};
-use openidconnect::{
-    AdditionalClaims, AdditionalProviderMetadata, PkceCodeChallengeMethod, ProviderMetadata,
-};
+use openidconnect::AdditionalClaims;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use super::assurance::DEFAULT_ASYMMETRIC_SIGNING_ALGORITHMS;
 use super::{OidcAssurance, OidcAssurancePolicy, OidcSigningAlgorithm};
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-pub(crate) struct OidcProviderAdditionalMetadata {
-    #[serde(default)]
-    pub code_challenge_methods_supported: Vec<PkceCodeChallengeMethod>,
-}
-
-impl AdditionalProviderMetadata for OidcProviderAdditionalMetadata {}
-
-pub(crate) type OidcProviderMetadata = ProviderMetadata<
-    OidcProviderAdditionalMetadata,
-    CoreAuthDisplay,
-    CoreClientAuthMethod,
-    CoreClaimName,
-    CoreClaimType,
-    CoreGrantType,
-    CoreJweContentEncryptionAlgorithm,
-    CoreJweKeyManagementAlgorithm,
-    CoreJsonWebKey,
-    CoreResponseMode,
-    CoreResponseType,
-    CoreSubjectIdentifierType,
->;
+// Provider metadata is only consumed by the protocol clients.
+#[cfg(any(feature = "oidc-async", feature = "oidc-blocking"))]
+pub(crate) mod metadata;
+#[cfg(any(feature = "oidc-async", feature = "oidc-blocking"))]
+pub(crate) use metadata::OidcProviderMetadata;
 
 #[derive(Clone, Eq, PartialEq)]
 pub struct OidcClientConfig {

@@ -7,7 +7,9 @@ use crate::config::{AuthConfig, RuntimeConfig};
 use crate::delivery::channels::{send_operator_text, smtp_ready};
 use crate::state::{AppState, PendingMagicLink, lock_mutex};
 use auth_modules::errors;
-use auth_modules::one_time_token::{self, OneTimeTokenPolicy};
+use auth_modules::one_time_token::{
+    self, DeliverableToken, OneTimeTokenPolicy, OneTimeTokenPurpose, issue_for_delivery,
+};
 use auth_modules::rate_limit::{
     GOLD_AUTH_SHORT_BURST_MAX, GOLD_AUTH_SHORT_BURST_WINDOW, RateLimitOutcome,
 };
@@ -84,12 +86,7 @@ pub fn magic_link_request(
     }
 
     if let Some(token) = issue_magic_link(state, &cfg.auth, username, &return_to) {
-        let body = magic_link_email_body(
-            &magic_link_callback_url(&cfg.public_url, &token),
-            &client_ip,
-            &chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        );
-        spawn_magic_link_delivery(&cfg, body);
+        deliver_magic_link(&cfg, token, &client_ip);
     }
     // Uniform answer for known and unknown users: the link is delivered only
     // out of band and never appears in the response or in a redirect.
@@ -142,6 +139,17 @@ pub async fn magic_link_callback(state: &AppState, token: &str) -> Response<Body
     resp
 }
 
+/// Hands the link to the SMTP channel; the plaintext token exists only inside
+/// this delivery and never reaches the HTTP response.
+fn deliver_magic_link(cfg: &RuntimeConfig, token: DeliverableToken, client_ip: &str) {
+    let requested_at = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let Ok(()) = token.deliver(|token: &str| {
+        let link = magic_link_callback_url(&cfg.public_url, token);
+        spawn_magic_link_delivery(cfg, magic_link_email_body(&link, client_ip, &requested_at));
+        Ok::<(), std::convert::Infallible>(())
+    });
+}
+
 /// Plain-text mail body. The requester IP (as resolved through the trusted
 /// proxy chain) and the request time let the operator spot unsolicited links.
 pub(super) fn magic_link_email_body(link: &str, client_ip: &str, requested_at: &str) -> String {
@@ -176,7 +184,7 @@ pub(super) fn issue_magic_link(
     cfg: &AuthConfig,
     username: &str,
     return_to: &str,
-) -> Option<String> {
+) -> Option<DeliverableToken> {
     if cfg.basic.username != username {
         let now = crate::util::now_epoch();
         let mut pending = lock_mutex(&state.magic_links, "magic links");
@@ -192,19 +200,23 @@ pub(super) fn issue_magic_link(
         tracing::warn!("magic link not issued: global issuance cap reached");
         return None;
     }
-    let policy = OneTimeTokenPolicy::magic_link();
-    let token = one_time_token::generate_token(policy.token_bytes);
-    let token_hash = one_time_token::hash_token(&token);
     let now = crate::util::now_epoch();
+    // Only the hash is stored; the plaintext leaves through `deliver`.
+    let (record, token) = issue_for_delivery(
+        username,
+        OneTimeTokenPurpose::MagicLink,
+        OneTimeTokenPolicy::magic_link(),
+        now as i64,
+    );
     let mut pending = lock_mutex(&state.magic_links, "magic links");
     prune_magic_links(&mut pending, now);
     // One valid link per user: a new request revokes every unused one.
     pending.retain(|_, challenge| challenge.username != username || challenge.used_at.is_some());
     pending.insert(
-        token_hash,
+        record.token_hash,
         PendingMagicLink {
             created_at: now,
-            expires_at: now + policy.ttl.as_secs() as f64,
+            expires_at: record.expires_at_epoch as f64,
             username: username.to_string(),
             return_to: return_to.to_string(),
             used_at: None,

@@ -1,11 +1,12 @@
+use super::flow::{BoundFlow, append_cookie, flow_cookie, take_bound_flow};
 use super::{callback_url, oidc_client_config, oidc_redirect_uri};
 use crate::auth::oidc_client::client_for;
 use crate::auth::session::{issue_session_on_worker, sanitize_return_to, set_session_cookie};
 use crate::auth::step_up::redirect_location_after_primary;
 use crate::auth::{User, redirect};
 use crate::config::OidcConfig;
-use crate::state::{AppState, PendingOidcState, lock_mutex};
-use auth_modules::oidc::OidcIdentity;
+use crate::state::AppState;
+use auth_modules::oidc::{CallbackParams, OidcIdentity};
 use auth_modules::step_up::PrimaryAuthMethod;
 use axum::body::Body;
 use axum::http::{HeaderMap, Response, StatusCode};
@@ -36,7 +37,7 @@ impl CallbackError {
                 .into_response(),
             Self::InvalidIdentity(error) => (
                 StatusCode::UNAUTHORIZED,
-                format!("id_token verify failed: {error}"),
+                format!("OIDC callback rejected: {error}"),
             )
                 .into_response(),
             Self::MissingGroup(group) => (
@@ -53,10 +54,13 @@ impl CallbackError {
 }
 
 pub async fn oidc_callback(state: &AppState, headers: HeaderMap, uri: &str) -> Response<Body> {
-    match complete_oidc_callback(state, &headers, uri).await {
+    let mut response = match complete_oidc_callback(state, &headers, uri).await {
         Ok(response) => response,
         Err(error) => error.into_response(),
-    }
+    };
+    // The flow is consumed whatever the outcome: expire its cookie.
+    append_cookie(&mut response, &flow_cookie(state, "", 0));
+    response
 }
 
 async fn complete_oidc_callback(
@@ -66,13 +70,13 @@ async fn complete_oidc_callback(
 ) -> Result<Response<Body>, CallbackError> {
     let cfg = state.cfg().auth.oidc;
     let (code, state_param) = callback_parameters(uri)?;
-    let pending = take_pending_state(state, &state_param)?;
-    let identity = exchange_identity(state, headers, &cfg, &code, &pending).await?;
+    let flow = take_bound_flow(state, headers).ok_or(CallbackError::UnknownState)?;
+    let identity = exchange_identity(state, headers, &cfg, &code, &state_param, &flow).await?;
     require_group(&cfg, &identity)?;
     finish_oidc_callback(
         state,
         oidc_user(identity),
-        &sanitize_return_to(&pending.return_to),
+        &sanitize_return_to(&flow.pending.return_to),
     )
     .await
 }
@@ -90,29 +94,30 @@ fn callback_parameters(uri: &str) -> Result<(String, String), CallbackError> {
     code.zip(state).ok_or(CallbackError::MissingParameters)
 }
 
-fn take_pending_state(
-    state: &AppState,
-    state_param: &str,
-) -> Result<PendingOidcState, CallbackError> {
-    lock_mutex(&state.oidc_states, "oidc states")
-        .remove(state_param)
-        .ok_or(CallbackError::UnknownState)
-}
-
 async fn exchange_identity(
     state: &AppState,
     headers: &HeaderMap,
     cfg: &OidcConfig,
     code: &str,
-    pending: &PendingOidcState,
+    returned_state: &str,
+    flow: &BoundFlow,
 ) -> Result<OidcIdentity, CallbackError> {
     let redirect_uri = oidc_redirect_uri(state, headers, &cfg.redirect_path);
     let client_config = oidc_client_config(cfg, &redirect_uri);
     let client = client_for(state, &client_config)
         .await
         .map_err(|error| CallbackError::ProviderUnavailable(error.to_string()))?;
+    // `exchange_callback` compares the returned state with the one bound to
+    // this browser (constant time) before the token request.
+    let params = CallbackParams {
+        code,
+        state: returned_state,
+        expected_state: &flow.expected_state,
+        nonce: &flow.pending.nonce,
+        pkce_verifier: &flow.pending.code_verifier,
+    };
     client
-        .exchange_code(&client_config, code, &pending.nonce, &pending.code_verifier)
+        .exchange_callback(&client_config, &params)
         .await
         .map_err(|error| CallbackError::InvalidIdentity(error.to_string()))
 }

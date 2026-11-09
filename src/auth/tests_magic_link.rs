@@ -5,7 +5,7 @@ use super::magic_link::{
     MagicLinkError, consume_magic_link, issue_magic_link, magic_link_callback,
     magic_link_email_body, magic_link_enabled, magic_link_request,
 };
-use super::test_support::temp_paths;
+use super::test_support::{delivered, temp_paths};
 use crate::config::{RuntimeConfig, TotpRecord};
 use crate::delivery::channels::smtp_ready;
 use crate::state::{AppState, lock_mutex};
@@ -226,8 +226,8 @@ fn new_magic_link_revokes_the_previous_unused_link() {
     let runtime = enabled_runtime(&state);
     state.replace_config(runtime.clone());
 
-    let first = issue_magic_link(&state, &runtime.auth, "luigi", "/status").expect("first");
-    let second = issue_magic_link(&state, &runtime.auth, "luigi", "/status").expect("second");
+    let first = delivered(issue_magic_link(&state, &runtime.auth, "luigi", "/status").unwrap());
+    let second = delivered(issue_magic_link(&state, &runtime.auth, "luigi", "/status").unwrap());
     assert_eq!(pending_count(&state), 1, "only one valid link per user");
     assert!(matches!(
         consume_magic_link(&state, &runtime.auth, &first),
@@ -246,7 +246,7 @@ async fn global_issue_cap_keeps_the_uniform_answer_and_sends_nothing() {
     // Burn the global budget (5 issuances per 15 minutes).
     let mut last = String::new();
     for _ in 0..5 {
-        last = issue_magic_link(&state, &runtime.auth, "luigi", "/status").expect("within cap");
+        last = delivered(issue_magic_link(&state, &runtime.auth, "luigi", "/status").unwrap());
     }
     assert!(
         issue_magic_link(&state, &runtime.auth, "luigi", "/status").is_none(),

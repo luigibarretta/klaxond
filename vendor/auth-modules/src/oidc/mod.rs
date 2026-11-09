@@ -1,5 +1,7 @@
 mod assurance;
 #[cfg(any(feature = "oidc-async", feature = "oidc-blocking"))]
+mod callback;
+#[cfg(any(feature = "oidc-async", feature = "oidc-blocking"))]
 mod client;
 #[cfg(any(feature = "oidc-async", feature = "oidc-blocking"))]
 mod identity;
@@ -17,6 +19,8 @@ pub mod blocking;
 pub use assurance::{OidcAssurance, OidcAssurancePolicy, OidcSigningAlgorithm};
 #[cfg(feature = "oidc-async")]
 pub use async_client::PreparedAsyncOidcClient;
+#[cfg(any(feature = "oidc-async", feature = "oidc-blocking"))]
+pub use callback::CallbackParams;
 #[cfg(feature = "oidc-async")]
 pub use logout::validate_backchannel_logout_token;
 #[cfg(any(feature = "oidc-async", feature = "oidc-blocking"))]
@@ -27,3 +31,10 @@ pub use types::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, any(feature = "oidc-async", feature = "oidc-blocking")))]
+mod callback_tests;
+#[cfg(all(test, any(feature = "oidc-async", feature = "oidc-blocking")))]
+mod identity_tests;
+#[cfg(all(test, any(feature = "oidc-async", feature = "oidc-blocking")))]
+mod prepared_tests;

@@ -8,13 +8,16 @@ use axum::http::{Response, StatusCode};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use super::super::{json_response, text};
 
 mod input;
+mod snapshot;
 #[cfg(test)]
 mod tests;
+
+use self::snapshot::{restore_file_snapshots, restore_snapshots, write_restored};
 
 use self::input::{
     BundleSidecar, RestoreInput, parse_restore_input, restore_input_files,
@@ -198,7 +201,7 @@ fn seed_stage_sidecars(source: &Paths, stage: &Paths) -> Result<(), String> {
         (&source.auth_config, &stage.auth_config),
     ] {
         match fs::read(source_path) {
-            Ok(bytes) => atomic_write(stage_path, &bytes)
+            Ok(bytes) => write_restored(stage_path, &bytes, stage_path == &stage.auth_config)
                 .map_err(|err| format!("stage {} failed: {err}", source_path.display()))?,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(format!("read {} failed: {err}", source_path.display())),
@@ -237,57 +240,11 @@ fn write_bundle_sidecar(paths: &Paths, sidecar: &BundleSidecar) -> Result<(), St
         "auth-config.json" => &paths.auth_config,
         _ => return Err(format!("unsupported sidecar {}", sidecar.name)),
     };
-    atomic_write(path, sidecar.text.as_bytes())
+    write_restored(path, sidecar.text.as_bytes(), path == &paths.auth_config)
         .map_err(|err| format!("write {} failed: {err}", sidecar.name))
 }
 
-struct FileSnapshot {
-    path: PathBuf,
-    bytes: Option<Vec<u8>>,
-}
-
-fn restore_file_snapshots(
-    paths: &Paths,
-    input: &RestoreInput,
-) -> Result<Vec<FileSnapshot>, String> {
-    restore_input_would_restore(input)
-        .into_iter()
-        .map(|name| {
-            let path = restore_path(paths, name)?.to_path_buf();
-            let bytes = match fs::read(&path) {
-                Ok(bytes) => Some(bytes),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-                Err(err) => return Err(format!("snapshot {} failed: {err}", path.display())),
-            };
-            Ok(FileSnapshot { path, bytes })
-        })
-        .collect()
-}
-
-fn restore_snapshots(snapshots: &[FileSnapshot]) -> Result<(), String> {
-    let mut errors = Vec::new();
-    for snapshot in snapshots {
-        let result = if let Some(bytes) = snapshot.bytes.as_deref() {
-            atomic_write(&snapshot.path, bytes).map_err(|err| err.to_string())
-        } else {
-            match fs::remove_file(&snapshot.path) {
-                Ok(()) => Ok(()),
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(err) => Err(err.to_string()),
-            }
-        };
-        if let Err(err) = result {
-            errors.push(format!("{}: {err}", snapshot.path.display()));
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
-}
-
-fn restore_path<'a>(paths: &'a Paths, name: &str) -> Result<&'a Path, String> {
+pub(super) fn restore_path<'a>(paths: &'a Paths, name: &str) -> Result<&'a Path, String> {
     match name {
         "klaxond.toml" => Ok(&paths.config),
         "render-config.json" => Ok(&paths.render_config),

@@ -128,3 +128,41 @@ fn test_parts(title: &str) -> Parts {
         emergency_ack_token: None,
     }
 }
+
+mod ack_tokens {
+    use super::super::{sign_token, verify_token};
+    use crate::auth::test_support::temp_paths;
+    use crate::inhibition::ack_sign;
+    use crate::state::AppState;
+    use crate::util::{b64url_no_pad, hmac_hex, now_epoch};
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn future() -> i64 {
+        now_epoch() as i64 + 600
+    }
+
+    #[test]
+    fn emergency_tokens_round_trip_with_their_own_key() {
+        let tmp = TempDir::new().unwrap();
+        let state = AppState::new(temp_paths(&tmp)).unwrap();
+        let token = sign_token(&state, "receipt-1", future());
+        assert_eq!(verify_token(&state, &token).as_deref(), Some("receipt-1"));
+        // An inhibition acknowledgement never verifies as an emergency one.
+        assert!(verify_token(&state, &ack_sign(&state, "ack", 600)).is_none());
+    }
+
+    #[test]
+    fn emergency_links_sent_before_the_upgrade_stay_valid() {
+        let tmp = TempDir::new().unwrap();
+        let state = AppState::new(temp_paths(&tmp)).unwrap();
+        let secret = std::fs::read(&state.paths.auth_session_key).unwrap();
+        let body = b64url_no_pad(
+            json!({"r": "receipt-1", "e": future(), "a": "ack"})
+                .to_string()
+                .as_bytes(),
+        );
+        let legacy = format!("{body}.{}", hmac_hex(&secret, body.as_bytes()));
+        assert_eq!(verify_token(&state, &legacy).as_deref(), Some("receipt-1"));
+    }
+}

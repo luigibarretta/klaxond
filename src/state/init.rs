@@ -1,4 +1,4 @@
-use super::session::load_or_create_session_key;
+use super::session::load_service_keys;
 use super::{AppState, DedupQueues, DeliveryLog, Metrics};
 use crate::config::{EmergencyProfile, Paths, RuntimeConfig, load_runtime_config};
 use crate::history::HistoryStore;
@@ -14,7 +14,7 @@ pub(super) fn new(paths: Paths) -> Result<AppState> {
     prepare_runtime_dirs(&paths)?;
     let cfg = load_runtime_config(&paths)?;
     let cascade_runtime_enabled = cfg.cascade_default;
-    let session_key = load_or_create_session_key(&paths, &cfg)?;
+    let keys = load_service_keys(&paths, &cfg)?;
     let history = Arc::new(HistoryStore::open(&cfg.history)?);
     materialize_legacy_emergency_policy(&cfg, &history)?;
     let queues = dedup_queues(&cfg);
@@ -27,7 +27,7 @@ pub(super) fn new(paths: Paths) -> Result<AppState> {
         started: Instant::now(),
         config: Arc::new(RwLock::new(cfg)),
         config_write_lock: Arc::new(Mutex::new(())),
-        session_key: Arc::new(session_key),
+        keys: Arc::new(keys),
         cascade_runtime_enabled: Arc::new(AtomicBool::new(cascade_runtime_enabled)),
         history: Arc::new(RwLock::new(history)),
         auth_store_transition: Arc::new(RwLock::new(())),

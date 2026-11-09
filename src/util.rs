@@ -8,6 +8,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+pub mod private_file;
+
 pub type HmacSha256 = Hmac<Sha256>;
 
 pub fn now_epoch() -> f64 {

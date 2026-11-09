@@ -6,6 +6,9 @@
 
 use std::fmt;
 
+#[cfg(all(unix, feature = "secret-files"))]
+pub mod files;
+
 /// Compares two byte strings without returning early on a mismatched byte or
 /// length.
 pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {

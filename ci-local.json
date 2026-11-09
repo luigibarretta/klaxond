@@ -25,6 +25,13 @@
       "timeout_s": 60
     },
     {
+      "name": "vendored-deps",
+      "description": "vendor/auth-modules matches dependencies/auth-modules.sha and its tree digest (dependencies/vendored.json)",
+      "uses": "check-vendored-dep",
+      "quick": true,
+      "timeout_s": 120
+    },
+    {
       "name": "ci-local-jobs",
       "description": "Every manifest step runs in exactly one CI job (scripts/check-ci-local-jobs.mjs)",
       "run": "node --test scripts/check-ci-local-jobs.test.mjs && node scripts/check-ci-local-jobs.mjs",

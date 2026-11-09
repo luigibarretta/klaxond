@@ -101,7 +101,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             export RELEASE_CONTRACT_TAG="$GITHUB_REF_NAME"
           fi
-          node third_party/repo-tooling/ci-local.mjs --ci --only repo-tooling-sync,ci-local-jobs,rsa-guard,auth-gold,release-pipeline,release-contract,loc,nasa,static-check,audit-lockfiles,rust-fmt,sdk-go
+          node third_party/repo-tooling/ci-local.mjs --ci --only repo-tooling-sync,vendored-deps,ci-local-jobs,rsa-guard,auth-gold,release-pipeline,release-contract,loc,nasa,static-check,audit-lockfiles,rust-fmt,sdk-go
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@v2

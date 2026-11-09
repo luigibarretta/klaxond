@@ -1,7 +1,7 @@
 use super::{AUTH_SESSION_COOKIE, User};
 use crate::state::AppState;
-use crate::util::{b64url_decode_padded, hmac_hex, now_epoch_i64};
-use auth_modules::secrets::constant_time_eq;
+use crate::state::keys::LEGACY_SESSION_COOKIE;
+use crate::util::{b64url_decode_padded, now_epoch_i64};
 use auth_modules::session_policy::{SameSitePolicy, SessionPolicy};
 use axum::body::Body;
 use axum::http::header::SET_COOKIE;
@@ -78,10 +78,11 @@ pub(super) async fn verify_session(
 
 fn verify_legacy_session(state: &AppState, cookie_value: &str) -> Option<User> {
     let (body, sig) = cookie_value.split_once('.')?;
-    let expected = hmac_hex(state.session_key.as_slice(), body.as_bytes());
-    if !constant_time_eq(sig.as_bytes(), expected.as_bytes()) {
-        return None;
-    }
+    // Only the raw pre-0.23 secret ever signed these cookies; nothing mints
+    // them under the derived key.
+    state
+        .keys
+        .verify_hex(LEGACY_SESSION_COOKIE, body.as_bytes(), sig)?;
     let bytes = b64url_decode_padded(body).ok()?;
     let user: User = serde_json::from_slice(&bytes).ok()?;
     if user.exp > 0 && user.exp <= now_epoch_i64() {

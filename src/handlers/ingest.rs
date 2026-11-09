@@ -95,7 +95,7 @@ fn authenticated_source(
             auth_ok = true;
             auth_reason = "blackstart-legacy-webhook-route".into();
             tracing::warn!(
-                peer = %peer.ip(),
+                client = %crate::auth::client_ip(state, headers, Some(peer)),
                 "accepted Blackstart credentials on deprecated /webhook route; use /blackstart"
             );
         } else if auth_reason == "source-disabled-no-secret" {
@@ -103,12 +103,13 @@ fn authenticated_source(
         }
     }
     if !auth_ok {
+        // The resolved client, not the reverse proxy that forwarded it.
         tracing::warn!(
             "[{}/{}] webhook auth rejected: {} (from {})",
             source,
             route.severity,
             auth_reason,
-            peer.ip()
+            crate::auth::client_ip(state, headers, Some(peer))
         );
         return Err(if auth_reason == "source-disabled-no-secret" {
             IngestAuthError {

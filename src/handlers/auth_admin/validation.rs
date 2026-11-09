@@ -12,6 +12,7 @@ pub(super) fn validate_auth_config(
     headers: &HeaderMap,
 ) -> Result<(), String> {
     validate_step_up(auth)?;
+    validate_session_secret(auth)?;
     match auth.mode.as_str() {
         "none" => Ok(()),
         "basic" => validate_basic(auth),
@@ -20,6 +21,16 @@ pub(super) fn validate_auth_config(
         "trusted-proxy" => validate_trusted_proxy(auth, peer, headers),
         _ => Err("invalid mode".into()),
     }
+}
+
+/// A secret the key ring would refuse at the next start must not be saved.
+pub(super) fn validate_session_secret(auth: &AuthConfig) -> Result<(), String> {
+    if auth.session_secret.trim().is_empty() {
+        return Ok(());
+    }
+    crate::state::keys::ServiceKeys::from_secret(auth.session_secret.as_bytes().to_vec())
+        .map(|_| ())
+        .map_err(|_| "session_secret must be at least 32 bytes and not one repeated byte".into())
 }
 
 fn validate_step_up(auth: &AuthConfig) -> Result<(), String> {

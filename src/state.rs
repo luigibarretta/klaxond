@@ -3,6 +3,7 @@ mod tests;
 
 mod delivery;
 mod init;
+pub mod keys;
 mod locks;
 mod metrics;
 mod session;
@@ -40,7 +41,7 @@ pub struct AppState {
     pub started: Instant,
     pub config: Arc<RwLock<RuntimeConfig>>,
     pub config_write_lock: Arc<Mutex<()>>,
-    pub session_key: Arc<Vec<u8>>,
+    pub keys: Arc<self::keys::ServiceKeys>,
     pub cascade_runtime_enabled: Arc<AtomicBool>,
     pub history: Arc<RwLock<Arc<HistoryStore>>>,
     pub(crate) auth_store_transition: Arc<RwLock<()>>,

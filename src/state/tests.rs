@@ -1,4 +1,4 @@
-use super::session::load_or_create_session_key;
+use super::session::{load_or_create_session_key, load_service_keys};
 use super::*;
 use crate::config::load_runtime_config;
 use std::path::PathBuf;
@@ -42,6 +42,38 @@ session_secret = "toml-session-secret"
 
     assert_eq!(key, b"toml-session-secret");
     assert!(!paths.auth_session_key.exists());
+}
+
+#[test]
+fn short_session_secrets_fail_fast() {
+    // SAFETY: this test is single-threaded with respect to its env mutation.
+    unsafe { std::env::remove_var("AUTH_SESSION_SECRET") };
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    fs::write(&paths.config, "[auth]\nsession_secret = \"too-short\"\n").unwrap();
+    let cfg = load_runtime_config(&paths).unwrap();
+    let err = load_service_keys(&paths, &cfg).unwrap_err().to_string();
+    assert!(err.contains("at least 32"), "{err}");
+}
+
+#[test]
+fn generated_session_key_is_private_and_legacy_modes_are_tightened() {
+    use std::os::unix::fs::PermissionsExt;
+    // SAFETY: this test is single-threaded with respect to its env mutation.
+    unsafe { std::env::remove_var("AUTH_SESSION_SECRET") };
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    let cfg = load_runtime_config(&paths).unwrap();
+    let mode = |path: &std::path::Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+
+    let key = load_or_create_session_key(&paths, &cfg).unwrap();
+    assert_eq!(key.len(), 32);
+    assert_eq!(mode(&paths.auth_session_key), 0o600);
+
+    fs::set_permissions(&paths.auth_session_key, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!(load_or_create_session_key(&paths, &cfg).unwrap(), key);
+    assert_eq!(mode(&paths.auth_session_key), 0o600);
+    assert_eq!(mode(&paths.auth_config), 0o600);
 }
 
 #[test]

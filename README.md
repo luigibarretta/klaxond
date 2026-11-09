@@ -209,6 +209,21 @@ mail is sent. The mail names the requester IP and the request time.
 subnets of reverse proxies that are allowed to supply forwarded identity and
 client-IP headers. The default trusts loopback only; split-host deployments must
 set the frontend proxy address explicitly and must not use a whole client LAN.
+The client address used for rate limits, magic-link mails and ingest
+auth-failure logs is resolved with the shared `auth_modules::client_ip`
+resolver: only `X-Forwarded-For` is read, from the right, skipping these
+proxies; `X-Real-IP` is ignored, and a malformed hop before the client makes
+the TCP peer the answer. Behind the homelab Traefik this is
+`AUTH_TRUSTED_PROXY_CIDRS=192.168.50.100/32`.
+OIDC logins are bound to the browser that started them: the authorization
+`state` is also kept in the HttpOnly, `SameSite=Lax` `klaxond_oidc_flow`
+cookie (10 minutes) and the callback is rejected without it or when it does
+not match. The session secret (`AUTH_SESSION_SECRET`, `[auth].session_secret`
+or the generated `auth-session.key`) must be at least 32 bytes; Klaxond
+derives a separate HMAC key from it for each purpose (acknowledgement links,
+session rotation, rate-limit keys). `auth-session.key` and `auth-config.json`
+are written `0600`; existing files with broader permissions are tightened at
+startup and rejected if they are symlinks or owned by another user.
 Sensitive browser actions also require a short local reauthentication window
 when using local username/password or LDAP login. Machine clients should use scoped
 Bearer tokens or explicit Basic auth headers; those paths are not gated by

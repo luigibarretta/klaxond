@@ -59,7 +59,7 @@ pub(in crate::auth) use payload::login_payload;
 use rate_limit::record_auth_audit_failure;
 pub(crate) use rate_limit::{
     AuthRateKeys, auth_rate_keys, auth_rate_limited, auth_rate_limited_on_worker,
-    clear_auth_failures, clear_auth_failures_on_worker, record_auth_failure,
+    clear_auth_failures, clear_auth_failures_on_worker, client_ip, record_auth_failure,
     record_auth_failure_on_worker,
 };
 

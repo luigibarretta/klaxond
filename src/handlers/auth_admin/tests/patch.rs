@@ -70,3 +70,16 @@ fn patch_fixture() -> AuthSettingsPatch {
     }))
     .expect("patch")
 }
+
+#[test]
+fn short_session_secrets_cannot_be_saved() {
+    let mut auth = AuthConfig {
+        session_secret: "existing-session-secret".to_string(),
+        ..Default::default()
+    };
+    assert!(validation::validate_session_secret(&auth).is_err());
+    auth.session_secret = "0123456789abcdef0123456789abcdef".to_string();
+    assert!(validation::validate_session_secret(&auth).is_ok());
+    auth.session_secret.clear();
+    assert!(validation::validate_session_secret(&auth).is_ok());
+}

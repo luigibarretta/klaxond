@@ -1,8 +1,17 @@
+use super::keys::ServiceKeys;
 use crate::config::{Paths, RuntimeConfig};
-use crate::util::{atomic_write, random_bytes};
-use anyhow::{Context, Result};
-use std::fs;
-use std::path::Path;
+use crate::util::private_file::{read_private, write_private};
+use crate::util::random_bytes;
+use anyhow::Result;
+
+/// Loads the session secret (environment, then TOML, then the generated
+/// `auth-session.key`) and derives the per-purpose key ring from it.
+pub(in crate::state) fn load_service_keys(
+    paths: &Paths,
+    cfg: &RuntimeConfig,
+) -> Result<ServiceKeys> {
+    ServiceKeys::from_secret(load_or_create_session_key(paths, cfg)?)
+}
 
 pub(in crate::state) fn load_or_create_session_key(
     paths: &Paths,
@@ -25,28 +34,11 @@ pub(in crate::state) fn load_or_create_session_key(
     {
         return Ok(secret.as_bytes().to_vec());
     }
-    if paths.auth_session_key.exists() {
-        return fs::read(&paths.auth_session_key)
-            .with_context(|| format!("read {}", paths.auth_session_key.display()));
+    if paths.auth_session_key.exists() || paths.auth_session_key.is_symlink() {
+        return read_private(&paths.auth_session_key);
     }
+    // Created 0600 from the start (no window with the umask default mode).
     let key = random_bytes::<32>().to_vec();
-    if let Some(parent) = paths.auth_session_key.parent() {
-        fs::create_dir_all(parent).ok();
-    }
-    atomic_write(&paths.auth_session_key, &key)?;
-    set_private_mode(&paths.auth_session_key);
+    write_private(&paths.auth_session_key, &key)?;
     Ok(key)
 }
-
-#[cfg(unix)]
-fn set_private_mode(path: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    if let Ok(meta) = fs::metadata(path) {
-        let mut perms = meta.permissions();
-        perms.set_mode(0o600);
-        let _ = fs::set_permissions(path, perms);
-    }
-}
-
-#[cfg(not(unix))]
-fn set_private_mode(_path: &Path) {}
