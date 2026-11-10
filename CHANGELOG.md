@@ -1,5 +1,17 @@
 # Klaxond — CHANGELOG
 
+## 0.24.1 — 2026-11-10
+
+- Tests: the Firefox e2e project runs with
+  `browser.tabs.remote.useCrossOriginOpenerPolicy=false`. With the new
+  `Cross-Origin-Opener-Policy: same-origin` header, Playwright's Firefox
+  driver lost the load event in about one navigation in five (400-navigation
+  A/B: 88 timeouts with COOP, 0 without), so CI failed on random Firefox
+  page loads. Production keeps the header; Chromium still exercises it.
+- Tests: the first authentication e2e test restores the configuration it
+  changes, so Basic auth no longer leaks into later tests on the same server.
+- 0.24.0 was tagged but never deployed (its CI failed on the issue above).
+
 ## 0.24.0 — 2026-11-10
 
 - Security (outbound SSRF guard): every outbound channel request (ntfy

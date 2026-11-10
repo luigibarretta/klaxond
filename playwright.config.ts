@@ -15,7 +15,18 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "firefox", use: { ...devices["Desktop Firefox"] } },
+    {
+      name: "firefox",
+      use: {
+        ...devices["Desktop Firefox"],
+        // Klaxond sends Cross-Origin-Opener-Policy: same-origin. Navigating from
+        // about:blank to such a page swaps Firefox's browsing-context group, and
+        // Playwright's Firefox driver then loses the load event about one time in
+        // five (page.goto timeouts with every resource loaded). Chromium still
+        // exercises COOP; the header itself is covered by the Rust tests.
+        launchOptions: { firefoxUserPrefs: { "browser.tabs.remote.useCrossOriginOpenerPolicy": false } }
+      }
+    },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
     { name: "mobile-safari", use: { ...devices["iPhone 15"] } }
   ],

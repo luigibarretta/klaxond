@@ -7,169 +7,177 @@ import {
 } from "./klaxond-helpers";
 
 test("backend logs require admin auth when auth is enabled", async ({ request }) => {
-  const unsafeBasic = await request.post("/api/auth/config", {
-    data: {
-      settings: {
-        mode: "basic",
-        basic: { username: "", password: "test-password" }
-      }
-    }
-  });
-  expect(unsafeBasic.status()).toBe(400);
-  expect(await unsafeBasic.text()).toContain("username");
-
-  const unsafeOidc = await request.post("/api/auth/config", {
-    data: {
-      settings: {
-        mode: "oidc",
-        oidc: {
-          issuer: "https://idp.example.test",
-          client_id: "klaxond",
-          redirect_path: "/custom/callback"
+  // Leave the shared e2e server as found: this test enables Basic auth, and the
+  // next browser project reuses the same server.
+  const originalBundle = await exportConfigBundleWithAuthFallback(request);
+  const cleanupBearer = await createAdminBearer(request, "e2e-auth-cleanup");
+  try {
+    const unsafeBasic = await request.post("/api/auth/config", {
+      data: {
+        settings: {
+          mode: "basic",
+          basic: { username: "", password: "test-password" }
         }
       }
-    }
-  });
-  expect(unsafeOidc.status()).toBe(400);
-  expect(await unsafeOidc.text()).toContain("/api/auth/callback");
+    });
+    expect(unsafeBasic.status()).toBe(400);
+    expect(await unsafeBasic.text()).toContain("username");
 
-  const unsafeTrustedProxy = await request.post("/api/auth/config", {
-    data: {
-      settings: {
-        mode: "trusted-proxy",
-        trusted_proxy: {
-          user_header: "X-Forwarded-User",
-          trusted_cidrs: ["127.0.0.1/32"]
+    const unsafeOidc = await request.post("/api/auth/config", {
+      data: {
+        settings: {
+          mode: "oidc",
+          oidc: {
+            issuer: "https://idp.example.test",
+            client_id: "klaxond",
+            redirect_path: "/custom/callback"
+          }
         }
       }
-    }
-  });
-  expect(unsafeTrustedProxy.status()).toBe(400);
-  expect(await unsafeTrustedProxy.text()).toContain("X-Forwarded-User");
+    });
+    expect(unsafeOidc.status()).toBe(400);
+    expect(await unsafeOidc.text()).toContain("/api/auth/callback");
 
-  const scopedToken = await request.post("/api/auth/tokens", {
-    data: {
-      name: "logs-reader",
-      kind: "pat",
-      scopes: ["logs:read"]
-    }
-  });
-  await expect(scopedToken).toBeOK();
-  const scopedPayload = await scopedToken.json();
-  expect(scopedPayload.token).toMatch(/^klx_pat_/);
-  expect(JSON.stringify(scopedPayload.record)).not.toContain("token_hash");
-
-  const wrongToken = await request.post("/api/auth/tokens", {
-    data: {
-      name: "status-only",
-      kind: "api-key",
-      scopes: ["status:read"]
-    }
-  });
-  await expect(wrongToken).toBeOK();
-  const wrongPayload = await wrongToken.json();
-
-  const viewerToken = await request.post("/api/auth/tokens", {
-    data: {
-      name: "viewer-role",
-      kind: "pat",
-      scopes: ["viewer:*"]
-    }
-  });
-  await expect(viewerToken).toBeOK();
-  const viewerPayload = await viewerToken.json();
-
-  const configReaderToken = await request.post("/api/auth/tokens", {
-    data: {
-      name: "config-reader",
-      kind: "pat",
-      scopes: ["config:read"]
-    }
-  });
-  await expect(configReaderToken).toBeOK();
-  const configReaderPayload = await configReaderToken.json();
-
-  const authWriterToken = await request.post("/api/auth/tokens", {
-    data: {
-      name: "auth-writer",
-      kind: "pat",
-      scopes: ["auth:write"]
-    }
-  });
-  await expect(authWriterToken).toBeOK();
-  const authWriterPayload = await authWriterToken.json();
-
-  const update = await request.post("/api/auth/config", {
-    data: {
-      settings: {
-        mode: "basic",
-        basic: {
-          username: "admin",
-          password: "test-password"
+    const unsafeTrustedProxy = await request.post("/api/auth/config", {
+      data: {
+        settings: {
+          mode: "trusted-proxy",
+          trusted_proxy: {
+            user_header: "X-Forwarded-User",
+            trusted_cidrs: ["127.0.0.1/32"]
+          }
         }
       }
-    }
-  });
-  await expect(update).toBeOK();
-  const updatedAuth = await update.json();
-  expect(JSON.stringify(updatedAuth.settings)).not.toContain("token_hash");
-  expect(JSON.stringify(updatedAuth.settings)).not.toContain("credential");
+    });
+    expect(unsafeTrustedProxy.status()).toBe(400);
+    expect(await unsafeTrustedProxy.text()).toContain("X-Forwarded-User");
 
-  const denied = await request.get("/api/logs?limit=1");
-  expect(denied.status()).toBe(401);
-  expect(denied.headers()["www-authenticate"]).toContain("Basic");
+    const scopedToken = await request.post("/api/auth/tokens", {
+      data: {
+        name: "logs-reader",
+        kind: "pat",
+        scopes: ["logs:read"]
+      }
+    });
+    await expect(scopedToken).toBeOK();
+    const scopedPayload = await scopedToken.json();
+    expect(scopedPayload.token).toMatch(/^klx_pat_/);
+    expect(JSON.stringify(scopedPayload.record)).not.toContain("token_hash");
 
-  const token = Buffer.from("admin:test-password").toString("base64");
-  const allowed = await request.get("/api/logs?limit=1", {
-    headers: { Authorization: `Basic ${token}` }
-  });
-  await expect(allowed).toBeOK();
+    const wrongToken = await request.post("/api/auth/tokens", {
+      data: {
+        name: "status-only",
+        kind: "api-key",
+        scopes: ["status:read"]
+      }
+    });
+    await expect(wrongToken).toBeOK();
+    const wrongPayload = await wrongToken.json();
 
-  const bearerAllowed = await request.get("/api/logs?limit=1", {
-    headers: { Authorization: `Bearer ${scopedPayload.token}` }
-  });
-  await expect(bearerAllowed).toBeOK();
+    const viewerToken = await request.post("/api/auth/tokens", {
+      data: {
+        name: "viewer-role",
+        kind: "pat",
+        scopes: ["viewer:*"]
+      }
+    });
+    await expect(viewerToken).toBeOK();
+    const viewerPayload = await viewerToken.json();
 
-  const bearerDenied = await request.get("/api/logs?limit=1", {
-    headers: { Authorization: `Bearer ${wrongPayload.token}` }
-  });
-  expect(bearerDenied.status()).toBe(403);
+    const configReaderToken = await request.post("/api/auth/tokens", {
+      data: {
+        name: "config-reader",
+        kind: "pat",
+        scopes: ["config:read"]
+      }
+    });
+    await expect(configReaderToken).toBeOK();
+    const configReaderPayload = await configReaderToken.json();
 
-  const secretExportDenied = await request.get("/api/config/export", {
-    headers: { Authorization: `Bearer ${configReaderPayload.token}` }
-  });
-  expect(secretExportDenied.status()).toBe(403);
+    const authWriterToken = await request.post("/api/auth/tokens", {
+      data: {
+        name: "auth-writer",
+        kind: "pat",
+        scopes: ["auth:write"]
+      }
+    });
+    await expect(authWriterToken).toBeOK();
+    const authWriterPayload = await authWriterToken.json();
 
-  const authWriterEscalationDenied = await request.post("/api/auth/tokens", {
-    headers: { Authorization: `Bearer ${authWriterPayload.token}` },
-    data: {
-      name: "should-not-escalate",
-      kind: "pat",
-      scopes: ["admin:*"]
-    }
-  });
-  expect(authWriterEscalationDenied.status()).toBe(403);
+    const update = await request.post("/api/auth/config", {
+      data: {
+        settings: {
+          mode: "basic",
+          basic: {
+            username: "admin",
+            password: "test-password"
+          }
+        }
+      }
+    });
+    await expect(update).toBeOK();
+    const updatedAuth = await update.json();
+    expect(JSON.stringify(updatedAuth.settings)).not.toContain("token_hash");
+    expect(JSON.stringify(updatedAuth.settings)).not.toContain("credential");
 
-  const viewerStatus = await request.get("/api/status", {
-    headers: { Authorization: `Bearer ${viewerPayload.token}` }
-  });
-  await expect(viewerStatus).toBeOK();
+    const denied = await request.get("/api/logs?limit=1");
+    expect(denied.status()).toBe(401);
+    expect(denied.headers()["www-authenticate"]).toContain("Basic");
 
-  const viewerAudit = await request.get("/api/audit?limit=1", {
-    headers: { Authorization: `Bearer ${viewerPayload.token}` }
-  });
-  await expect(viewerAudit).toBeOK();
+    const token = Buffer.from("admin:test-password").toString("base64");
+    const allowed = await request.get("/api/logs?limit=1", {
+      headers: { Authorization: `Basic ${token}` }
+    });
+    await expect(allowed).toBeOK();
 
-  const viewerExportDenied = await request.get("/api/config/export", {
-    headers: { Authorization: `Bearer ${viewerPayload.token}` }
-  });
-  expect(viewerExportDenied.status()).toBe(403);
+    const bearerAllowed = await request.get("/api/logs?limit=1", {
+      headers: { Authorization: `Bearer ${scopedPayload.token}` }
+    });
+    await expect(bearerAllowed).toBeOK();
 
-  const viewerWriteDenied = await request.post("/api/cascade/toggle", {
-    headers: { Authorization: `Bearer ${viewerPayload.token}` },
-    data: {}
-  });
-  expect(viewerWriteDenied.status()).toBe(403);
+    const bearerDenied = await request.get("/api/logs?limit=1", {
+      headers: { Authorization: `Bearer ${wrongPayload.token}` }
+    });
+    expect(bearerDenied.status()).toBe(403);
+
+    const secretExportDenied = await request.get("/api/config/export", {
+      headers: { Authorization: `Bearer ${configReaderPayload.token}` }
+    });
+    expect(secretExportDenied.status()).toBe(403);
+
+    const authWriterEscalationDenied = await request.post("/api/auth/tokens", {
+      headers: { Authorization: `Bearer ${authWriterPayload.token}` },
+      data: {
+        name: "should-not-escalate",
+        kind: "pat",
+        scopes: ["admin:*"]
+      }
+    });
+    expect(authWriterEscalationDenied.status()).toBe(403);
+
+    const viewerStatus = await request.get("/api/status", {
+      headers: { Authorization: `Bearer ${viewerPayload.token}` }
+    });
+    await expect(viewerStatus).toBeOK();
+
+    const viewerAudit = await request.get("/api/audit?limit=1", {
+      headers: { Authorization: `Bearer ${viewerPayload.token}` }
+    });
+    await expect(viewerAudit).toBeOK();
+
+    const viewerExportDenied = await request.get("/api/config/export", {
+      headers: { Authorization: `Bearer ${viewerPayload.token}` }
+    });
+    expect(viewerExportDenied.status()).toBe(403);
+
+    const viewerWriteDenied = await request.post("/api/cascade/toggle", {
+      headers: { Authorization: `Bearer ${viewerPayload.token}` },
+      data: {}
+    });
+    expect(viewerWriteDenied.status()).toBe(403);
+  } finally {
+    await restoreConfigBundle(request, originalBundle, { Authorization: cleanupBearer });
+  }
 });
 
 test("local login supports TOTP, CSRF protection and sudo reauth", async ({ request }) => {
