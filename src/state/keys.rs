@@ -6,21 +6,15 @@
 //! for the alert name `"ack"`). Every purpose now uses its own HKDF sub-key
 //! (`auth_modules::keys`), selected by a [`KeyLabel`].
 //!
-//! Transition: tags minted before the upgrade (acknowledgement links already
-//! sent through ntfy, legacy stateless cookies, account rate-limit records,
-//! in-flight session rotations) were produced with the raw secret. The raw
-//! secret is kept as a legacy key, scoped to the verifying labels whose old
-//! code used it, until those artefacts have expired. Remove
-//! [`LEGACY_RAW_VERIFY_LABELS`] and [`ServiceKeys::legacy_hex`] in the release
-//! after the longest acknowledgement TTL configured in production has passed.
+//! The 0.23 transition, which still verified raw-secret tags (acknowledgement
+//! links, legacy stateless cookies, rate-limit records, in-flight session
+//! rotations) until they expired, was removed in the next release: the raw
+//! secret no longer verifies anything.
 
 use anyhow::{Result, anyhow};
-use auth_modules::keys::{KeyGeneration, KeyLabel, KeyRing, MasterKey, legacy_hmac_sha256};
-use auth_modules::secrets::Redacted;
+use auth_modules::keys::{KeyGeneration, KeyLabel, KeyRing, MasterKey};
 use std::fmt;
 
-/// Legacy stateless session cookies (verification only; none are minted).
-pub const LEGACY_SESSION_COOKIE: KeyLabel = KeyLabel::new("klaxond/legacy-session-cookie/v1");
 /// Deterministic successor token of a rotated persistent session.
 pub const SESSION_ROTATION: KeyLabel = KeyLabel::new("klaxond/session-rotation/v1");
 /// Keyed hash of the account dimension of the persistent auth rate limit.
@@ -30,35 +24,24 @@ pub const EMERGENCY_ACK: KeyLabel = KeyLabel::new("klaxond/emergency-ack/v1");
 /// Inhibition acknowledgement links sent with ntfy actions (`{"a","t","e"}`).
 pub const INHIBITION_ACK: KeyLabel = KeyLabel::new("klaxond/inhibition-ack/v1");
 
-/// Labels under which the raw pre-0.23 secret still verifies. The payload
-/// parsers of these three formats reject each other's shapes, so a legacy tag
-/// cannot cross purposes even inside this set.
-pub const LEGACY_RAW_VERIFY_LABELS: [KeyLabel; 3] =
-    [LEGACY_SESSION_COOKIE, EMERGENCY_ACK, INHIBITION_ACK];
-
 #[derive(Clone)]
 pub struct ServiceKeys {
     ring: KeyRing,
-    legacy_raw: Redacted<Vec<u8>>,
 }
 
 impl ServiceKeys {
     /// Builds the key ring from the session secret. The secret must be at
     /// least 32 bytes and must not repeat a single byte.
     pub fn from_secret(secret: Vec<u8>) -> Result<Self> {
-        let master = MasterKey::from_bytes(secret.clone()).map_err(|err| {
+        let master = MasterKey::from_bytes(secret).map_err(|err| {
             anyhow!(
                 "session secret rejected: {err}; set AUTH_SESSION_SECRET (or [auth].session_secret) \
                  to at least 32 random bytes, e.g. `openssl rand -base64 32`, or unset it to use \
                  the generated auth-session.key"
             )
         })?;
-        let ring = KeyRing::new(master)
-            .with_legacy_raw(secret.clone(), &LEGACY_RAW_VERIFY_LABELS)
-            .map_err(|err| anyhow!("legacy session secret rejected: {err}"))?;
         Ok(Self {
-            ring,
-            legacy_raw: Redacted::new(secret),
+            ring: KeyRing::new(master),
         })
     }
 
@@ -67,8 +50,7 @@ impl ServiceKeys {
         hex::encode(self.ring.sign(label, message))
     }
 
-    /// Verifies a hex tag under `label`; legacy raw tags verify only for the
-    /// labels in [`LEGACY_RAW_VERIFY_LABELS`].
+    /// Verifies a hex tag under `label`'s derived sub-key.
     pub fn verify_hex(
         &self,
         label: KeyLabel,
@@ -77,13 +59,6 @@ impl ServiceKeys {
     ) -> Option<KeyGeneration> {
         let tag = hex::decode(tag_hex).ok()?;
         self.ring.verify(label, message, &tag)
-    }
-
-    /// The pre-0.23 raw-secret HMAC of `message`, for recomputed values
-    /// (rate-limit hashes, rotation successors) that must still be found
-    /// during the transition. Never use it to mint anything new.
-    pub fn legacy_hex(&self, message: &[u8]) -> String {
-        hex::encode(legacy_hmac_sha256(self.legacy_raw.expose_secret(), message))
     }
 }
 
@@ -115,32 +90,22 @@ mod tests {
         let tag = keys.sign_hex(EMERGENCY_ACK, b"body");
         assert!(keys.verify_hex(EMERGENCY_ACK, b"body", &tag).is_some());
         assert!(keys.verify_hex(INHIBITION_ACK, b"body", &tag).is_none());
-        assert!(
-            keys.verify_hex(LEGACY_SESSION_COOKIE, b"body", &tag)
-                .is_none()
-        );
+        assert!(keys.verify_hex(SESSION_ROTATION, b"body", &tag).is_none());
         assert_ne!(tag, hmac_hex(&secret(), b"body"));
     }
 
     #[test]
-    fn raw_legacy_tags_verify_only_under_scoped_labels() {
+    fn raw_secret_tags_no_longer_verify_under_any_label() {
         let keys = ServiceKeys::from_secret(secret()).unwrap();
-        let legacy = hmac_hex(&secret(), b"body");
-        for label in LEGACY_RAW_VERIFY_LABELS {
-            assert_eq!(
-                keys.verify_hex(label, b"body", &legacy),
-                Some(KeyGeneration::Legacy(0))
-            );
+        let raw = hmac_hex(&secret(), b"body");
+        for label in [
+            SESSION_ROTATION,
+            AUTH_RATE_ACCOUNT,
+            EMERGENCY_ACK,
+            INHIBITION_ACK,
+        ] {
+            assert!(keys.verify_hex(label, b"body", &raw).is_none());
         }
-        assert!(
-            keys.verify_hex(SESSION_ROTATION, b"body", &legacy)
-                .is_none()
-        );
-        assert!(
-            keys.verify_hex(AUTH_RATE_ACCOUNT, b"body", &legacy)
-                .is_none()
-        );
-        assert_eq!(keys.legacy_hex(b"body"), legacy);
     }
 
     #[test]

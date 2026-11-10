@@ -1,11 +1,17 @@
 use super::channels::{smtp_ready, telegram_ready};
 use super::{Check, CheckStatus, check};
 use crate::config::RuntimeConfig;
+use crate::outbound::{OutboundError, classify, outbound_guard};
+use http_hardening::net_guard::reqwest_adapter::GuardedClient;
+use reqwest::Url;
+use std::sync::Arc;
 use std::time::Duration;
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(super) async fn online_checks(cfg: &RuntimeConfig, checks: &mut Vec<Check>) {
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
+        .timeout(PROBE_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .build()
     {
@@ -15,27 +21,58 @@ pub(super) async fn online_checks(cfg: &RuntimeConfig, checks: &mut Vec<Check>) 
             return;
         }
     };
-    checks.push(
-        http_probe(
-            &client,
-            "public health",
-            format!("{}/healthz", cfg.public_url),
-        )
-        .await,
-    );
-    checks.push(
-        http_probe(
-            &client,
-            "ntfy health",
-            format!("{}/v1/health", cfg.ntfy_url),
-        )
-        .await,
-    );
-    telegram_check(cfg, &client, checks).await;
+    // Klaxond's own public URL is not a delivery target: plain client.
+    checks.push(response_check(
+        "public health",
+        client
+            .get(format!("{}/healthz", cfg.public_url))
+            .send()
+            .await
+            .map_err(OutboundError::Transport),
+    ));
+    let Some(guarded) = guarded_client(cfg, checks) else {
+        return;
+    };
+    let ntfy_health = format!("{}/v1/health", cfg.ntfy_url);
+    checks.push(response_check(
+        "ntfy health",
+        guarded_get(&guarded, &ntfy_health).await,
+    ));
+    telegram_check(cfg, &guarded, checks).await;
     smtp_check(cfg, checks).await;
 }
 
-async fn telegram_check(cfg: &RuntimeConfig, client: &reqwest::Client, checks: &mut Vec<Check>) {
+/// Channel probes use the delivery guard, so a destination outside the
+/// outbound allowlist is reported here exactly as a delivery would see it.
+fn guarded_client(cfg: &RuntimeConfig, checks: &mut Vec<Check>) -> Option<GuardedClient> {
+    let built = outbound_guard(&cfg.outbound_allowed_cidrs)
+        .map_err(|error| format!("outbound allowlist is invalid: {error}"))
+        .and_then(|guard| {
+            GuardedClient::with_config(Arc::new(guard), |builder| builder.timeout(PROBE_TIMEOUT))
+                .map_err(|error| error.to_string())
+        });
+    match built {
+        Ok(client) => Some(client),
+        Err(error) => {
+            checks.push(check("outbound guard", CheckStatus::Error, error));
+            None
+        }
+    }
+}
+
+async fn guarded_get(
+    client: &GuardedClient,
+    url: &str,
+) -> Result<reqwest::Response, OutboundError> {
+    let url =
+        Url::parse(url).map_err(|error| OutboundError::Refused(format!("invalid URL: {error}")))?;
+    let request = client
+        .get(&url)
+        .map_err(|error| OutboundError::Refused(error.to_string()))?;
+    request.send().await.map_err(classify)
+}
+
+async fn telegram_check(cfg: &RuntimeConfig, client: &GuardedClient, checks: &mut Vec<Check>) {
     if !telegram_ready(cfg) {
         return;
     }
@@ -46,7 +83,7 @@ async fn telegram_check(cfg: &RuntimeConfig, client: &reqwest::Client, checks: &
     );
     checks.push(response_check(
         "Telegram credentials",
-        client.get(url).send().await,
+        guarded_get(client, &url).await,
     ));
 }
 
@@ -74,16 +111,13 @@ async fn smtp_check(cfg: &RuntimeConfig, checks: &mut Vec<Check>) {
     });
 }
 
-async fn http_probe(client: &reqwest::Client, name: &str, url: String) -> Check {
-    response_check(name, client.get(url).send().await)
-}
-
-fn response_check(name: &str, response: reqwest::Result<reqwest::Response>) -> Check {
+fn response_check(name: &str, response: Result<reqwest::Response, OutboundError>) -> Check {
     match response {
         Ok(response) if response.status().is_success() => {
             check(name, CheckStatus::Ok, response.status().to_string())
         }
         Ok(response) => check(name, CheckStatus::Error, response.status().to_string()),
-        Err(error) => check(name, CheckStatus::Error, error.without_url().to_string()),
+        // OutboundError hides request URLs (the Telegram one carries the token).
+        Err(error) => check(name, CheckStatus::Error, error.to_string()),
     }
 }

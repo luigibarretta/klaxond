@@ -21,17 +21,6 @@ pub(super) fn rotated_session_token(state: &AppState, predecessor_hash: &str) ->
     )
 }
 
-/// The successor a rotation performed before 0.23 (raw-secret HMAC) would
-/// have produced. A browser that lost that rotation response still presents
-/// the predecessor; looking this successor up too keeps it signed in.
-pub(super) fn legacy_rotated_session_token(state: &AppState, predecessor_hash: &str) -> String {
-    let input = rotation_input(predecessor_hash);
-    format!(
-        "{SESSION_TOKEN_PREFIX}{}",
-        state.keys.legacy_hex(input.as_bytes())
-    )
-}
-
 pub(in crate::auth) fn persistent_session_hash(cookie_value: &str) -> Option<String> {
     let token = cookie_value.strip_prefix(SESSION_TOKEN_PREFIX)?;
     if token.len() < 32
@@ -53,17 +42,17 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn legacy_rotation_successor_matches_the_pre_derivation_token() {
+    fn rotation_successor_is_not_the_raw_secret_token() {
         let tmp = TempDir::new().unwrap();
         let state = AppState::new(temp_paths(&tmp)).unwrap();
         let secret = std::fs::read(&state.paths.auth_session_key).unwrap();
         let input = rotation_input("predecessor");
-        let legacy = format!(
+        let raw = format!(
             "{SESSION_TOKEN_PREFIX}{}",
             hmac_hex(&secret, input.as_bytes())
         );
-        assert_eq!(legacy_rotated_session_token(&state, "predecessor"), legacy);
-        assert_ne!(rotated_session_token(&state, "predecessor"), legacy);
-        assert!(persistent_session_hash(&legacy).is_some());
+        let successor = rotated_session_token(&state, "predecessor");
+        assert_ne!(successor, raw);
+        assert!(persistent_session_hash(&successor).is_some());
     }
 }

@@ -153,6 +153,9 @@ pub struct RuntimeConfig {
     pub grafana_render_token: String,
     pub render_image_ttl: u64,
     pub public_url: String,
+    /// Networks outbound channel traffic may reach besides public addresses
+    /// (`[outbound].allowed_cidrs`, comma-separated CIDRs).
+    pub outbound_allowed_cidrs: String,
     pub ack_default_ttl: u64,
     pub beszel_db: PathBuf,
 }

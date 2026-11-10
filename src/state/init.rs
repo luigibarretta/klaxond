@@ -20,10 +20,7 @@ pub(super) fn new(paths: Paths) -> Result<AppState> {
     let queues = dedup_queues(&cfg);
     Ok(AppState {
         paths,
-        http: reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .context("build reqwest client")?,
+        outbound: crate::outbound::OutboundClients::default(),
         started: Instant::now(),
         config: Arc::new(RwLock::new(cfg)),
         config_write_lock: Arc::new(Mutex::new(())),

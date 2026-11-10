@@ -50,6 +50,9 @@ pub fn image_response(state: &AppState, path: &str) -> Response<Body> {
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "image/png")
         .header(CACHE_CONTROL, "private, max-age=900")
+        // ntfy attaches this URL; its web app shows it from another origin.
+        // Kept by the security-headers layer (crate::http_security).
+        .header("cross-origin-resource-policy", "cross-origin")
         .header(CONTENT_LENGTH, img.bytes.len().to_string())
         .body(Body::from(img.bytes))
         .unwrap()

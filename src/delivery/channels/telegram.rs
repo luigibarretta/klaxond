@@ -1,7 +1,9 @@
 use crate::config::RuntimeConfig;
+use crate::outbound::{self, Target};
 use crate::parsers::Parts;
 use crate::state::AppState;
 use crate::util::html_escape;
+use reqwest::Method;
 use serde_json::json;
 use std::time::Duration;
 
@@ -39,17 +41,25 @@ pub(crate) async fn post_to_telegram_with_config(
         cfg.telegram_api_base.trim_end_matches('/'),
         cfg.tg_token
     );
-    match state
-        .http
-        .post(url)
-        .timeout(Duration::from_secs(timeout_s))
-        .form(&payload)
-        .send()
-        .await
-    {
-        Ok(response) => response.status().is_success(),
+    let target = Target {
+        channel: "telegram",
+        method: Method::POST,
+        url: &url,
+    };
+    let result = outbound::send(state, cfg, target, |request| {
+        request
+            .timeout(Duration::from_secs(timeout_s))
+            .form(&payload)
+    })
+    .await;
+    match result {
+        Ok(response) if response.status().is_success() => true,
+        Ok(response) => {
+            tracing::warn!("telegram POST returned {}", response.status());
+            false
+        }
         Err(error) => {
-            tracing::warn!("telegram POST failed: {}", error.without_url());
+            tracing::warn!("telegram POST failed: {error}");
             false
         }
     }

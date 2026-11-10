@@ -37,7 +37,7 @@ type DeliveryActivityCache = Arc<Mutex<HashMap<u16, (Instant, u64, DeliveryActiv
 #[derive(Clone)]
 pub struct AppState {
     pub paths: Paths,
-    pub http: reqwest::Client,
+    pub outbound: crate::outbound::OutboundClients,
     pub started: Instant,
     pub config: Arc<RwLock<RuntimeConfig>>,
     pub config_write_lock: Arc<Mutex<()>>,

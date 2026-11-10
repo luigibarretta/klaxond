@@ -1,9 +1,11 @@
 use crate::config::{NtfyTopic, RuntimeConfig};
 use crate::inhibition::ack_sign;
+use crate::outbound::{self, Target};
 use crate::parsers::Parts;
 use crate::state::AppState;
 use crate::util::strip_non_ascii;
 use base64::{Engine as _, engine::general_purpose};
+use reqwest::Method;
 use std::time::Duration;
 
 pub async fn post_to_ntfy(state: &AppState, severity: &str, parts: &Parts, timeout_s: u64) -> bool {
@@ -139,25 +141,33 @@ async fn deliver_topic(state: &AppState, cfg: &RuntimeConfig, request: NtfyReque
         tracing::warn!("ntfy: topic '{}' has no token", topic.name);
         return false;
     }
-    let mut http_request = state
-        .http
-        .post(format!("{}/{}", cfg.ntfy_url, topic.name))
-        .timeout(Duration::from_secs(timeout_s))
-        .header("Authorization", format!("Bearer {}", topic.token))
-        .header("Title", encoded_title)
-        .header("Tags", parts.tags.join(","))
-        .header("Priority", parts.priority.clone())
-        .body(parts.body.clone());
-    if let Some(actions) = actions {
-        http_request = http_request.header("Actions", actions);
-    }
-    if let Some(sequence_id) = &parts.ntfy_sequence_id {
-        http_request = http_request.header("X-Sequence-ID", sequence_id);
-    }
-    if let Some(attach) = &parts.attach_url {
-        http_request = http_request.header("Attach", attach);
-    }
-    match http_request.send().await {
+    let url = format!("{}/{}", cfg.ntfy_url, topic.name);
+    let target = Target {
+        channel: "ntfy",
+        method: Method::POST,
+        url: &url,
+    };
+    let result = outbound::send(state, cfg, target, |request| {
+        let mut request = request
+            .timeout(Duration::from_secs(timeout_s))
+            .header("Authorization", format!("Bearer {}", topic.token))
+            .header("Title", encoded_title)
+            .header("Tags", parts.tags.join(","))
+            .header("Priority", parts.priority.clone())
+            .body(parts.body.clone());
+        if let Some(actions) = actions {
+            request = request.header("Actions", actions);
+        }
+        if let Some(sequence_id) = &parts.ntfy_sequence_id {
+            request = request.header("X-Sequence-ID", sequence_id);
+        }
+        if let Some(attach) = &parts.attach_url {
+            request = request.header("Attach", attach);
+        }
+        request
+    })
+    .await;
+    match result {
         Ok(response) if response.status().is_success() => true,
         Ok(response) => {
             tracing::warn!("ntfy POST to {} returned {}", topic.name, response.status());

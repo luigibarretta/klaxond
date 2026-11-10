@@ -91,31 +91,40 @@ pub(super) async fn channel_test_matrix_payload(state: &AppState) -> Value {
     })
 }
 
+/// Health probe through the same outbound guard as deliveries, so a refused
+/// destination shows as unreachable here too.
+async fn probe(
+    state: &AppState,
+    cfg: &crate::config::RuntimeConfig,
+    channel: &'static str,
+    url: &str,
+    timeout_s: u64,
+) -> bool {
+    let target = crate::outbound::Target {
+        channel,
+        method: reqwest::Method::GET,
+        url,
+    };
+    crate::outbound::send(state, cfg, target, |request| {
+        request.timeout(Duration::from_secs(timeout_s))
+    })
+    .await
+    .is_ok_and(|response| response.status().is_success())
+}
+
 async fn check_channel_reachability(state: &AppState) -> Value {
     let cfg = state.cfg();
     let mut ntfy = false;
     let mut telegram = false;
     let mut smtp = false;
     if !cfg.ntfy_url.is_empty() {
-        ntfy = state
-            .http
-            .get(format!("{}/v1/health", cfg.ntfy_url))
-            .timeout(Duration::from_secs(3))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
+        let url = format!("{}/v1/health", cfg.ntfy_url);
+        ntfy = probe(state, &cfg, "ntfy", &url, 3).await;
     }
     if !cfg.tg_token.is_empty() {
         let base = cfg.telegram_api_base.trim_end_matches('/');
-        telegram = state
-            .http
-            .get(format!("{base}/bot{}/getMe", cfg.tg_token))
-            .timeout(Duration::from_secs(4))
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false);
+        let url = format!("{base}/bot{}/getMe", cfg.tg_token);
+        telegram = probe(state, &cfg, "telegram", &url, 4).await;
     }
     if !cfg.smtp_host.is_empty() {
         smtp = tokio::time::timeout(

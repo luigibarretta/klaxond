@@ -41,12 +41,7 @@ pub(crate) fn auth_rate_limited(state: &AppState, keys: &AuthRateKeys) -> Result
     let now = now_epoch_i64();
     let account_limited = state
         .with_auth_store(|store| {
-            // A lockout recorded before 0.23 is keyed by the raw-secret hash.
-            Ok::<_, anyhow::Error>(
-                store.auth_rate_limited(&account_key_hash(state, &keys.account), now)?
-                    || store
-                        .auth_rate_limited(&legacy_account_key_hash(state, &keys.account), now)?,
-            )
+            store.auth_rate_limited(&account_key_hash(state, &keys.account), now)
         })
         .map_err(|err| err.to_string())?;
     let ip_limited =
@@ -79,10 +74,7 @@ pub(crate) fn record_auth_failure(
 
 pub(crate) fn clear_auth_failures(state: &AppState, keys: &AuthRateKeys) -> Result<(), String> {
     state
-        .with_auth_store(|store| {
-            store.clear_auth_failures(&account_key_hash(state, &keys.account))?;
-            store.clear_auth_failures(&legacy_account_key_hash(state, &keys.account))
-        })
+        .with_auth_store(|store| store.clear_auth_failures(&account_key_hash(state, &keys.account)))
         .map_err(|err| err.to_string())
 }
 
@@ -164,14 +156,6 @@ fn account_key_hash(state: &AppState, account_key: &str) -> String {
         crate::state::keys::AUTH_RATE_ACCOUNT,
         account_key_input(account_key).as_bytes(),
     )
-}
-
-/// The pre-0.23 raw-secret key of the same account; checked and cleared until
-/// the lockout windows recorded before the upgrade have passed.
-fn legacy_account_key_hash(state: &AppState, account_key: &str) -> String {
-    state
-        .keys
-        .legacy_hex(account_key_input(account_key).as_bytes())
 }
 
 #[cfg(test)]

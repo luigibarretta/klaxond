@@ -90,6 +90,14 @@ public_url = "http://localhost:8181"
 [acks]
 default_ttl_seconds = 3600
 
+# Outbound guard (anti-SSRF) for channel traffic: ntfy, Telegram and Grafana
+# rendering may reach public addresses only, unless the destination network is
+# listed here. LAN targets (an ntfy or Grafana on 192.168.x.x, a hostname that
+# resolves to one) need their network, e.g. "192.168.1.10/32, 192.168.1.20/32".
+# Env override: KLAXOND_OUTBOUND_ALLOWED_CIDRS. Startup fails on an invalid entry.
+[outbound]
+allowed_cidrs = ""
+
 # Ordered ACK/emergency profiles. Disabled in the portable default; production
 # should enable this after configuring the public URL and fallback channels.
 # Non-secret profile settings are operator-owned in the UI unless a legacy

@@ -153,7 +153,7 @@ mod ack_tokens {
     }
 
     #[test]
-    fn emergency_links_sent_before_the_upgrade_stay_valid() {
+    fn raw_secret_emergency_links_no_longer_verify() {
         let tmp = TempDir::new().unwrap();
         let state = AppState::new(temp_paths(&tmp)).unwrap();
         let secret = std::fs::read(&state.paths.auth_session_key).unwrap();
@@ -163,6 +163,6 @@ mod ack_tokens {
                 .as_bytes(),
         );
         let legacy = format!("{body}.{}", hmac_hex(&secret, body.as_bytes()));
-        assert_eq!(verify_token(&state, &legacy).as_deref(), Some("receipt-1"));
+        assert!(verify_token(&state, &legacy).is_none());
     }
 }

@@ -39,6 +39,9 @@ public_url = "https://klaxond.example.test/"
 [acks]
 default_ttl_seconds = 1234
 
+[outbound]
+allowed_cidrs = ["192.168.50.100/32", "192.168.50.110/32"]
+
 [history]
 backend = "sqlite"
 retention = 123
@@ -90,6 +93,10 @@ fn assert_toml_runtime_config(cfg: &RuntimeConfig) {
     assert_eq!(cfg.port, 19090);
     assert_eq!(cfg.public_url, "https://klaxond.example.test");
     assert_eq!(cfg.ack_default_ttl, 1234);
+    assert_eq!(
+        cfg.outbound_allowed_cidrs,
+        "192.168.50.100/32,192.168.50.110/32"
+    );
     assert_eq!(cfg.history.backend, "sqlite");
     assert_eq!(cfg.history.retention, 123);
     assert_eq!(cfg.history.default_limit, 45);
@@ -113,4 +120,19 @@ fn assert_toml_runtime_config(cfg: &RuntimeConfig) {
         toml_get(&cfg.toml, &["ingest", "secrets", "grafana"]).and_then(|v| v.as_str()),
         Some("toml-grafana-secret")
     );
+}
+
+#[test]
+fn invalid_outbound_allowlist_stops_startup() {
+    let _guard = TEST_ENV_LOCK.lock().unwrap();
+    clear_runtime_env();
+    let tmp = TempDir::new().unwrap();
+    let paths = temp_paths(&tmp);
+    fs::write(
+        &paths.config,
+        "[outbound]\nallowed_cidrs = \"192.168.50.1/24\"\n",
+    )
+    .unwrap();
+    let error = load_runtime_config(&paths).unwrap_err().to_string();
+    assert!(error.contains("KLAXOND_OUTBOUND_ALLOWED_CIDRS"), "{error}");
 }

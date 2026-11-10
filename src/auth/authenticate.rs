@@ -74,13 +74,9 @@ async fn authenticate_session(
             if let Some(verified) = verify_session(state, value).await? {
                 let mut user = verified.user;
                 let replacement_cookie = verified.replacement_cookie;
-                let refresh_cookie = ensure_session_security_fields(
-                    state,
-                    cfg,
-                    &mut user,
-                    verified.legacy || verified.should_rotate,
-                )
-                .await?;
+                let refresh_cookie =
+                    ensure_session_security_fields(state, cfg, &mut user, verified.should_rotate)
+                        .await?;
                 return Ok(Some(authorize_interactive_user(
                     user,
                     refresh_cookie.or(replacement_cookie),

@@ -1,7 +1,5 @@
 use super::{AUTH_SESSION_COOKIE, User};
 use crate::state::AppState;
-use crate::state::keys::LEGACY_SESSION_COOKIE;
-use crate::util::{b64url_decode_padded, now_epoch_i64};
 use auth_modules::session_policy::{SameSitePolicy, SessionPolicy};
 use axum::body::Body;
 use axum::http::header::SET_COOKIE;
@@ -20,7 +18,6 @@ pub(super) use token::persistent_session_hash;
 
 pub(super) struct VerifiedSession {
     pub user: User,
-    pub legacy: bool,
     pub should_rotate: bool,
     pub replacement_cookie: Option<String>,
 }
@@ -66,29 +63,9 @@ pub(super) async fn verify_session(
     if let Some(id_hash) = persistent_session_hash(cookie_value) {
         return persistent::verify_persistent_session(state, id_hash).await;
     }
-    Ok(
-        verify_legacy_session(state, cookie_value).map(|user| VerifiedSession {
-            user,
-            legacy: true,
-            should_rotate: false,
-            replacement_cookie: None,
-        }),
-    )
-}
-
-fn verify_legacy_session(state: &AppState, cookie_value: &str) -> Option<User> {
-    let (body, sig) = cookie_value.split_once('.')?;
-    // Only the raw pre-0.23 secret ever signed these cookies; nothing mints
-    // them under the derived key.
-    state
-        .keys
-        .verify_hex(LEGACY_SESSION_COOKIE, body.as_bytes(), sig)?;
-    let bytes = b64url_decode_padded(body).ok()?;
-    let user: User = serde_json::from_slice(&bytes).ok()?;
-    if user.exp > 0 && user.exp <= now_epoch_i64() {
-        return None;
-    }
-    Some(user)
+    // Stateless pre-persistent-session cookies were signed with the raw
+    // secret, which no longer verifies anything: they mean "signed out".
+    Ok(None)
 }
 
 pub(super) fn cookie_values<'a>(cookie: &'a str, name: &str) -> Vec<&'a str> {

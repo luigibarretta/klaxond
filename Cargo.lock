@@ -1166,6 +1166,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-hardening"
+version = "0.2.0"
+dependencies = [
+ "http",
+ "pin-project-lite",
+ "reqwest",
+ "serde",
+ "tokio",
+ "tower-layer",
+ "tower-service",
+ "url",
+]
+
+[[package]]
 name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1479,7 +1493,7 @@ dependencies = [
 
 [[package]]
 name = "klaxond"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "auth-modules",
@@ -1489,6 +1503,7 @@ dependencies = [
  "fs2",
  "hex",
  "hmac 0.12.1",
+ "http-hardening",
  "ipnet",
  "klaxond-protocol",
  "lettre",
@@ -1504,6 +1519,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "toml",
+ "tower",
  "tracing",
  "tracing-subscriber",
  "url",

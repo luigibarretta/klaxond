@@ -7,6 +7,12 @@ const EMERGENCY_LEASE_MARGIN_SECONDS: u64 = 5;
 pub fn validate_runtime_config(cfg: &RuntimeConfig) -> Result<()> {
     cfg.delivery.validate().map_err(anyhow::Error::msg)?;
     validate_render_urls(cfg)?;
+    crate::outbound::outbound_guard(&cfg.outbound_allowed_cidrs).map_err(|error| {
+        anyhow::anyhow!(
+            "outbound.allowed_cidrs / {} is invalid: {error}",
+            crate::outbound::OUTBOUND_ALLOWED_CIDRS_ENV
+        )
+    })?;
     if !cfg.emergency.enabled {
         return Ok(());
     }

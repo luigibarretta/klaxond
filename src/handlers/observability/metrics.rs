@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub(in crate::handlers) fn metrics_response(state: &AppState) -> Response<Body> {
     let uptime = state.started.elapsed().as_secs();
     initialize_emergency_metrics(state);
+    initialize_outbound_metrics(state);
     refresh_runtime_gauges(state);
     let mut lines = metric_preamble(uptime);
     let counters = lock_mutex(&state.metrics.counters, "metrics counters");
@@ -47,6 +48,13 @@ fn initialize_emergency_metrics(state: &AppState) {
             &[("operation", operation)],
             0,
         );
+    }
+}
+
+/// Zero series for every guarded channel, so a refusal alert has a baseline.
+fn initialize_outbound_metrics(state: &AppState) {
+    for channel in ["ntfy", "telegram", "grafana-render"] {
+        state.metric_inc(crate::outbound::REFUSED_METRIC, &[("channel", channel)], 0);
     }
 }
 
@@ -179,6 +187,10 @@ fn counter_help() -> HashMap<&'static str, &'static str> {
             "Emergency persistence operation failures.",
         ),
         (
+            "klaxond_outbound_refused_total",
+            "Outbound channel requests refused by the anti-SSRF guard, per channel.",
+        ),
+        (
             "klaxond_emergency_profile_matches_total",
             "Emergency profile selections by stable profile ID and explicit-force flag.",
         ),
@@ -190,6 +202,10 @@ fn gauge_help() -> HashMap<&'static str, &'static str> {
         (
             "klaxond_suppressions_active",
             "Currently-armed in-memory suppressions.",
+        ),
+        (
+            "klaxond_outbound_target_refused",
+            "1 when a configured channel target resolved at startup to a refused address.",
         ),
         (
             "klaxond_dedup_pending",

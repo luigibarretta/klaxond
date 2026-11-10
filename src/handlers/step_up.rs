@@ -12,6 +12,7 @@ use url::Url;
 
 mod page;
 
+pub(crate) use page::STEP_UP_HTML;
 pub(super) use page::step_up_page;
 
 #[cfg(test)]

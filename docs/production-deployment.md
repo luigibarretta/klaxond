@@ -30,6 +30,13 @@ chmod 600 .env
 
 Fill at least `NTFY_URL`, `TOPIC_*` and the corresponding `NTFY_TOKEN_*`
 values. Keep `KLAXOND_BIND=127.0.0.1:8181` during onboarding.
+If ntfy, Grafana rendering or `TELEGRAM_API_BASE` resolve to a private or LAN
+address from the container (a self-hosted ntfy, a split-horizon DNS name that
+points at the reverse proxy), list those networks in
+`KLAXOND_OUTBOUND_ALLOWED_CIDRS` (e.g. `192.168.1.10/32,192.168.1.20/32`):
+the outbound guard refuses them otherwise, and the tier fails over to the next
+channel. Check the startup log or `klaxond_outbound_target_refused` after the
+first start.
 Optional `KLAXOND_SOURCE_URL_*` values control integration action buttons; an
 incoming webhook URL takes precedence, and an unconfigured button is omitted.
 The shipped defaults never point at the maintainer's infrastructure.

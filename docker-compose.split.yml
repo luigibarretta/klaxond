@@ -16,7 +16,7 @@
 
 services:
   klaxond-backend:
-    image: ${KLAXOND_BACKEND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.23.0}
+    image: ${KLAXOND_BACKEND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.24.0}
     build:
       context: .
       dockerfile: Dockerfile
@@ -75,6 +75,7 @@ services:
       AUTH_OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET:-}
       AUTH_BASIC_PASSWORD_HASH: ${AUTH_BASIC_PASSWORD_HASH:-}
       AUTH_TRUSTED_PROXY_CIDRS: ${AUTH_TRUSTED_PROXY_CIDRS:-}
+      KLAXOND_OUTBOUND_ALLOWED_CIDRS: ${KLAXOND_OUTBOUND_ALLOWED_CIDRS:-}
       KLAXOND_CUSTOM_INGEST_SOURCES: ${KLAXOND_CUSTOM_INGEST_SOURCES:-}
       KLAXOND_CUSTOM_INGEST_SECRETS: ${KLAXOND_CUSTOM_INGEST_SECRETS:-}
       KLAXOND_INGEST_SECRET_GRAFANA: ${KLAXOND_INGEST_SECRET_GRAFANA:-}
@@ -109,7 +110,7 @@ services:
       - klaxond-data:/data
 
   klaxond-frontend:
-    image: ${KLAXOND_FRONTEND_IMAGE:-ghcr.io/luigibarretta/klaxond-frontend:0.23.0}
+    image: ${KLAXOND_FRONTEND_IMAGE:-ghcr.io/luigibarretta/klaxond-frontend:0.24.0}
     build:
       context: .
       dockerfile: Dockerfile.frontend

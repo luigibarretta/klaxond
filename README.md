@@ -359,6 +359,7 @@ The endpoint includes:
 - `klaxond_emergency_last_ack_latency_seconds`
 - `klaxond_emergency_incidents_total{outcome}` and `klaxond_emergency_transitions_total{transition}`
 - `klaxond_emergency_attempts_total{channel,ok}` and `klaxond_emergency_storage_errors_total{operation}`
+- `klaxond_outbound_refused_total{channel}` and `klaxond_outbound_target_refused{target}` (outbound guard)
 
 Import [`docs/grafana-dashboard.json`](docs/grafana-dashboard.json) into Grafana and select your Prometheus datasource.
 
@@ -377,7 +378,61 @@ keeps deploy-time secret managers authoritative.
 | `SMTP_USER`, `SMTP_PASSWORD` | SMTP tier |
 | `AUTH_SESSION_SECRET`, `AUTH_OIDC_CLIENT_SECRET`, `AUTH_BASIC_PASSWORD_HASH` | auth bootstrap/secrets |
 | `AUTH_TRUSTED_PROXY_CIDRS` | comma-separated addresses/subnets of actual reverse proxies |
+| `KLAXOND_OUTBOUND_ALLOWED_CIDRS` | private/LAN networks that channel traffic may reach (see [Outbound guard](#outbound-guard)) |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | enables an inbound source and requires its shared secret; unset sources are disabled |
+
+### Outbound guard
+
+Every outbound channel request (ntfy publish, Telegram, Grafana rendering
+and the channel health probes) goes through the shared
+`http_hardening::net_guard` anti-SSRF guard (vendored, `vendor/http-hardening`):
+the URL is checked before the request is built, the resolver refuses a DNS
+answer that contains any loopback, private (RFC 1918), CGNAT, link-local
+(cloud metadata), ULA, documentation or other special-use address and connects
+only to the checked addresses, proxies are not used and redirects are not
+followed (a 3xx is a failed attempt, as before).
+
+Klaxond often delivers to LAN services by design. List their networks:
+
+```toml
+[outbound]
+allowed_cidrs = ["192.168.1.10/32", "192.168.1.20/32"] # or one comma-separated string
+```
+
+or `KLAXOND_OUTBOUND_ALLOWED_CIDRS=192.168.1.10/32,192.168.1.20/32`. Entries
+must have zero host bits and be at least `/8` (IPv4) or `/32` (IPv6); an
+invalid list stops startup. A hostname counts by the addresses it resolves to
+from the container: behind a split-horizon DNS, `push.example.com` may
+resolve to the reverse proxy's LAN address, which must then be listed.
+Allowlisting `127.0.0.0/8` admits `localhost` only together with `::1/128`.
+
+A refused request is never dropped silently: the tier fails like any delivery
+error (audit ledger `tier_results`, `klaxond_delivery_tier_attempts_total{ok="0"}`,
+cascade to the next tier, emergency retries), is logged at error level with the
+setting to change, and increments `klaxond_outbound_refused_total{channel}`.
+At startup Klaxond resolves the configured ntfy, Telegram and Grafana render
+URLs once and sets `klaxond_outbound_target_refused{target}` to 1 (plus an
+error log) for each one the guard would refuse; `klaxond doctor --online`
+probes ntfy and Telegram through the same guard.
+
+### Security headers
+
+Every response carries the shared `http_hardening::security_headers` policy
+(audit K-02): an enforced Content-Security-Policy (`default-src 'none'`;
+scripts from `'self'` plus the SHA-256 hashes of the inline scripts of
+`static/index.html`, `static/swagger.html` and the passkey and step-up pages,
+computed at startup, never `'unsafe-inline'`; styles `'self' 'unsafe-inline'`
+for template `style` attributes and Mermaid/Swagger UI; images `'self' data:`;
+connections same-origin; `frame-ancestors 'none'`), `X-Frame-Options: DENY`,
+`X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, a
+deny-by-default `Permissions-Policy` (WebAuthn stays allowed), COOP and CORP
+`same-origin` (rendered alert images under `/img/` send CORP
+`cross-origin` so the ntfy web app can display them) and, only when
+`KLAXOND_PUBLIC_URL` is `https`, HSTS (two years, `includeSubDomains`).
+Policy values overwrite handler values. Ingest webhooks are unaffected. After
+editing an inline script in `static/`, restart Klaxond so the hash is
+recomputed. In the split deployment the frontend nginx serves `static/`
+itself and does not add these headers.
 
 ### Delivery history storage
 
@@ -631,6 +686,7 @@ UI-saved values at runtime.
 | `AUTH_SESSION_SECRET` | `[auth].session_secret` or `auth-config.json` |
 | `AUTH_OIDC_CLIENT_SECRET` / `AUTH_BASIC_PASSWORD_HASH` | `[auth.oidc].client_secret`, `[auth.basic].password_hash`, or `auth-config.json`; LDAP is configured through `[auth.ldap]` or `auth-config.json` |
 | `AUTH_TRUSTED_PROXY_CIDRS` | `[auth.trusted_proxy].trusted_cidrs` or `auth-config.json`; comma-separated and runtime-authoritative |
+| `KLAXOND_OUTBOUND_ALLOWED_CIDRS` | `[outbound].allowed_cidrs` (string or array); comma/space-separated CIDRs |
 | `KLAXOND_INGEST_SECRET_<SOURCE>` | `[ingest.secrets].<source>` |
 | `KLAXOND_CUSTOM_INGEST_SOURCES` / `KLAXOND_CUSTOM_INGEST_SECRETS` | JSON objects equivalent to `[ingest.custom_sources]` / custom entries in `[ingest.secrets]` |
 | `RENDER_CONFIG_PATH` / `NTFY_TOPICS_PATH` / `DEDUP_CONFIG_PATH` / `AUTH_CONFIG_PATH` | `[paths].render_config`, `[paths].ntfy_topics`, `[paths].dedup_config`, `[paths].auth_config` |

@@ -8,6 +8,7 @@ mod webauthn_config;
 
 pub(super) use deletion::passkey_delete;
 pub(super) use login::{passkey_login_finish, passkey_login_start};
+pub(crate) use login_page::PASSKEY_LOGIN_HTML;
 pub(super) use login_page::passkey_login_page;
 pub(super) use public::{public_passkey, webauthn_public_config};
 pub(super) use register::{

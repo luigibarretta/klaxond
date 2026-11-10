@@ -22,7 +22,6 @@ async fn persistent_session_is_verified_and_revoked_by_logout() {
         .unwrap()
         .expect("persistent session");
     assert_eq!(verified.user.sub, user.sub);
-    assert!(!verified.legacy);
 
     let headers = session_headers(token);
     let response = api_logout(&state, &headers).await;

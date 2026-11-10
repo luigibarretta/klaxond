@@ -121,6 +121,10 @@ const COMPOSE_FILE_CONFIG_EQUIVALENTS: &[(&str, &str)] = &[
         "TOML [render.source_urls].revaulter",
     ),
     ("KLAXOND_PUBLIC_URL", "TOML [server].public_url"),
+    (
+        "KLAXOND_OUTBOUND_ALLOWED_CIDRS",
+        "TOML [outbound].allowed_cidrs",
+    ),
     ("ACK_DEFAULT_TTL_SECONDS", "TOML [acks].default_ttl_seconds"),
     ("AUTH_SESSION_SECRET", "TOML/JSON auth.session_secret"),
     (

@@ -7,6 +7,7 @@ RUN apk add --no-cache build-base perl
 
 COPY Cargo.toml Cargo.lock ./
 COPY vendor/auth-modules/ ./vendor/auth-modules/
+COPY vendor/http-hardening/ ./vendor/http-hardening/
 # Workspace member (application-event SDK): required to resolve the workspace.
 COPY sdk/rust/Cargo.toml ./sdk/rust/Cargo.toml
 COPY sdk/rust/src/ ./sdk/rust/src/

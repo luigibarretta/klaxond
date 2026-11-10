@@ -27,6 +27,7 @@ struct ChannelRuntime {
 struct ServerRuntime {
     port: u16,
     public_url: String,
+    outbound_allowed_cidrs: String,
     ack_default_ttl: u64,
 }
 
@@ -149,6 +150,7 @@ fn load_server(toml: &toml::Value) -> ServerRuntime {
     ServerRuntime {
         port,
         public_url,
+        outbound_allowed_cidrs: outbound_allowed_cidrs(toml),
         ack_default_ttl: env_or_positive_toml_u64(
             "ACK_DEFAULT_TTL_SECONDS",
             toml,
@@ -203,8 +205,26 @@ fn assemble(
         grafana_render_token: render.grafana_render_token,
         render_image_ttl: render.render_image_ttl,
         public_url: server.public_url,
+        outbound_allowed_cidrs: server.outbound_allowed_cidrs,
         ack_default_ttl: server.ack_default_ttl,
         beszel_db: paths.beszel_db.clone(),
+    }
+}
+
+/// `KLAXOND_OUTBOUND_ALLOWED_CIDRS`, else `[outbound].allowed_cidrs` as a
+/// string or an array of strings.
+fn outbound_allowed_cidrs(toml: &toml::Value) -> String {
+    let env = env_string(crate::outbound::OUTBOUND_ALLOWED_CIDRS_ENV);
+    if !env.trim().is_empty() {
+        return env.trim().to_string();
+    }
+    match toml_get(toml, &["outbound", "allowed_cidrs"]) {
+        Some(toml::Value::Array(items)) => items
+            .iter()
+            .filter_map(toml::Value::as_str)
+            .collect::<Vec<_>>()
+            .join(","),
+        value => toml_string(value),
     }
 }
 

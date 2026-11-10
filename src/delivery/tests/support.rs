@@ -26,10 +26,41 @@ pub(super) fn temp_paths(tmp: &TempDir) -> Paths {
     }
 }
 
+/// Loopback allowlisted: the fake channel servers listen on 127.0.0.1.
+pub(super) const LOOPBACK_ALLOWLIST: &str = "127.0.0.0/8, ::1/128";
+
 pub(in crate::delivery) fn test_state() -> (TempDir, AppState) {
+    let (tmp, state) = guarded_test_state("");
+    let mut cfg = state.cfg();
+    cfg.outbound_allowed_cidrs = LOOPBACK_ALLOWLIST.into();
+    state.replace_config(cfg);
+    (tmp, state)
+}
+
+/// State with the given outbound allowlist ("" = public destinations only).
+pub(super) fn guarded_test_state(allowed_cidrs: &str) -> (TempDir, AppState) {
     let tmp = TempDir::new().unwrap();
     let state = AppState::new(temp_paths(&tmp)).unwrap();
+    let mut cfg = state.cfg();
+    cfg.outbound_allowed_cidrs = allowed_cidrs.into();
+    state.replace_config(cfg);
     (tmp, state)
+}
+
+/// Sum of a counter over every label set containing all `labels`.
+pub(super) fn counter(state: &AppState, name: &str, labels: &[&str]) -> i64 {
+    crate::state::lock_mutex(&state.metrics.counters, "metrics counters")
+        .iter()
+        .filter(|(key, _)| {
+            key.split_once('|').is_some_and(|(metric, rest)| {
+                metric == name
+                    && labels
+                        .iter()
+                        .all(|label| rest.split(',').any(|part| part == *label))
+            })
+        })
+        .map(|(_, value)| *value)
+        .sum()
 }
 
 pub(in crate::delivery) fn sample_parts() -> Parts {

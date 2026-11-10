@@ -1,0 +1,54 @@
+[package]
+name = "http-hardening"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://git.luigibarretta.com/luigibarretta/lib-http-hardening"
+description = "Shared HTTP hardening: security response headers and an anti-SSRF outbound network guard"
+
+[features]
+default = ["http", "net-guard"]
+# `http` 1.x typed headers: `SecurityHeaders::headers()` and `apply(&mut HeaderMap)`.
+# Without it the security headers are plain validated strings (std only).
+http = ["dep:http"]
+# Outbound anti-SSRF guard (`net_guard`), needs the WHATWG `url` parser.
+net-guard = ["dep:url"]
+# tower Layer/Service applying `SecurityHeaders` to every response.
+tower = ["http", "dep:tower-layer", "dep:tower-service", "dep:pin-project-lite"]
+# reqwest 0.12 adapters: `GuardedClient`, `PinnedClient`, resolvers, redirect policy.
+reqwest = ["net-guard", "http", "dep:reqwest", "dep:tokio"]
+# JSON, form and query helpers on `GuardedRequest` (enables reqwest `json`).
+reqwest-serde = ["reqwest", "reqwest/json", "dep:serde"]
+# ureq 2.x adapter: `GuardedAgent` (used by blackstart).
+ureq = ["net-guard", "dep:ureq"]
+
+[dependencies]
+http = { version = "1", optional = true }
+url = { version = "2.5", optional = true }
+pin-project-lite = { version = "0.2", optional = true }
+reqwest = { version = "0.12", default-features = false, optional = true }
+serde = { version = "1", default-features = false, optional = true }
+tokio = { version = "1", default-features = false, features = ["net"], optional = true }
+tower-layer = { version = "0.3", optional = true }
+tower-service = { version = "0.3", optional = true }
+ureq = { version = "2.12", default-features = false, optional = true }
+
+[dev-dependencies]
+# `proxy-from-env` makes ureq read HTTP_PROXY by default, so the tests prove that
+# the guarded agent turns it off explicitly.
+ureq = { version = "2.12", default-features = false, features = ["proxy-from-env"] }
+tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "rt", "sync"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+indexing_slicing = "warn"

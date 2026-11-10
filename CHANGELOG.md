@@ -1,5 +1,48 @@
 # Klaxond — CHANGELOG
 
+## 0.24.0 — 2026-11-10
+
+- Security (outbound SSRF guard): every outbound channel request (ntfy
+  publish, Telegram, Grafana dashboard rendering, the status-page channel
+  probes and `klaxond doctor --online`) goes through the shared
+  `http_hardening::net_guard` `GuardedClient`: the URL is checked before the
+  request is built, every DNS answer must consist only of allowed addresses and
+  the connection uses exactly the checked addresses, proxies are disabled and
+  redirects stay off. Loopback, RFC 1918, CGNAT, link-local, ULA and other
+  special-use destinations are refused unless their network is listed in the
+  new `KLAXOND_OUTBOUND_ALLOWED_CIDRS` / `[outbound].allowed_cidrs` setting.
+  **Upgrade note:** deployments whose ntfy, Grafana render or Telegram API URL
+  resolves to a LAN address must list it, otherwise that tier fails (and the
+  cascade falls back to the next channel). A refusal is recorded like any
+  failed attempt (audit `tier_results`, tier metrics, emergency retries),
+  logged at error level and counted in `klaxond_outbound_refused_total{channel}`;
+  configured targets that would be refused are reported at startup in the log
+  and in `klaxond_outbound_target_refused{target}`. An invalid allowlist stops
+  startup. Error messages no longer include request URLs (the Telegram URL
+  carries the bot token).
+- Security (K-02): every response carries security headers through the shared
+  `SecurityHeadersLayer`: an enforced Content-Security-Policy whose
+  `script-src` allows `'self'` plus the SHA-256 hashes of the inline scripts
+  of `index.html`, `swagger.html` and the passkey and step-up pages (no
+  `'unsafe-inline'` or `'unsafe-eval'` for scripts), `frame-ancestors 'none'` and
+  `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy: no-referrer`, a
+  deny-by-default `Permissions-Policy`, COOP/CORP `same-origin` (CORP
+  `cross-origin` for rendered `/img/` attachments) and HSTS when
+  `KLAXOND_PUBLIC_URL` is `https`.
+- Security (K-10 follow-up): the raw session secret no longer verifies
+  anything. The 0.23.0 transition (`LEGACY_RAW_VERIFY_LABELS`,
+  `ServiceKeys::legacy_hex`) kept pre-0.23 acknowledgement links, legacy
+  stateless session cookies, account lockouts and in-flight session rotations
+  working until they expired; all of them had expired (acknowledgement links
+  and emergency links: 1 hour in production, lockouts: 10 minutes, rotated
+  sessions: 30 minutes idle). A pre-0.23 stateless cookie now simply means
+  "signed out".
+- Dependencies: `http-hardening` `v0.2.0`
+  (`be757cf18f5986c3066fdb60499f5bfce0c61d8c`) is vendored in
+  `vendor/http-hardening` (features `tower`, `reqwest`, `reqwest-serde`),
+  pinned in `dependencies/http-hardening.sha` with a tree digest verified by
+  the `vendored-deps` ci-local step.
+
 ## 0.23.0 — 2026-11-09
 
 - Dependencies: vendored `auth-modules` moves to `v0.2.0`

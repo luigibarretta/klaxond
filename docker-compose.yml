@@ -8,7 +8,7 @@
 
 services:
   klaxond:
-    image: ${KLAXOND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.23.0}
+    image: ${KLAXOND_IMAGE:-ghcr.io/luigibarretta/klaxond:0.24.0}
     # Comment image: above and uncomment build: to build locally:
     # build:
     #   context: .
@@ -69,6 +69,7 @@ services:
       AUTH_OIDC_CLIENT_SECRET: ${AUTH_OIDC_CLIENT_SECRET:-}
       AUTH_BASIC_PASSWORD_HASH: ${AUTH_BASIC_PASSWORD_HASH:-}
       AUTH_TRUSTED_PROXY_CIDRS: ${AUTH_TRUSTED_PROXY_CIDRS:-}
+      KLAXOND_OUTBOUND_ALLOWED_CIDRS: ${KLAXOND_OUTBOUND_ALLOWED_CIDRS:-}
       KLAXOND_CUSTOM_INGEST_SOURCES: ${KLAXOND_CUSTOM_INGEST_SOURCES:-}
       KLAXOND_CUSTOM_INGEST_SECRETS: ${KLAXOND_CUSTOM_INGEST_SECRETS:-}
       KLAXOND_INGEST_SECRET_GRAFANA: ${KLAXOND_INGEST_SECRET_GRAFANA:-}

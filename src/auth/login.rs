@@ -40,7 +40,7 @@ pub async fn login(state: &AppState, headers: HeaderMap, uri: &str) -> Response<
             match verify_session(state, value).await {
                 Ok(Some(mut verified)) => {
                     let mut response = redirect(&return_to);
-                    if verified.legacy || verified.should_rotate {
+                    if verified.should_rotate {
                         let cookie = match rotate_session_on_worker(
                             state,
                             &auth,

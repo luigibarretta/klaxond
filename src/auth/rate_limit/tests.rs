@@ -126,14 +126,15 @@ fn persistent_store_hashes_account_keys() {
 }
 
 #[test]
-fn lockouts_recorded_with_the_raw_secret_still_apply_and_clear() {
+fn lockouts_keyed_by_the_raw_secret_hash_no_longer_apply() {
     let tmp = TempDir::new().unwrap();
     let state = {
         let _env_guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
         AppState::new(temp_paths(&tmp)).unwrap()
     };
     let keys = auth_rate_keys(&state, "login", "alice", &HeaderMap::new(), None);
-    let legacy = legacy_account_key_hash(&state, &keys.account);
+    let secret = std::fs::read(&state.paths.auth_session_key).unwrap();
+    let legacy = crate::util::hmac_hex(&secret, account_key_input(&keys.account).as_bytes());
     assert_ne!(legacy, account_key_hash(&state, &keys.account));
     let now = now_epoch_i64();
     state.with_auth_store(|store| {
@@ -141,7 +142,5 @@ fn lockouts_recorded_with_the_raw_secret_still_apply_and_clear() {
             store.record_auth_failure(&legacy, now).unwrap();
         }
     });
-    assert!(auth_rate_limited(&state, &keys).unwrap());
-    clear_auth_failures(&state, &keys).unwrap();
     assert!(!auth_rate_limited(&state, &keys).unwrap());
 }

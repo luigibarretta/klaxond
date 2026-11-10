@@ -53,9 +53,8 @@ async fn main() -> Result<()> {
         enabled
     );
 
-    let app = Router::new()
-        .fallback(klaxond::handlers::dispatch)
-        .with_state(state);
+    spawn_outbound_target_check(state.clone());
+    let app = app_router(state)?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(
         listener,
@@ -63,6 +62,26 @@ async fn main() -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+/// The single router: every route behind the security-headers layer.
+fn app_router(state: AppState) -> Result<Router> {
+    let headers = klaxond::http_security::security_headers_layer(
+        &state.paths.static_dir,
+        &state.with_cfg(|cfg| cfg.public_url.clone()),
+    )?;
+    Ok(Router::new()
+        .fallback(klaxond::handlers::dispatch)
+        .with_state(state)
+        .layer(headers))
+}
+
+/// Reports configured channel targets the outbound guard would refuse
+/// (log + `klaxond_outbound_target_refused` gauge) without delaying startup.
+fn spawn_outbound_target_check(state: AppState) {
+    tokio::spawn(async move {
+        klaxond::outbound::check_configured_targets(&state).await;
+    });
 }
 
 fn spawn_emergency_scheduler(state: AppState) {

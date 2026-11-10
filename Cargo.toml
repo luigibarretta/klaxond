@@ -1,6 +1,6 @@
 [package]
 name = "klaxond"
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 description = "Notification routing, noise control, delivery history, and authentication service"
 license = "Apache-2.0"
@@ -12,8 +12,8 @@ repository = "https://github.com/luigibarretta/klaxond"
 # publishable and vendorable.
 [workspace]
 members = ["sdk/rust"]
-# The vendored auth-modules copy stays a plain path dependency, not a member.
-exclude = ["vendor/auth-modules"]
+# The vendored shared crates stay plain path dependencies, not members.
+exclude = ["vendor/auth-modules", "vendor/http-hardening"]
 
 [dependencies]
 anyhow = "1.0"
@@ -24,6 +24,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 fs2 = "0.4"
 hmac = "0.12"
 hex = "0.4"
+# Security response headers (tower layer) and the outbound anti-SSRF guard for
+# channel deliveries; vendored from lib-http-hardening (vendor/http-hardening/README.md).
+http-hardening = { path = "vendor/http-hardening", default-features = false, features = ["reqwest", "reqwest-serde", "tower"] }
 ipnet = "2.11"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
 mime_guess = "2.0"
@@ -47,3 +50,4 @@ webauthn-rs = { version = "0.6.1-dev", features = ["danger-allow-state-serialisa
 auth-modules = { path = "vendor/auth-modules", default-features = false, features = ["testing"] }
 klaxond-protocol = { path = "sdk/rust" }
 tempfile = "3.23"
+tower = { version = "0.5", default-features = false, features = ["util"] }

@@ -1,5 +1,7 @@
 use crate::config::RuntimeConfig;
+use crate::outbound::{self, Target};
 use crate::state::AppState;
+use reqwest::Method;
 use serde_json::Value;
 use std::time::Duration;
 
@@ -68,14 +70,18 @@ async fn fetch_rendered_image(
     cfg: &RuntimeConfig,
     url: String,
 ) -> Option<Vec<u8>> {
-    match state
-        .http
-        .get(url)
-        .timeout(Duration::from_secs(25))
-        .bearer_auth(&cfg.grafana_render_token)
-        .send()
-        .await
-    {
+    let target = Target {
+        channel: "grafana-render",
+        method: Method::GET,
+        url: &url,
+    };
+    let result = outbound::send(state, cfg, target, |request| {
+        request
+            .timeout(Duration::from_secs(25))
+            .bearer_auth(&cfg.grafana_render_token)
+    })
+    .await;
+    match result {
         Ok(resp) if resp.status().is_success() => {
             let bytes = resp.bytes().await.ok()?.to_vec();
             if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -102,14 +108,19 @@ async fn first_render_panel(state: &AppState, cfg: &RuntimeConfig, uid: &str) ->
     }
     let base = cfg.grafana_render_base.trim_end_matches('/');
     let url = format!("{}/api/dashboards/uid/{}", base, urlencoding::encode(uid));
-    let resp = state
-        .http
-        .get(url)
-        .timeout(Duration::from_secs(10))
-        .bearer_auth(&cfg.grafana_render_token)
-        .send()
-        .await
-        .ok()?;
+    let target = Target {
+        channel: "grafana-render",
+        method: Method::GET,
+        url: &url,
+    };
+    let resp = outbound::send(state, cfg, target, |request| {
+        request
+            .timeout(Duration::from_secs(10))
+            .bearer_auth(&cfg.grafana_render_token)
+    })
+    .await
+    .map_err(|err| tracing::warn!("render: dashboard lookup failed: {err}"))
+    .ok()?;
     if !resp.status().is_success() {
         return None;
     }

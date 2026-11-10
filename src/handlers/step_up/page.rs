@@ -2,8 +2,9 @@ use axum::body::Body;
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{Response, StatusCode};
 
-pub(in crate::handlers) fn step_up_page() -> Response<Body> {
-    let html = r#"<!doctype html>
+/// Step-up page; its inline script is allowed by hash in the CSP
+/// (`crate::http_security`).
+pub(crate) const STEP_UP_HTML: &str = r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Klaxond step-up</title><link rel="stylesheet" href="/ui/style.css"></head>
 <body><main class="passkey-login"><section class="card"><h1>Klaxond</h1><h2>Second factor required</h2>
@@ -40,9 +41,11 @@ $('totp-start').onclick=async()=>{try{const r=await post('/api/auth/step-up/totp
 $('totp-confirm').onclick=async()=>{try{go(await post('/api/auth/step-up/totp/setup/confirm',{request_id:totpRequestId,code:$('totp-setup-code').value.trim()}))}catch(e){status(e.message||String(e))}};
 load();
 </script></body></html>"#;
+
+pub(in crate::handlers) fn step_up_page() -> Response<Body> {
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "text/html; charset=utf-8")
-        .body(Body::from(html))
+        .body(Body::from(STEP_UP_HTML))
         .expect("static step-up response headers are valid")
 }

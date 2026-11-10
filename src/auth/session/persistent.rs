@@ -1,4 +1,4 @@
-use super::token::{legacy_rotated_session_token, new_session_token, rotated_session_token};
+use super::token::{new_session_token, rotated_session_token};
 use super::{VerifiedSession, session_cookie};
 use crate::auth::User;
 use crate::auth::blocking::{AUTH_STORE_TIMEOUT, run_with_timeout};
@@ -160,11 +160,7 @@ pub(super) async fn verify_persistent_session(
     let now = now_epoch_i64();
     let policy = SessionPolicy::gold_standard();
     let idle_timeout_seconds = i64::try_from(policy.idle_timeout.as_secs()).unwrap_or(i64::MAX);
-    // Current-key successor first, then the one a pre-0.23 rotation produced.
-    let replacement_tokens = [
-        rotated_session_token(state, &id_hash),
-        legacy_rotated_session_token(state, &id_hash),
-    ];
+    let replacement_tokens = [rotated_session_token(state, &id_hash)];
     let replacement_hashes = replacement_tokens.each_ref().map(|token| hash_token(token));
     let state_for_store = state.clone();
     let predecessor_hash = id_hash.clone();
@@ -197,7 +193,6 @@ pub(super) async fn verify_persistent_session(
     Ok(Some(VerifiedSession {
         should_rotate: policy.should_rotate(record.last_rotated_at, now),
         user,
-        legacy: false,
         replacement_cookie: recovered_rotation.map(|index| {
             let remaining = record.expires_at.saturating_sub(now);
             session_cookie(state, &replacement_tokens[index], remaining.max(0) as u64)

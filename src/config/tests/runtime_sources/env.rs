@@ -58,6 +58,7 @@ fn set_runtime_override_env() {
         std::env::set_var("RENDER_IMAGE_TTL", "77");
         std::env::set_var("KLAXOND_PUBLIC_URL", "https://klaxond-env.example.test");
         std::env::set_var("ACK_DEFAULT_TTL_SECONDS", "2345");
+        std::env::set_var("KLAXOND_OUTBOUND_ALLOWED_CIDRS", " 10.20.0.0/16 ");
         std::env::set_var("KLAXOND_HISTORY_BACKEND", "postgres");
         std::env::set_var("KLAXOND_POSTGRES_URL", "postgres://env.example/klaxond");
         std::env::set_var("KLAXOND_HISTORY_RETENTION", "777");
@@ -74,6 +75,7 @@ fn set_runtime_override_env() {
 fn assert_env_runtime_config(cfg: &RuntimeConfig, paths: &Paths) {
     assert_eq!(cfg.tg_token, "env-telegram-token");
     assert_eq!(cfg.telegram_api_base, "https://telegram-env.example.test");
+    assert_eq!(cfg.outbound_allowed_cidrs, "10.20.0.0/16");
     assert_eq!(cfg.smtp_user, "env-smtp-user");
     assert_eq!(cfg.smtp_pass, "env-smtp-pass");
     assert!(cfg.smtp_starttls);

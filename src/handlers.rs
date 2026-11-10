@@ -16,7 +16,9 @@ mod router;
 mod rules;
 mod step_up;
 
+pub(crate) use passkeys::PASSKEY_LOGIN_HTML;
 pub use router::dispatch;
+pub(crate) use step_up::STEP_UP_HTML;
 
 fn json_body(body: &Bytes) -> Result<Value, serde_json::Error> {
     if body.is_empty() {
