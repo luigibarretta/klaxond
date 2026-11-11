@@ -131,3 +131,42 @@ async fn telegram_failures_never_log_the_bot_token() {
     assert!(!error.is_refusal());
     assert!(!error.to_string().contains("very-secret-token"), "{error}");
 }
+
+/// A DNS name that passes the static URL check but resolves to a loopback
+/// address is refused by the guard's resolver at send time. That refusal must
+/// be classified as a refusal (counted, logged), not as a transport error.
+/// `ip6-localhost` comes from /etc/hosts (Debian and Docker map it to ::1),
+/// so the test needs no network.
+#[tokio::test]
+async fn a_name_resolving_to_loopback_is_refused_at_resolution_and_counted() {
+    if !std::fs::read_to_string("/etc/hosts").is_ok_and(|hosts| hosts.contains("ip6-localhost")) {
+        eprintln!("skipped: /etc/hosts has no ip6-localhost entry");
+        return;
+    }
+    let guard = crate::outbound::outbound_guard("").unwrap();
+    let url = guard.parse_url("http://ip6-localhost:9/").unwrap();
+    assert!(
+        guard.check_url(&url).is_ok(),
+        "the name passes the static check"
+    );
+
+    let (_tmp, state) = guarded_test_state("");
+    let mut cfg = state.cfg();
+    cfg.ntfy_url = "http://ip6-localhost:9".into();
+    cfg.ntfy_topics = ntfy_topic();
+    state.replace_config(cfg.clone());
+
+    assert!(!post_to_ntfy(&state, "warning", &sample_parts(), 2).await);
+    assert_eq!(counter(&state, REFUSED_METRIC, &["channel=ntfy"]), 1);
+
+    let target = crate::outbound::Target {
+        channel: "ntfy",
+        method: reqwest::Method::POST,
+        url: "http://ip6-localhost:9/warning-topic",
+    };
+    let error = crate::outbound::send(&state, &cfg, target, |request| request)
+        .await
+        .expect_err("::1 is not allowlisted");
+    assert!(error.is_refusal(), "{error}");
+    assert_eq!(counter(&state, REFUSED_METRIC, &["channel=ntfy"]), 2);
+}
