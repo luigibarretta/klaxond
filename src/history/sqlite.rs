@@ -18,6 +18,8 @@ pub(super) use delivery::{
     prune as sqlite_prune,
 };
 pub(super) use migration::migrate as migrate_sqlite;
+#[cfg(test)]
+pub(super) use migration::migrations as sqlite_migrations;
 
 pub(super) type SqliteConnection = Connection;
 
@@ -53,15 +55,4 @@ pub(super) fn validate_sqlite_schema(conn: &Connection) -> Result<()> {
         bail!("source sqlite history does not contain klaxond_deliveries");
     }
     Ok(())
-}
-
-pub(super) fn sqlite_column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool> {
-    let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let columns = statement.query_map([], |row| row.get::<_, String>(1))?;
-    for existing in columns {
-        if existing? == column {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }

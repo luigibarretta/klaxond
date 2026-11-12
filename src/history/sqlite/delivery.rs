@@ -1,4 +1,3 @@
-use super::sqlite_column_exists;
 use crate::history::{DeliveryEntry, DeliveryQuery, dedupe_hash, delivery_search_values};
 use anyhow::Result;
 use rusqlite::{Connection, params};
@@ -125,7 +124,7 @@ pub(in crate::history) fn export_all(conn: &mut Connection) -> Result<Vec<Delive
     let tx = conn.unchecked_transaction()?;
     let rows = {
         let receipt_select =
-            if sqlite_column_exists(&tx, "klaxond_deliveries", "emergency_receipt_id")? {
+            if dual_db::sqlite::column_exists(&tx, "klaxond_deliveries", "emergency_receipt_id")? {
                 "emergency_receipt_id"
             } else {
                 "NULL AS emergency_receipt_id"

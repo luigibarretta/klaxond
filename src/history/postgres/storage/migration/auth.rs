@@ -1,7 +1,6 @@
-use anyhow::Result;
-use postgres::Transaction;
+//! Authentication tables (sessions, OIDC logout replay, rate limits).
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_auth_sessions (
   id_hash TEXT PRIMARY KEY,
   family_hash TEXT NOT NULL,
@@ -57,8 +56,3 @@ CREATE TABLE IF NOT EXISTS klaxond_auth_rate_limits (
 CREATE INDEX IF NOT EXISTS idx_klaxond_auth_rate_limits_updated
   ON klaxond_auth_rate_limits(updated_at);
 "#;
-
-pub(super) fn create(tx: &mut Transaction<'_>) -> Result<()> {
-    tx.batch_execute(SCHEMA)?;
-    Ok(())
-}

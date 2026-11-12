@@ -1,8 +1,6 @@
-use super::super::sqlite_column_exists;
-use anyhow::Result;
-use rusqlite::Connection;
+//! Authentication tables (sessions, OIDC logout replay, rate limits).
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_auth_sessions (
   id_hash TEXT PRIMARY KEY,
   family_hash TEXT NOT NULL,
@@ -51,28 +49,12 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_auth_rate_limits_updated
   ON klaxond_auth_rate_limits(updated_at);
 "#;
 
-pub(super) fn create(conn: &Connection) -> Result<()> {
-    conn.execute_batch(SCHEMA)?;
-    Ok(())
-}
+/// Sessions created before `family_hash` existed form their own family.
+pub(super) const BACKFILL_FAMILY: &str = r#"
+UPDATE klaxond_auth_sessions SET family_hash = id_hash WHERE family_hash = '';
+CREATE INDEX IF NOT EXISTS idx_klaxond_auth_sessions_family ON klaxond_auth_sessions(family_hash);
+"#;
 
-pub(super) fn add_family_column(conn: &Connection) -> Result<()> {
-    if !sqlite_column_exists(conn, "klaxond_auth_sessions", "family_hash")? {
-        conn.execute_batch(
-            "ALTER TABLE klaxond_auth_sessions ADD COLUMN family_hash TEXT NOT NULL DEFAULT '';",
-        )?;
-    }
-    Ok(())
-}
-
-pub(super) fn backfill_family(conn: &Connection) -> Result<()> {
-    conn.execute(
-        "UPDATE klaxond_auth_sessions SET family_hash = id_hash WHERE family_hash = ''",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_klaxond_auth_sessions_family ON klaxond_auth_sessions(family_hash)",
-        [],
-    )?;
-    Ok(())
-}
+/// Per-start repair of sessions written without a family (see `migrate`).
+pub(super) const RECONCILE_FAMILY: &str =
+    "UPDATE klaxond_auth_sessions SET family_hash = id_hash WHERE family_hash = ''";

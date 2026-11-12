@@ -716,6 +716,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dual-db"
+version = "0.1.0"
+dependencies = [
+ "postgres",
+ "rusqlite",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1500,6 +1509,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "dual-db",
  "fs2",
  "hex",
  "hmac 0.12.1",

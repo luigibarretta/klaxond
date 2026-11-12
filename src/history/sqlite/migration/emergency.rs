@@ -1,8 +1,6 @@
-use super::super::sqlite_column_exists;
-use anyhow::Result;
-use rusqlite::Connection;
+//! Emergency incidents.
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_emergencies (
   receipt_id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
@@ -38,22 +36,21 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_emergencies_created
   ON klaxond_emergencies(created_at DESC);
 "#;
 
-pub(super) fn create(conn: &Connection) -> Result<()> {
-    conn.execute_batch(SCHEMA)?;
-    Ok(())
-}
-
-pub(super) fn add_policy_columns(conn: &Connection) -> Result<()> {
-    for (column, definition) in [
-        ("policy_id", "TEXT NOT NULL DEFAULT ''"),
-        ("policy_name", "TEXT NOT NULL DEFAULT ''"),
-        ("policy_snapshot_json", "TEXT NOT NULL DEFAULT ''"),
-    ] {
-        if !sqlite_column_exists(conn, "klaxond_emergencies", column)? {
-            conn.execute_batch(&format!(
-                "ALTER TABLE klaxond_emergencies ADD COLUMN {column} {definition};"
-            ))?;
-        }
-    }
-    Ok(())
-}
+/// Policy columns added after the table first shipped.
+pub(super) const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    (
+        "klaxond_emergencies",
+        "policy_id",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "klaxond_emergencies",
+        "policy_name",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "klaxond_emergencies",
+        "policy_snapshot_json",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+];

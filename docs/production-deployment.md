@@ -186,6 +186,19 @@ Keep the prior numbered image tag and volume backup. Roll back by restoring the
 compatible backup, changing the image tag in `docker-compose.yml`, and recreating
 the container. Do not use a mutable tag as a rollback target.
 
+The history schema is migrated at startup by the shared `dual-db` runner
+(`vendor/dual-db`): versioned migrations, one transaction each, recorded with a
+checksum in `klaxond_schema_migrations`. The first release with the runner
+upgrades that table once (two nullable columns, `name` and `checksum`), keeps
+the version rows 1 to 8 of earlier releases as history and adopts row 9: the
+baseline migration reproduces the 0.24 schema, runs once, changes nothing and
+stamps the row. A start refuses a database whose recorded migrations differ
+from the binary or that a newer release has migrated (`newer than this
+binary`). Releases up to 0.24 ignore the ledger, so rolling back to them keeps
+working as long as no later migration has changed the schema; on PostgreSQL
+they share the runner's advisory-lock key, so a restart never runs two schema
+writers.
+
 ## 7. Verify the public image
 
 Record the numbered image digest before rollout and run the same clean-install

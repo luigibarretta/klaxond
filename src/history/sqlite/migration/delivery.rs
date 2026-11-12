@@ -1,9 +1,10 @@
-use super::super::sqlite_column_exists;
+//! Delivery history.
+
 use crate::history::delivery_search_values;
-use anyhow::Result;
+use dual_db::BoxError;
 use rusqlite::{Connection, params};
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_deliveries (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   ts REAL NOT NULL,
@@ -26,53 +27,52 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_klaxond_deliveries_dedupe_hash ON klaxond_
 CREATE INDEX IF NOT EXISTS idx_klaxond_deliveries_ts_id_desc ON klaxond_deliveries(ts DESC, id DESC);
 "#;
 
+/// Columns added after the table first shipped.
+pub(super) const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("klaxond_deliveries", "emergency_receipt_id", "TEXT"),
+    (
+        "klaxond_deliveries",
+        "search_source",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "klaxond_deliveries",
+        "search_severity",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "klaxond_deliveries",
+        "search_title",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "klaxond_deliveries",
+        "search_channel",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "klaxond_deliveries",
+        "search_suppressed_by",
+        "TEXT NOT NULL DEFAULT ''",
+    ),
+    (
+        "klaxond_deliveries",
+        "search_version",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+];
+
+/// Checksummed id of the search backfill: bump it if its effect changes.
+pub(super) const BACKFILL_SEARCH_ID: &str = "delivery_search_backfill_v1";
+
 type LegacyDeliverySearchRow = (i64, String, String, String, String, String);
 
-pub(super) fn create(conn: &Connection) -> Result<()> {
-    conn.execute_batch(SCHEMA)?;
-    Ok(())
-}
-
-pub(super) fn add_receipt_column(conn: &Connection) -> Result<()> {
-    if !sqlite_column_exists(conn, "klaxond_deliveries", "emergency_receipt_id")? {
-        conn.execute_batch("ALTER TABLE klaxond_deliveries ADD COLUMN emergency_receipt_id TEXT;")?;
-    }
-    Ok(())
-}
-
-pub(super) fn migrate_search_columns(conn: &Connection) -> Result<()> {
-    add_search_columns(conn)?;
-    backfill_search_columns(conn)
-}
-
-fn add_search_columns(conn: &Connection) -> Result<()> {
-    for column in [
-        "search_source",
-        "search_severity",
-        "search_title",
-        "search_channel",
-        "search_suppressed_by",
-    ] {
-        if !sqlite_column_exists(conn, "klaxond_deliveries", column)? {
-            conn.execute_batch(&format!(
-                "ALTER TABLE klaxond_deliveries ADD COLUMN {column} TEXT NOT NULL DEFAULT '';"
-            ))?;
-        }
-    }
-    if !sqlite_column_exists(conn, "klaxond_deliveries", "search_version")? {
-        conn.execute_batch(
-            "ALTER TABLE klaxond_deliveries ADD COLUMN search_version INTEGER NOT NULL DEFAULT 0;",
-        )?;
-    }
-    Ok(())
-}
-
-fn backfill_search_columns(conn: &Connection) -> Result<()> {
+/// Fills the search columns of rows written before they existed. Runs
+/// inside the migration transaction.
+pub(super) fn backfill_search_columns(conn: &Connection) -> Result<(), BoxError> {
     let rows = load_legacy_search_rows(conn)?;
-    let tx = conn.unchecked_transaction()?;
-    {
-        let mut update = tx.prepare(
-            r#"
+    let mut update = conn.prepare(
+        r#"
 UPDATE klaxond_deliveries SET
   search_source = ?2,
   search_severity = ?3,
@@ -82,20 +82,17 @@ UPDATE klaxond_deliveries SET
   search_version = 1
 WHERE id = ?1
 "#,
-        )?;
-        for (id, source, severity, title, channel, suppressed_by) in rows {
-            let values =
-                delivery_search_values(&source, &severity, &title, &channel, &suppressed_by);
-            update.execute(params![
-                id, &values[0], &values[1], &values[2], &values[3], &values[4]
-            ])?;
-        }
+    )?;
+    for (id, source, severity, title, channel, suppressed_by) in rows {
+        let values = delivery_search_values(&source, &severity, &title, &channel, &suppressed_by);
+        update.execute(params![
+            id, &values[0], &values[1], &values[2], &values[3], &values[4]
+        ])?;
     }
-    tx.commit()?;
     Ok(())
 }
 
-fn load_legacy_search_rows(conn: &Connection) -> Result<Vec<LegacyDeliverySearchRow>> {
+fn load_legacy_search_rows(conn: &Connection) -> rusqlite::Result<Vec<LegacyDeliverySearchRow>> {
     let mut statement = conn.prepare(
         "SELECT id, source, severity, title, channel, suppressed_by \
          FROM klaxond_deliveries WHERE search_version < 1",
@@ -110,6 +107,5 @@ fn load_legacy_search_rows(conn: &Connection) -> Result<Vec<LegacyDeliverySearch
             row.get(5)?,
         ))
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Into::into)
+    rows.collect()
 }

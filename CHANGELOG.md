@@ -1,5 +1,24 @@
 # Klaxond — CHANGELOG
 
+## Unreleased
+
+- History schema migrations run through the shared `dual-db` runner 0.1.0
+  (vendored in `vendor/dual-db`, fleet audit phase 6; fixes K-13): versioned
+  migrations, one transaction each under `BEGIN IMMEDIATE` (SQLite, previously
+  not transactional) or `pg_advisory_xact_lock` (same key as before), recorded
+  with name and checksum in `klaxond_schema_migrations`. The table is upgraded
+  once (nullable `name` and `checksum` columns); the version rows 1 to 8 of
+  earlier releases stay as history and row 9 is adopted: migration 9
+  (`baseline`) is the previous per-start ensure-schema step for step, runs
+  once, changes nothing and stamps the row (proved by SQLite and PostgreSQL
+  fixtures generated with 28a0dac). Later starts run no migration; the two
+  row backfills (search columns, session family) stay a per-start
+  reconciliation, as before, for rows a rolled-back pre-v9 binary may write.
+  A database migrated by a newer release or with a changed migration is
+  refused.
+  `SCHEMA_VERSION` and the hand-written column checks are gone; a
+  schema-parity test compares the SQLite and PostgreSQL schemas.
+
 ## 0.24.1 — 2026-11-10
 
 - Tests: the Firefox e2e project runs with

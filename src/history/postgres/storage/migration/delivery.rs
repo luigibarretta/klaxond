@@ -1,8 +1,10 @@
+//! Delivery history.
+
 use crate::history::delivery_search_values;
-use anyhow::Result;
+use dual_db::BoxError;
 use postgres::Transaction;
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_deliveries (
   id BIGSERIAL PRIMARY KEY,
   ts DOUBLE PRECISION NOT NULL,
@@ -25,7 +27,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_klaxond_deliveries_dedupe_hash ON klaxond_
 CREATE INDEX IF NOT EXISTS idx_klaxond_deliveries_ts_id_desc ON klaxond_deliveries(ts DESC, id DESC);
 "#;
 
-const ADD_COLUMNS: &str = r#"
+pub(super) const ADD_COLUMNS: &str = r#"
 ALTER TABLE klaxond_deliveries
   ADD COLUMN IF NOT EXISTS emergency_receipt_id TEXT;
 ALTER TABLE klaxond_deliveries
@@ -42,29 +44,24 @@ ALTER TABLE klaxond_deliveries
   ADD COLUMN IF NOT EXISTS search_version SMALLINT NOT NULL DEFAULT 0;
 "#;
 
-pub(super) fn create(tx: &mut Transaction<'_>) -> Result<()> {
-    tx.batch_execute(SCHEMA)?;
-    Ok(())
-}
+/// Checksummed id of the search backfill: bump it if its effect changes.
+pub(super) const BACKFILL_SEARCH_ID: &str = "delivery_search_backfill_v1";
 
-pub(super) fn add_columns(tx: &mut Transaction<'_>) -> Result<()> {
-    tx.batch_execute(ADD_COLUMNS)?;
-    Ok(())
-}
-
-pub(super) fn backfill_search_columns(tx: &mut Transaction<'_>) -> Result<()> {
+/// Fills the search columns of rows written before they existed. Runs
+/// inside the migration transaction.
+pub(super) fn backfill_search_columns(tx: &mut Transaction<'_>) -> Result<(), BoxError> {
     let rows = tx.query(
         "SELECT id, source, severity, title, channel, suppressed_by \
          FROM klaxond_deliveries WHERE search_version < 1",
         &[],
     )?;
     for row in rows {
-        let id = row.get::<_, i64>(0);
-        let source = row.get::<_, String>(1);
-        let severity = row.get::<_, String>(2);
-        let title = row.get::<_, String>(3);
-        let channel = row.get::<_, String>(4);
-        let suppressed_by = row.get::<_, String>(5);
+        let id = row.try_get::<_, i64>(0)?;
+        let source = row.try_get::<_, String>(1)?;
+        let severity = row.try_get::<_, String>(2)?;
+        let title = row.try_get::<_, String>(3)?;
+        let channel = row.try_get::<_, String>(4)?;
+        let suppressed_by = row.try_get::<_, String>(5)?;
         let values = delivery_search_values(&source, &severity, &title, &channel, &suppressed_by);
         tx.execute(
             UPDATE_SEARCH,

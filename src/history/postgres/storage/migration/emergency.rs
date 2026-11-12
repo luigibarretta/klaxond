@@ -1,7 +1,6 @@
-use anyhow::Result;
-use postgres::Transaction;
+//! Emergency incidents.
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_emergencies (
   receipt_id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
@@ -43,8 +42,3 @@ ALTER TABLE klaxond_emergencies
 ALTER TABLE klaxond_emergencies
   ADD COLUMN IF NOT EXISTS policy_snapshot_json TEXT NOT NULL DEFAULT '';
 "#;
-
-pub(super) fn create(tx: &mut Transaction<'_>) -> Result<()> {
-    tx.batch_execute(SCHEMA)?;
-    Ok(())
-}

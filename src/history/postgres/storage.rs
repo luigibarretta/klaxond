@@ -3,7 +3,9 @@ use postgres::Client;
 
 mod migration;
 
-pub(super) use migration::migrate;
+pub(in crate::history) use migration::migrate;
+#[cfg(test)]
+pub(in crate::history) use migration::migrations;
 
 pub(super) fn validate_schema(client: &mut Client) -> Result<()> {
     let row = client.query_one("SELECT to_regclass('klaxond_deliveries')::text", &[])?;

@@ -1,7 +1,6 @@
-use anyhow::Result;
-use postgres::Transaction;
+//! Repeat-suppression state.
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_repeat_state (
   fingerprint TEXT PRIMARY KEY,
   source TEXT NOT NULL,
@@ -25,8 +24,3 @@ ALTER TABLE klaxond_repeat_state
 ALTER TABLE klaxond_repeat_state
   ADD COLUMN IF NOT EXISTS matched_rule TEXT;
 "#;
-
-pub(super) fn create(tx: &mut Transaction<'_>) -> Result<()> {
-    tx.batch_execute(SCHEMA)?;
-    Ok(())
-}

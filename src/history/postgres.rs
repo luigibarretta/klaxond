@@ -19,7 +19,10 @@ mod worker_rate_limit;
 mod worker_repeat;
 mod worker_session;
 
-use self::storage::{migrate as migrate_postgres, validate_schema as validate_postgres_schema};
+pub(super) use self::storage::migrate as migrate_postgres;
+#[cfg(test)]
+pub(super) use self::storage::migrations as postgres_migrations;
+use self::storage::validate_schema as validate_postgres_schema;
 use self::worker::PostgresCommand;
 
 pub(super) struct PostgresWorker {

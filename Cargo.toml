@@ -13,7 +13,7 @@ repository = "https://github.com/luigibarretta/klaxond"
 [workspace]
 members = ["sdk/rust"]
 # The vendored shared crates stay plain path dependencies, not members.
-exclude = ["vendor/auth-modules", "vendor/http-hardening"]
+exclude = ["vendor/auth-modules", "vendor/http-hardening", "vendor/dual-db"]
 
 [dependencies]
 anyhow = "1.0"
@@ -21,6 +21,8 @@ auth-modules = { path = "vendor/auth-modules", default-features = false, feature
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+# Schema migration runner shared with blackstart (vendor/dual-db/README.md).
+dual-db = { path = "vendor/dual-db", default-features = false, features = ["sqlite", "postgres"] }
 fs2 = "0.4"
 hmac = "0.12"
 hex = "0.4"

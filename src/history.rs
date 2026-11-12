@@ -9,6 +9,7 @@ mod migration;
 mod postgres;
 mod rate_limit;
 mod repeat;
+mod schema;
 mod session;
 mod session_store;
 mod sqlite;
@@ -38,8 +39,6 @@ use sqlite::{
     SqliteConnection, migrate_sqlite, open_sqlite, sqlite_delivery_activity, sqlite_delivery_count,
     sqlite_delivery_page, sqlite_export_all, sqlite_insert, sqlite_prune, validate_sqlite_schema,
 };
-
-const SCHEMA_VERSION: i64 = 9;
 
 pub struct HistoryStore {
     backend: HistoryBackend,

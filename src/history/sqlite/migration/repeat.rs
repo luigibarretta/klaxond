@@ -1,8 +1,6 @@
-use super::super::sqlite_column_exists;
-use anyhow::Result;
-use rusqlite::Connection;
+//! Repeat-suppression state.
 
-const SCHEMA: &str = r#"
+pub(super) const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS klaxond_repeat_state (
   fingerprint TEXT PRIMARY KEY,
   source TEXT NOT NULL,
@@ -22,19 +20,12 @@ CREATE INDEX IF NOT EXISTS idx_klaxond_repeat_suppressed_desc
   WHERE last_suppressed_at IS NOT NULL;
 "#;
 
-pub(super) fn create(conn: &Connection) -> Result<()> {
-    conn.execute_batch(SCHEMA)?;
-    Ok(())
-}
-
-pub(super) fn add_rule_columns(conn: &Connection) -> Result<()> {
-    if !sqlite_column_exists(conn, "klaxond_repeat_state", "cooldown_s")? {
-        conn.execute_batch(
-            "ALTER TABLE klaxond_repeat_state ADD COLUMN cooldown_s INTEGER NOT NULL DEFAULT 0;",
-        )?;
-    }
-    if !sqlite_column_exists(conn, "klaxond_repeat_state", "matched_rule")? {
-        conn.execute_batch("ALTER TABLE klaxond_repeat_state ADD COLUMN matched_rule TEXT;")?;
-    }
-    Ok(())
-}
+/// Rule columns added after the table first shipped.
+pub(super) const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    (
+        "klaxond_repeat_state",
+        "cooldown_s",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    ("klaxond_repeat_state", "matched_rule", "TEXT"),
+];

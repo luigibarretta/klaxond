@@ -12,6 +12,7 @@ mod postgres_repeat;
 mod postgres_session;
 mod rate_limit;
 mod repeat;
+mod schema_migrations;
 mod sqlite_session;
 
 fn postgres_test_guard() -> MutexGuard<'static, ()> {

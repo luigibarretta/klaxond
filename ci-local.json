@@ -26,7 +26,7 @@
     },
     {
       "name": "vendored-deps",
-      "description": "vendor/auth-modules and vendor/http-hardening match their pins (dependencies/*.sha) and tree digests (dependencies/vendored.json)",
+      "description": "vendor/auth-modules, vendor/http-hardening and vendor/dual-db match their pins (dependencies/*.sha) and tree digests (dependencies/vendored.json)",
       "uses": "check-vendored-dep",
       "quick": true,
       "timeout_s": 120

@@ -1,0 +1,127 @@
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+CREATE TABLE klaxond_schema_migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+);
+INSERT INTO klaxond_schema_migrations VALUES(9,1794494219);
+CREATE TABLE klaxond_deliveries (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts REAL NOT NULL,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  channel TEXT NOT NULL,
+  suppressed_by TEXT NOT NULL DEFAULT '',
+  emergency_receipt_id TEXT,
+  search_source TEXT NOT NULL DEFAULT '',
+  search_severity TEXT NOT NULL DEFAULT '',
+  search_title TEXT NOT NULL DEFAULT '',
+  search_channel TEXT NOT NULL DEFAULT '',
+  search_suppressed_by TEXT NOT NULL DEFAULT '',
+  search_version INTEGER NOT NULL DEFAULT 0,
+  dedupe_hash TEXT NOT NULL
+);
+INSERT INTO klaxond_deliveries VALUES(1,1000.0,'grafana','warning','Alert 0','ntfy','',NULL,'grafana','warning','alert 0','ntfy','',1,'3a5022a60eeec25ec611b565b3ca0c04b2b918dc14f8695251a6b475ad1f4ea2');
+INSERT INTO klaxond_deliveries VALUES(2,1001.0,'grafana','warning','Alert 1','ntfy','',NULL,'grafana','warning','alert 1','ntfy','',1,'ac14c22206cc2d6c7b71ac70464d0e0716589dcd24a94adee96d5653e3ac1ebe');
+INSERT INTO klaxond_deliveries VALUES(3,1002.0,'grafana','warning','Alert 2','ntfy','',NULL,'grafana','warning','alert 2','ntfy','',1,'77909db12ce752cd0712dbb92ba9084fc38b3b2abe25f52341807928cd5ede59');
+CREATE TABLE klaxond_repeat_state (
+  fingerprint TEXT PRIMARY KEY,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  last_delivered_at REAL,
+  last_suppressed_at REAL,
+  suppressed_count INTEGER NOT NULL DEFAULT 0,
+  reserved_until REAL NOT NULL DEFAULT 0,
+  reservation_token TEXT NOT NULL DEFAULT '',
+  cooldown_s INTEGER NOT NULL DEFAULT 0,
+  matched_rule TEXT
+);
+INSERT INTO klaxond_repeat_state VALUES('fp-1','grafana','warning','Disk full',1000.5,1001.5,2,0.0,'',600,'disk');
+CREATE TABLE klaxond_auth_sessions (
+  id_hash TEXT PRIMARY KEY,
+  family_hash TEXT NOT NULL,
+  user_json TEXT NOT NULL,
+  user_sub TEXT NOT NULL,
+  auth_mode TEXT NOT NULL,
+  provider_issuer TEXT,
+  provider_session_id TEXT,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  last_rotated_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  revoked_at INTEGER
+);
+INSERT INTO klaxond_auth_sessions VALUES('sess-hash-1','sess-hash-1','{"sub":"luigi"}','luigi','oidc','https://idp.example','sid-1',1762000000,1762000100,1762000000,4102444800,NULL);
+CREATE TABLE klaxond_oidc_logout_tokens (
+  issuer TEXT NOT NULL,
+  token_id_hash TEXT NOT NULL,
+  consumed_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (issuer, token_id_hash)
+);
+INSERT INTO klaxond_oidc_logout_tokens VALUES('https://idp.example','jti-1',1762000000,1762003600);
+CREATE TABLE klaxond_auth_rate_limits (
+  key_hash TEXT PRIMARY KEY,
+  failure_epochs_json TEXT NOT NULL,
+  locked_until_epoch INTEGER,
+  updated_at INTEGER NOT NULL
+);
+INSERT INTO klaxond_auth_rate_limits VALUES('rl-1','[1762000000]',NULL,1762000000);
+CREATE TABLE klaxond_emergencies (
+  receipt_id TEXT PRIMARY KEY,
+  fingerprint TEXT NOT NULL,
+  source TEXT NOT NULL,
+  severity TEXT NOT NULL,
+  title TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  policy_id TEXT NOT NULL DEFAULT '',
+  policy_name TEXT NOT NULL DEFAULT '',
+  policy_snapshot_json TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL,
+  next_retry_at REAL NOT NULL,
+  expires_at REAL NOT NULL,
+  last_sent_at REAL,
+  terminal_at REAL,
+  terminal_by TEXT NOT NULL DEFAULT '',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL,
+  telegram_escalated_at REAL,
+  smtp_escalated_at REAL,
+  last_error TEXT NOT NULL DEFAULT '',
+  reserved_until REAL NOT NULL DEFAULT 0,
+  reservation_token TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO klaxond_emergencies VALUES('rcpt-1','fp-e','ups','critical','On battery','{}','p1','Default','{}','active',1000.0,1000.0,1060.0,4000.0,NULL,NULL,'',1,5,NULL,NULL,'',0.0,'');
+DELETE FROM sqlite_sequence;
+INSERT INTO sqlite_sequence VALUES('klaxond_deliveries',3);
+CREATE UNIQUE INDEX idx_klaxond_deliveries_dedupe_hash ON klaxond_deliveries(dedupe_hash);
+CREATE INDEX idx_klaxond_deliveries_ts_id_desc ON klaxond_deliveries(ts DESC, id DESC);
+CREATE INDEX idx_klaxond_repeat_suppressed_desc
+  ON klaxond_repeat_state(last_suppressed_at DESC)
+  WHERE last_suppressed_at IS NOT NULL;
+CREATE INDEX idx_klaxond_auth_sessions_user
+  ON klaxond_auth_sessions(user_sub, auth_mode, last_seen_at DESC);
+CREATE INDEX idx_klaxond_auth_sessions_concurrent
+  ON klaxond_auth_sessions(user_sub, last_seen_at DESC, created_at DESC);
+CREATE INDEX idx_klaxond_auth_sessions_oidc_sid
+  ON klaxond_auth_sessions(provider_issuer, provider_session_id)
+  WHERE auth_mode = 'oidc' AND provider_session_id IS NOT NULL;
+CREATE INDEX idx_klaxond_auth_sessions_oidc_sub
+  ON klaxond_auth_sessions(provider_issuer, user_sub)
+  WHERE auth_mode = 'oidc';
+CREATE INDEX idx_klaxond_oidc_logout_tokens_expiry
+  ON klaxond_oidc_logout_tokens(expires_at);
+CREATE INDEX idx_klaxond_auth_rate_limits_updated
+  ON klaxond_auth_rate_limits(updated_at);
+CREATE UNIQUE INDEX idx_klaxond_emergencies_active_fingerprint
+  ON klaxond_emergencies(fingerprint) WHERE state='active';
+CREATE INDEX idx_klaxond_emergencies_due
+  ON klaxond_emergencies(state,next_retry_at,reserved_until);
+CREATE INDEX idx_klaxond_emergencies_created
+  ON klaxond_emergencies(created_at DESC);
+CREATE INDEX idx_klaxond_auth_sessions_family ON klaxond_auth_sessions(family_hash);
+COMMIT;

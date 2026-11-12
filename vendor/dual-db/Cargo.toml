@@ -1,0 +1,38 @@
+[package]
+name = "dual-db"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://git.luigibarretta.com/luigibarretta/lib-dual-db"
+description = "Shared PostgreSQL + SQLite migration runner (checksummed ledger, single-writer guard, additive helpers) and a schema-parity check"
+
+[features]
+default = ["sqlite", "postgres"]
+# rusqlite 0.41 runner, additive helpers and schema snapshot. No bundled
+# SQLite is forced: the consumer chooses `bundled` on its own dependency.
+sqlite = ["dep:rusqlite"]
+# Synchronous `postgres` 0.19 runner, additive helpers and schema snapshot.
+postgres = ["dep:postgres"]
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false }
+rusqlite = { version = "0.41.1", default-features = false, optional = true }
+postgres = { version = "0.19.14", default-features = false, optional = true }
+
+[dev-dependencies]
+rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"] }
+tempfile = "3.23"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+indexing_slicing = "warn"
