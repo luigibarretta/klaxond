@@ -1,6 +1,6 @@
 # Klaxond — CHANGELOG
 
-## Unreleased
+## 0.25.0 — 2026-11-13
 
 - History schema migrations run through the shared `dual-db` runner 0.2.0
   (vendored in `vendor/dual-db`, fleet audit phase 6; fixes K-13): versioned
