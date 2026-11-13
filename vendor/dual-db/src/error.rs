@@ -63,8 +63,34 @@ pub enum Error {
         /// The newest applied migration.
         applied: i64,
     },
+    /// A pinned checksum (`verify_pinned_checksums`) no longer matches.
+    PinnedChecksum {
+        /// Migration version.
+        version: i64,
+        /// The pinned (released) checksum.
+        pinned: String,
+        /// The checksum of the current code, or why there is none.
+        actual: String,
+    },
+    /// SQLite `PRAGMA foreign_key_check` found violations at the end of a
+    /// migration run with foreign keys off; the migration was rolled back.
+    ForeignKeyViolation {
+        /// Migration version.
+        version: i64,
+        /// Number of violating rows.
+        rows: usize,
+    },
     /// The SQLite and PostgreSQL schemas differ (one line per difference).
     ParityMismatch(Vec<String>),
+    /// A migration precondition refused to run it (nothing was changed).
+    Precondition {
+        /// Migration version.
+        version: i64,
+        /// Migration name.
+        name: String,
+        /// Why the precondition refused.
+        source: BoxError,
+    },
     /// The SQLite connection already has an open transaction.
     TransactionInProgress,
     /// A migration step failed; the migration was rolled back.
@@ -92,7 +118,9 @@ impl fmt::Display for Error {
             Self::InvalidRegistry(detail) => write!(f, "invalid migration registry: {detail}"),
             Self::InvalidIdentifier(detail) => write!(f, "invalid SQL identifier: {detail}"),
             Self::LedgerFormat(detail) => write!(f, "unusable migration ledger: {detail}"),
-            Self::NameMismatch { .. } | Self::ChecksumMismatch { .. } => self.fmt_mismatch(f),
+            Self::NameMismatch { .. }
+            | Self::ChecksumMismatch { .. }
+            | Self::PinnedChecksum { .. } => self.fmt_mismatch(f),
             Self::UnknownVersion(version) => {
                 write!(f, "the ledger records unknown migration {version}")
             }
@@ -110,9 +138,21 @@ impl fmt::Display for Error {
                 f,
                 "migration {pending} is pending but newer migration {applied} is applied"
             ),
+            Self::ForeignKeyViolation { version, rows } => write!(
+                f,
+                "migration {version} left {rows} foreign-key violation(s); rolled back"
+            ),
             Self::ParityMismatch(diffs) => {
                 write!(f, "schema parity mismatch: {}", diffs.join("; "))
             }
+            Self::Precondition {
+                version,
+                name,
+                source,
+            } => write!(
+                f,
+                "migration {version} ({name}) precondition refused: {source}"
+            ),
             Self::TransactionInProgress => {
                 write!(f, "the connection already has an open transaction")
             }
@@ -136,7 +176,7 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Step { source, .. } => Some(source.as_ref()),
+            Self::Step { source, .. } | Self::Precondition { source, .. } => Some(source.as_ref()),
             #[cfg(feature = "sqlite")]
             Self::Sqlite(error) => Some(error),
             #[cfg(feature = "postgres")]
@@ -181,6 +221,15 @@ impl Error {
                 f,
                 "migration {version} ({name}) differs from the applied one: \
                  checksum {found} in the ledger, {expected} in this binary"
+            ),
+            Self::PinnedChecksum {
+                version,
+                pinned,
+                actual,
+            } => write!(
+                f,
+                "migration {version} checksum is {actual}, pinned {pinned}: \
+                 applied migrations are immutable; add a new migration"
             ),
             _ => Ok(()),
         }

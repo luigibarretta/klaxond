@@ -64,7 +64,7 @@
     },
     {
       "name": "dual-db",
-      "description": "lib-dual-db (shared PostgreSQL + SQLite schema migration runner) at the commit in dependencies/dual-db.sha (version 0.1.0): only Cargo.toml, CHANGELOG.md, LICENSE-APACHE and src/ are vendored (git archive of those paths, zero local patches), plus the local provenance README.md; refresh pin, tree and digest together (vendor/dual-db/README.md)",
+      "description": "lib-dual-db (shared PostgreSQL + SQLite schema migration runner) at the commit in dependencies/dual-db.sha (version 0.2.0): only Cargo.toml, CHANGELOG.md, LICENSE-APACHE and src/ are vendored (git archive of those paths, zero local patches), plus the local provenance README.md; refresh pin, tree and digest together (vendor/dual-db/README.md)",
       "path": "vendor/dual-db",
       "pinFile": "dependencies/dual-db.sha",
       "treeSha256File": "dependencies/dual-db-vendor.sha256",
@@ -73,6 +73,7 @@
         ".dockerignore",
         ".gitea",
         ".gitignore",
+        ".gitattributes",
         "LICENSE-MIT",
         "README.md",
         "ci-local.json",

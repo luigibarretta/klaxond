@@ -58,6 +58,8 @@ pub struct Migration<F> {
     version: i64,
     name: &'static str,
     steps: Vec<Step<F>>,
+    preconditions: Vec<F>,
+    foreign_keys_off: bool,
 }
 
 impl<F> Migration<F> {
@@ -67,6 +69,8 @@ impl<F> Migration<F> {
             version,
             name,
             steps: Vec::new(),
+            preconditions: Vec::new(),
+            foreign_keys_off: false,
         }
     }
 
@@ -98,6 +102,38 @@ impl<F> Migration<F> {
     pub fn code(mut self, id: &'static str, run: F) -> Self {
         self.steps.push(Step::Code { id, run });
         self
+    }
+
+    /// Adds a precondition: code run inside the migration transaction before
+    /// the first step, which can refuse the migration by returning an error
+    /// (e.g. a privilege check). Preconditions are **not** part of the
+    /// checksum, so adding one never changes an applied migration.
+    #[must_use]
+    pub fn precondition(mut self, check: F) -> Self {
+        self.preconditions.push(check);
+        self
+    }
+
+    /// SQLite only: run this migration with foreign-key enforcement off, as
+    /// table rebuilds need (`PRAGMA foreign_keys` is a no-op inside a
+    /// transaction, so the runner switches it off before `BEGIN IMMEDIATE`,
+    /// runs `PRAGMA foreign_key_check` before `COMMIT` and refuses to commit
+    /// on any violation, then restores enforcement). PostgreSQL ignores it.
+    /// An execution option, not part of the checksum.
+    #[must_use]
+    pub fn without_foreign_keys(mut self) -> Self {
+        self.foreign_keys_off = true;
+        self
+    }
+
+    /// The preconditions, in execution order.
+    pub fn preconditions(&self) -> &[F] {
+        &self.preconditions
+    }
+
+    /// Whether foreign-key enforcement is switched off (SQLite).
+    pub fn foreign_keys_off(&self) -> bool {
+        self.foreign_keys_off
     }
 
     /// Migration version (ledger primary key).
@@ -243,6 +279,7 @@ fn validate_steps<F>(steps: &[Step<F>]) -> Result<()> {
             Step::Sql(sql) if sql.trim().is_empty() => {
                 return Err(Error::InvalidRegistry("empty SQL step".into()));
             }
+            Step::Sql(sql) => crate::sql_guard::reject_transaction_control(sql)?,
             _ => {}
         }
     }

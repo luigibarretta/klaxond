@@ -5,8 +5,8 @@ schema migration runner) so a public checkout can be built without access to
 Luigi Barretta's private shared-module repository.
 
 - Upstream: `https://git.luigibarretta.com/luigibarretta/lib-dual-db.git`
-- Upstream version: `0.1.0`
-- Upstream commit: `baac890a24fe5d589141a50e5092dc36a3f25585`
+- Upstream version: `0.2.0`
+- Upstream commit: `bce0764fef529b559a6927010672f93109aaa774`
   (also recorded in `dependencies/dual-db.sha`)
 - Vendored content: upstream `Cargo.toml`, `CHANGELOG.md`, `LICENSE-APACHE`
   and the complete `src/` tree, as an exact `git archive` of those paths;

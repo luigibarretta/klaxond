@@ -11,7 +11,10 @@ use crate::ledger::{plan, LedgerConfig, LedgerRow, MigrationReport, Next};
 use crate::migration::{require_additive_column, require_identifier, validate_registry, Step};
 use rusqlite::{params, Connection, OptionalExtension};
 
+mod foreign_keys;
 mod snapshot;
+
+use foreign_keys::{check_foreign_keys, ForeignKeys};
 
 pub use snapshot::{ddl_fingerprint, snapshot};
 
@@ -33,36 +36,66 @@ pub fn migrate(
         return Err(Error::TransactionInProgress);
     }
     let mut report = MigrationReport::default();
-    // Each pass records one migration or finishes, so len + 1 passes suffice.
-    for _ in 0..=migrations.len() {
-        let tx = ImmediateTx::begin(conn)?;
-        ensure_ledger(conn, ledger.table())?;
-        let rows = read_ledger(conn, ledger.table())?;
-        let plan_next = plan(migrations, &rows, ledger.legacy())?;
-        match plan_next {
-            Next::Done(current) => {
-                tx.commit()?;
-                report.current = current;
-                return Ok(report);
-            }
-            Next::Apply(index) | Next::Adopt(index) => {
-                let adopt = matches!(plan_next, Next::Adopt(_));
-                let Some(migration) = migrations.get(index) else {
-                    return Err(Error::InvalidRegistry("planned index out of range".into()));
-                };
-                run_steps(conn, migration)?;
-                if adopt {
-                    stamp_legacy_row(conn, ledger.table(), migration)?;
-                    report.adopted.push(migration.version());
-                } else {
-                    insert_row(conn, ledger.table(), migration)?;
-                    report.applied.push(migration.version());
-                }
-                tx.commit()?;
-            }
+    let mut foreign_keys = ForeignKeys::new(conn);
+    // Each pass records one migration, finishes, or switches foreign-key
+    // enforcement before retrying, so 2 * len + 2 passes suffice.
+    for _ in 0..(migrations.len() * 2 + 2) {
+        if let Pass::Done = run_pass(conn, ledger, migrations, &mut foreign_keys, &mut report)? {
+            foreign_keys.restore()?;
+            return Ok(report);
         }
     }
     Err(Error::InvalidRegistry("the runner did not converge".into()))
+}
+
+enum Pass {
+    Done,
+    Again,
+}
+
+fn run_pass(
+    conn: &Connection,
+    ledger: &LedgerConfig,
+    migrations: &[Migration],
+    foreign_keys: &mut ForeignKeys<'_>,
+    report: &mut MigrationReport,
+) -> Result<Pass> {
+    let tx = ImmediateTx::begin(conn)?;
+    ensure_ledger(conn, ledger.table())?;
+    let rows = read_ledger(conn, ledger.table())?;
+    let (index, adopt) = match plan(migrations, &rows, ledger.legacy())? {
+        Next::Done(current) => {
+            tx.commit()?;
+            report.current = current;
+            return Ok(Pass::Done);
+        }
+        Next::Apply(index) => (index, false),
+        Next::Adopt(index) => (index, true),
+    };
+    let Some(migration) = migrations.get(index) else {
+        return Err(Error::InvalidRegistry("planned index out of range".into()));
+    };
+    // PRAGMA foreign_keys is a no-op inside a transaction: switch it outside
+    // and re-plan (another runner may have applied the migration meanwhile).
+    if migration.foreign_keys_off() != foreign_keys.disabled() {
+        drop(tx);
+        foreign_keys.set_disabled(migration.foreign_keys_off())?;
+        return Ok(Pass::Again);
+    }
+    run_preconditions(conn, migration)?;
+    run_steps(conn, migration)?;
+    if migration.foreign_keys_off() {
+        check_foreign_keys(conn, migration)?;
+    }
+    if adopt {
+        stamp_legacy_row(conn, ledger.table(), migration)?;
+        report.adopted.push(migration.version());
+    } else {
+        insert_row(conn, ledger.table(), migration)?;
+        report.applied.push(migration.version());
+    }
+    tx.commit()?;
+    Ok(Pass::Again)
 }
 
 /// Read-only check that every migration is applied with a matching
@@ -246,4 +279,15 @@ impl Drop for ImmediateTx<'_> {
             let _ = self.conn.execute_batch("ROLLBACK");
         }
     }
+}
+
+fn run_preconditions(conn: &Connection, migration: &Migration) -> Result<()> {
+    for check in migration.preconditions() {
+        check(conn).map_err(|source| Error::Precondition {
+            version: migration.version(),
+            name: migration.name().to_owned(),
+            source,
+        })?;
+    }
+    Ok(())
 }

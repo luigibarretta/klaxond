@@ -11,7 +11,7 @@
 use crate::error::{BoxError, Error, Result};
 use crate::ledger::{plan, LedgerConfig, LedgerRow, MigrationReport, Next};
 use crate::migration::{require_additive_column, require_identifier, validate_registry, Step};
-use postgres::{Client, GenericClient, Transaction};
+use postgres::{Client, GenericClient, IsolationLevel, Transaction};
 
 mod snapshot;
 
@@ -34,7 +34,13 @@ pub fn migrate(
     let mut report = MigrationReport::default();
     // Each pass records one migration or finishes, so len + 1 passes suffice.
     for _ in 0..=migrations.len() {
-        let mut tx = client.transaction()?;
+        // READ COMMITTED whatever default_transaction_isolation says: under
+        // REPEATABLE READ or SERIALIZABLE the snapshot would predate the lock
+        // wait, so a runner could miss the rows a concurrent one committed.
+        let mut tx = client
+            .build_transaction()
+            .isolation_level(IsolationLevel::ReadCommitted)
+            .start()?;
         tx.execute("SELECT pg_advisory_xact_lock($1)", &[&ledger.lock_key()])?;
         ensure_ledger(&mut tx, ledger.table())?;
         let rows = read_ledger(&mut tx, ledger.table())?;
@@ -51,6 +57,7 @@ pub fn migrate(
         let Some(migration) = migrations.get(index) else {
             return Err(Error::InvalidRegistry("planned index out of range".into()));
         };
+        run_preconditions(&mut tx, migration)?;
         run_steps(&mut tx, migration)?;
         if adopt {
             stamp_legacy_row(&mut tx, ledger.table(), migration)?;
@@ -224,6 +231,17 @@ fn stamp_legacy_row(tx: &mut Transaction<'_>, table: &str, migration: &Migration
             "legacy row {} changed while it was adopted",
             migration.version()
         )));
+    }
+    Ok(())
+}
+
+fn run_preconditions(tx: &mut Transaction<'_>, migration: &Migration) -> Result<()> {
+    for check in migration.preconditions() {
+        check(tx).map_err(|source| Error::Precondition {
+            version: migration.version(),
+            name: migration.name().to_owned(),
+            source,
+        })?;
     }
     Ok(())
 }

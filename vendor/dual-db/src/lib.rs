@@ -16,7 +16,9 @@
 mod error;
 mod ledger;
 mod migration;
+mod pin;
 pub mod schema;
+mod sql_guard;
 
 #[cfg(all(feature = "sqlite", feature = "postgres"))]
 pub mod parity;
@@ -28,3 +30,4 @@ pub mod sqlite;
 pub use error::{BoxError, Error, Result};
 pub use ledger::{LedgerConfig, LedgerRow, LegacyRows, MigrationReport};
 pub use migration::{is_identifier, validate_registry, Migration, Step};
+pub use pin::verify_pinned_checksums;

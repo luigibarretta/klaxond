@@ -194,10 +194,15 @@ the version rows 1 to 8 of earlier releases as history and adopts row 9: the
 baseline migration reproduces the 0.24 schema, runs once, changes nothing and
 stamps the row. A start refuses a database whose recorded migrations differ
 from the binary or that a newer release has migrated (`newer than this
-binary`). Releases up to 0.24 ignore the ledger, so rolling back to them keeps
-working as long as no later migration has changed the schema; on PostgreSQL
-they share the runner's advisory-lock key, so a restart never runs two schema
-writers.
+binary`). Releases up to 0.24 ignore the ledger and replay their own
+ensure-schema, so rolling back to them works; on PostgreSQL they share the
+runner's advisory-lock key, so a restart never runs two schema writers.
+Rolling back past the runner and then upgrading again only works while every
+migration after the baseline is idempotent (`CREATE ... IF NOT EXISTS`,
+`DROP ... IF EXISTS`, guarded data changes); once a non-idempotent migration
+exists, a rollback past the runner means restoring the pre-upgrade backup.
+Applied migrations are immutable (their checksums are pinned in a test):
+change the schema only by adding a migration.
 
 ## 7. Verify the public image
 

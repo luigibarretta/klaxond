@@ -180,3 +180,62 @@ fn sqlite_and_postgres_history_schemas_have_parity() {
     )
     .unwrap();
 }
+
+#[test]
+#[ignore = "requires KLAXOND_TEST_POSTGRES_URL"]
+fn postgres_history_at_schema_8_gets_the_baseline_applied() {
+    let database = TempDatabase::new("schema8");
+    let mut client = database.client();
+    client
+        .batch_execute(
+            "CREATE TABLE klaxond_schema_migrations (
+               version BIGINT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());
+             INSERT INTO klaxond_schema_migrations(version) VALUES (5), (6), (7), (8);
+             CREATE TABLE klaxond_deliveries (
+               id BIGSERIAL PRIMARY KEY, ts DOUBLE PRECISION NOT NULL, source TEXT NOT NULL,
+               severity TEXT NOT NULL, title TEXT NOT NULL, channel TEXT NOT NULL,
+               suppressed_by TEXT NOT NULL DEFAULT '', dedupe_hash TEXT NOT NULL);
+             CREATE TABLE klaxond_repeat_state (
+               fingerprint TEXT PRIMARY KEY, source TEXT NOT NULL, severity TEXT NOT NULL,
+               title TEXT NOT NULL, last_delivered_at DOUBLE PRECISION,
+               last_suppressed_at DOUBLE PRECISION, suppressed_count BIGINT NOT NULL DEFAULT 0,
+               reserved_until DOUBLE PRECISION NOT NULL DEFAULT 0,
+               reservation_token TEXT NOT NULL DEFAULT '');
+             INSERT INTO klaxond_deliveries (ts, source, severity, title, channel, dedupe_hash)
+             VALUES (1000, 'grafana', 'warning', 'Disk OLD', 'ntfy', 'old-row');",
+        )
+        .unwrap();
+    let report = super::super::postgres::migrate_postgres(&mut client).unwrap();
+    assert_eq!(
+        report.applied,
+        vec![BASELINE_VERSION],
+        "applied, not adopted"
+    );
+    assert!(report.adopted.is_empty());
+    let store = HistoryStore::open(&database.cfg()).unwrap();
+    let mut query = DeliveryQuery::page(10, 0);
+    query.q = Some("disk old".into());
+    assert_eq!(
+        store.query_deliveries(&query).unwrap().total,
+        1,
+        "search backfilled"
+    );
+    drop(store);
+
+    let fresh = TempDatabase::new("schema8fresh");
+    drop(HistoryStore::open(&fresh.cfg()).unwrap());
+    let names = |client: &mut ::postgres::Client| {
+        let snapshot = dual_db::postgres::snapshot(client, &options()).unwrap();
+        let tables: BTreeMap<String, Vec<String>> = snapshot
+            .tables
+            .into_iter()
+            .map(|(name, table)| (name, table.columns.into_keys().collect()))
+            .collect();
+        (tables, snapshot.indexes.into_keys().collect::<Vec<_>>())
+    };
+    assert_eq!(names(&mut client), names(&mut fresh.client()));
+    let ledger = postgres_ledger(&mut client);
+    assert_eq!(ledger.len(), 5);
+    assert!(ledger[..4].iter().all(|row| row.2.is_none()));
+    assert_eq!(ledger[4].0, BASELINE_VERSION);
+}

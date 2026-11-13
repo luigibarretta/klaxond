@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- History schema migrations run through the shared `dual-db` runner 0.1.0
+- History schema migrations run through the shared `dual-db` runner 0.2.0
   (vendored in `vendor/dual-db`, fleet audit phase 6; fixes K-13): versioned
   migrations, one transaction each under `BEGIN IMMEDIATE` (SQLite, previously
   not transactional) or `pg_advisory_xact_lock` (same key as before), recorded
@@ -15,9 +15,11 @@
   row backfills (search columns, session family) stay a per-start
   reconciliation, as before, for rows a rolled-back pre-v9 binary may write.
   A database migrated by a newer release or with a changed migration is
-  refused.
-  `SCHEMA_VERSION` and the hand-written column checks are gone; a
-  schema-parity test compares the SQLite and PostgreSQL schemas.
+  refused. The released checksums are pinned in a test (applied migrations
+  are immutable) and `.gitattributes` keeps the migration sources and
+  fixtures out of line-ending conversion. `SCHEMA_VERSION` and the
+  hand-written column checks are gone; a schema-parity test compares the
+  SQLite and PostgreSQL schemas.
 
 ## 0.24.1 — 2026-11-10
 

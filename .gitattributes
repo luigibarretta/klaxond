@@ -1,0 +1,7 @@
+# History migration SQL is checksummed byte for byte (dual-db): never
+# convert line endings of the migration sources or the pre-runner fixtures.
+src/history/sqlite/migration.rs -text
+src/history/sqlite/migration/*.rs -text
+src/history/postgres/storage/migration.rs -text
+src/history/postgres/storage/migration/*.rs -text
+src/history/tests/fixtures/* -text

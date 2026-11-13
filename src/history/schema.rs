@@ -34,3 +34,17 @@ pub(super) fn ledger() -> Result<LedgerConfig> {
         .context("invalid schema ledger")?
         .legacy_rows(LegacyRows::Adopt))
 }
+
+/// Checksums of the released migrations (version, checksum) per backend.
+/// Applied migrations are immutable: a mismatch means one was edited (the
+/// SCHEMA constants, ADDED_COLUMNS order or definitions, the backfill id).
+#[cfg(test)]
+pub(super) const RELEASED_CHECKSUMS_SQLITE: &[(i64, &str)] = &[(
+    BASELINE_VERSION,
+    "490962ee8e08feab87111166b7cd2bfc5c7550c97e50609689a8be9ea0770ff1",
+)];
+#[cfg(test)]
+pub(super) const RELEASED_CHECKSUMS_POSTGRES: &[(i64, &str)] = &[(
+    BASELINE_VERSION,
+    "f594b49c88d7a279067c5a299024e4b2c8a467a1448cfa467da376d8c1761073",
+)];
